@@ -15,7 +15,7 @@ from . import db
 from .config import Config
 from .security import ApiError
 
-APP_VERSION = "2026-11-09.8-oneform"
+APP_VERSION = "2026-11-09.9-access"
 
 
 def create_app():

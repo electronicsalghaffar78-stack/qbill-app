@@ -170,9 +170,50 @@
         </div>
         <p id="mailMsg" class="msg"></p>
       </div>
+
+      <div id="ownerAccountsCard" class="card form-card hidden">
+        <h2>Customer accounts — owner</h2>
+        <p class="note">Every QBill account is listed here, with the IP addresses it used. A new account cannot use QBill until you approve it. Blocking an account signs it out everywhere.</p>
+        <p id="accountsMsg" class="msg"></p>
+        <div id="accountList" class="list"></div>
+      </div>
     </section>
   </div>
 </main>
+
+<!-- ============ ACTIVATE YOUR ACCOUNT (not approved / not activated yet) ============ -->
+<div id="pendingView" class="hidden">
+  <div class="card pending-card">
+    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
+    <h1>Activate your QBill account</h1>
+    <p id="pendingIpNote" class="hidden">This internet connection is already linked to an existing QBill account, so a new account cannot be started from here. QBill accounts are activated by the owner only. Please contact the shop you bought QBill from.</p>
+    <p id="pendingText">Your account is created, but QBill works only after activation by the owner. Choose a plan and contact the owner — your account will be switched on as soon as your plan is confirmed.</p>
+    <div class="plans">
+      <div class="plan">
+        <div class="plan-name">Monthly</div>
+        <div class="plan-price">Rs 30,000</div>
+        <div class="plan-per">per month</div>
+      </div>
+      <div class="plan">
+        <div class="plan-name">6 Months</div>
+        <div class="plan-price">Rs 60,000</div>
+        <div class="plan-per">for 6 months</div>
+      </div>
+      <div class="plan">
+        <div class="plan-name">1 Year</div>
+        <div class="plan-price">Rs 70,000</div>
+        <div class="plan-per">for 1 year</div>
+      </div>
+    </div>
+    <div class="activate-contact">
+      <p>To activate your account, contact the owner:</p>
+      <p><strong>AL-GHAFFAR ELECTRONICS &amp; SOLAR SYSTEM</strong><br>
+      ABC Center, Bunder Road, Larkana<br>
+      Phone / WhatsApp: 03273799008</p>
+    </div>
+    <button id="btnPendingLogout" class="btn btn-primary btn-block" type="button">Log out</button>
+  </div>
+</div>
 
 <!-- ============ AUTH POPUP (sign-in / create password / welcome back) ============ -->
 <div id="authModal" class="modal hidden">

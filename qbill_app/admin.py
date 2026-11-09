@@ -1,14 +1,21 @@
-"""Owner-only admin: email-delivery (mail) configuration.
+"""Owner-only admin: email-delivery (mail) configuration + customer
+accounts (the approval gate).
 
 Same rule as the Muse QBill build: provider API keys live ONLY server-side
 (the mail_config table or environment variables). They are WRITE-ONLY —
 accepted on POST, never returned by any endpoint, never logged. Saving with
 an empty key field keeps the previously saved key (v13 behavior), so the
 owner can update the From name/email without re-entering keys.
+
+Customer accounts: QBill is sold by the owner, so every account is listed
+here with its signup/last IPs. New accounts are born UNAPPROVED and cannot
+use QBill (auth.require_approved) until he approves them; blocking an
+account un-approves it AND kills its live sessions. His own account can
+never be blocked.
 """
 import logging
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from . import db, mailer
 from .auth import require_owner, require_session
@@ -90,6 +97,90 @@ def mail_test():
     if route is None:
         return jsonify(ok=False, error="; ".join(errors))
     return jsonify(ok=True, route=route)
+
+
+# ------------------------------------------------------- customer list ----
+def _find_account(email):
+    return db.query_one(
+        "SELECT id, email FROM site_accounts WHERE email = ?", (email,)
+    )
+
+
+def _account_email_from_body():
+    data = request.get_json(silent=True) or {}
+    return str(data.get("email") or "").strip().lower()
+
+
+@bp.get("/accounts")
+@require_session
+@require_owner
+def list_accounts():
+    rows = db.query_all(
+        "SELECT a.id, a.email, a.is_owner, a.approved, a.reject_reason, "
+        "a.created_at, a.signup_ip, a.last_ip, "
+        "(SELECT MAX(l.created_at) FROM access_log l "
+        " WHERE l.account_id = a.id AND l.event = 'login') AS last_login_at "
+        "FROM site_accounts a ORDER BY a.id"
+    )
+    return jsonify(
+        ok=True,
+        accounts=[
+            {
+                "email": r["email"],
+                "approved": bool(r["approved"]),
+                "rejectReason": r["reject_reason"],
+                "isOwner": bool(r["is_owner"]),
+                "createdAt": r["created_at"],
+                "signupIp": r["signup_ip"],
+                "lastIp": r["last_ip"],
+                "lastLoginAt": r["last_login_at"],
+            }
+            for r in rows
+        ],
+    )
+
+
+@bp.post("/accounts/approve")
+@require_session
+@require_owner
+def approve_account():
+    email = _account_email_from_body()
+    account = _find_account(email)
+    if account is None:
+        return jsonify(ok=False, error="No account with that email."), 404
+    # Approving is also the owner's override for an auto-rejected
+    # (duplicate-IP) signup: the reject mark is cleared.
+    db.run(
+        "UPDATE site_accounts SET approved = 1, reject_reason = NULL "
+        "WHERE id = ?",
+        (account["id"],),
+    )
+    return jsonify(ok=True, message="Account approved: {}".format(email))
+
+
+@bp.post("/accounts/block")
+@require_session
+@require_owner
+def block_account():
+    email = _account_email_from_body()
+    if email == current_app.config["QBILL_CFG"].owner_email:
+        return (
+            jsonify(ok=False, error="The owner's account cannot be blocked."),
+            400,
+        )
+    account = _find_account(email)
+    if account is None:
+        return jsonify(ok=False, error="No account with that email."), 404
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE site_accounts SET approved = 0 WHERE id = ?",
+            (account["id"],),
+        )
+        # Blocking signs the account out everywhere, immediately.
+        tx.execute(
+            "DELETE FROM sessions WHERE account_id = ?", (account["id"],)
+        )
+    return jsonify(ok=True, message="Account blocked: {}".format(email))
 
 
 @bp.post("/heavy/ping")

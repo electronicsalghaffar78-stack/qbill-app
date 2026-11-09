@@ -141,6 +141,16 @@ def _ddl():
              expires_at TEXT NOT NULL,
              created_at TEXT NOT NULL
            )""",
+        """CREATE TABLE IF NOT EXISTS access_log (
+             id {ID},
+             account_id INTEGER,
+             email TEXT,
+             ip TEXT,
+             event TEXT,
+             created_at TEXT NOT NULL
+           )""",
+        "CREATE INDEX IF NOT EXISTS idx_access_log_account "
+        "ON access_log(account_id, event)",
         """CREATE TABLE IF NOT EXISTS mail_config (
              key TEXT PRIMARY KEY,
              value TEXT,
@@ -245,6 +255,16 @@ _ADDED_COLUMNS = [
     ("auto_backups", "emailed", "INTEGER NOT NULL DEFAULT 0"),
     ("auto_backups", "client_ref", "TEXT"),
     ("sessions", "otp_fresh", "INTEGER NOT NULL DEFAULT 0"),
+    # Owner-approval gate (anti-sharing): accounts created BEFORE this
+    # change keep approved=1 from the DEFAULT; the signup path sets 0
+    # explicitly for new non-owner accounts.
+    ("site_accounts", "approved", "INTEGER NOT NULL DEFAULT 1"),
+    ("site_accounts", "signup_ip", "TEXT"),
+    ("site_accounts", "last_ip", "TEXT"),
+    # 'ip_match' when the signup was auto-rejected as a duplicate-IP
+    # signup; NULL for normal accounts. The owner can clear it by
+    # approving the account.
+    ("site_accounts", "reject_reason", "TEXT"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

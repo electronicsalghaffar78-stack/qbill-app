@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, g, jsonify, request
 
 from . import db
-from .auth import require_session, require_unlocked
+from .auth import require_approved, require_session, require_unlocked
 from .crud import _business_id, _client_ref, _int_field, _party_dict, party_balance_map
 from .security import ApiError, now_iso
 
@@ -119,6 +119,7 @@ def _profile_dict(row):
 
 @bp.get("/business")
 @require_session
+@require_approved
 @require_unlocked
 def get_business():
     with db.transaction() as tx:
@@ -128,6 +129,7 @@ def get_business():
 
 @bp.put("/business")
 @require_session
+@require_approved
 @require_unlocked
 def update_business():
     data = _body()
@@ -164,6 +166,7 @@ def _expense_dict(row):
 
 @bp.post("/expenses")
 @require_session
+@require_approved
 @require_unlocked
 def create_expense():
     data = _body()
@@ -193,6 +196,7 @@ def create_expense():
 
 @bp.get("/expenses")
 @require_session
+@require_approved
 @require_unlocked
 def list_expenses():
     with db.transaction() as tx:
@@ -206,6 +210,7 @@ def list_expenses():
 # --------------------------------------------------------------- payments --
 @bp.post("/payments")
 @require_session
+@require_approved
 @require_unlocked
 def create_payment():
     data = _body()
@@ -275,6 +280,7 @@ def _payment_dict(row):
 # -------------------------------------------------------------- reporting --
 @bp.get("/dashboard")
 @require_session
+@require_approved
 @require_unlocked
 def dashboard():
     with db.transaction() as tx:
@@ -284,6 +290,7 @@ def dashboard():
 
 @bp.get("/pnl")
 @require_session
+@require_approved
 @require_unlocked
 def pnl():
     today = _today()
@@ -304,6 +311,7 @@ def pnl():
 # ----------------------------------------------------------- party ledger --
 @bp.get("/parties/<int:party_id>/ledger")
 @require_session
+@require_approved
 @require_unlocked
 def party_ledger(party_id):
     with db.transaction() as tx:

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 from . import db, mailer
-from .auth import require_session, require_unlocked
+from .auth import require_approved, require_session, require_unlocked
 from .business import compute_dashboard
 from .crud import _business_id, _client_ref
 from .security import ApiError, now_iso
@@ -177,6 +177,7 @@ def maybe_run_daily_backup(business_id):
 # -------------------------------------------------------------- endpoints --
 @bp.post("/run")
 @require_session
+@require_approved
 @require_unlocked
 def run_backup():
     with db.transaction() as tx:
@@ -187,6 +188,7 @@ def run_backup():
 
 @bp.post("/upload")
 @require_session
+@require_approved
 @require_unlocked
 def upload_backup():
     """A device that made its daily snapshot OFFLINE uploads it here with
@@ -225,6 +227,7 @@ def upload_backup():
 
 @bp.get("")
 @require_session
+@require_approved
 @require_unlocked
 def list_backups():
     with db.transaction() as tx:
@@ -277,6 +280,7 @@ def _reset_sequences(tx):
 
 @bp.post("/<int:backup_id>/restore")
 @require_session
+@require_approved
 @require_unlocked
 def restore_backup(backup_id):
     with db.transaction() as tx:

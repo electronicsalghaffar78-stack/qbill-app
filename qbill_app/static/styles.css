@@ -118,6 +118,18 @@ button.row { width: 100%; text-align: left; cursor: pointer; font: inherit; }
   display: flex; align-items: center; justify-content: center; padding: 16px;
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
+
+/* Activation (plans) screen — account created, owner has not activated. */
+#pendingView { max-width: 760px; margin: 0 auto; padding: 28px 12px; }
+.pending-card { max-width: 440px; margin: 24px auto; text-align: center; }
+.pending-card p { font-size: 14.5px; color: #33475b; line-height: 1.55; }
+.plans { display: grid; gap: 10px; margin: 18px 0 6px; }
+.plan { border: 1px solid #e1e7ee; border-radius: 10px; padding: 12px; background: #fbfcfe; }
+.plan-name { font-size: 13px; font-weight: 700; color: #5f7186; text-transform: uppercase; letter-spacing: .4px; }
+.plan-price { font-size: 22px; font-weight: 800; color: #0a2540; margin: 2px 0; }
+.plan-per { font-size: 12.5px; color: #5f7186; }
+.activate-contact { margin-top: 14px; }
+.activate-contact p { margin: 6px 0; }
 .modal-box { width: 100%; max-width: 400px; margin: 0; }
 
 @media (max-width: 520px) {

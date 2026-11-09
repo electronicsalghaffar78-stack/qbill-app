@@ -32,6 +32,16 @@ SESSION / DEVICE MODEL (the simple choice, documented):
   wrong password get the same generic 401 (no account enumeration);
   an account with no password yet gets a 400 pointing at the
   "Create an account" code route instead.
+- "Owner approval" (anti-sharing, owner's order): QBill is SOLD by the
+  owner, so nobody may USE it without his permission. A brand-new
+  account is created UNAPPROVED (approved=0) unless it is the owner's
+  own email; pre-existing accounts keep approved=1 (column default).
+  Every data route refuses an unapproved account with 403 code
+  "pending" BEFORE the locked check (see require_approved); the client
+  shows a "waiting for approval" screen. Signups and logins record the
+  client IP (first X-Forwarded-For entry, else the peer address) on
+  the account (signup_ip / last_ip) and in the access_log table, so
+  the owner sees where every account came from (see admin.py).
 """
 import hmac
 import logging
@@ -78,6 +88,26 @@ def _clean_email(raw):
     return email
 
 
+def client_ip():
+    """The client IP as the owner should see it: behind Render's proxy
+    the real address is the FIRST entry of X-Forwarded-For; direct
+    connections use the peer address."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return request.remote_addr
+
+
+def _log_access(tx, account_id, email, ip, event):
+    tx.execute(
+        "INSERT INTO access_log (account_id, email, ip, event, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (account_id, email, ip, event, now_iso()),
+    )
+
+
 # ------------------------------------------------------------ sessions ----
 def load_session():
     """Return the session+account row for the bearer token, or None."""
@@ -87,7 +117,8 @@ def load_session():
     th = token_hash(header[len("Bearer "):].strip())
     row = db.query_one(
         "SELECT s.id AS session_id, s.account_id, s.unlocked, s.otp_fresh, "
-        "s.expires_at, a.email, a.is_owner, a.pw_salt, a.pw_hash "
+        "s.expires_at, a.email, a.is_owner, a.approved, a.reject_reason, "
+        "a.pw_salt, a.pw_hash "
         "FROM sessions s JOIN site_accounts a ON a.id = s.account_id "
         "WHERE s.token_hash = ?",
         (th,),
@@ -104,6 +135,28 @@ def require_session(fn):
         if not session:
             return jsonify(ok=False, error="Sign-in required."), 401
         g.session = session
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def require_approved(fn):
+    """Data routes only: the owner's approval gate. An account he has
+    not approved (or has blocked) gets a 403 with code "pending" —
+    checked BEFORE the locked check, so a waiting customer always sees
+    the approval message, never a password prompt."""
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not g.session["approved"]:
+            return (
+                jsonify(
+                    ok=False,
+                    code="pending",
+                    error="Your account is waiting for the owner's approval.",
+                ),
+                403,
+            )
         return fn(*args, **kwargs)
 
     return wrapper
@@ -149,10 +202,40 @@ def request_otp():
         )
         is_new = account is None
         if is_new:
-            tx.insert(
-                "INSERT INTO site_accounts (email, is_owner, created_at) "
-                "VALUES (?, ?, ?) RETURNING id",
-                (email, 1 if email == cfg.owner_email else 0, now_iso()),
+            # The account row is born here (request-otp is the signup
+            # door). New accounts start UNAPPROVED — they may not use
+            # QBill until the owner approves them — except the owner's
+            # own email, which is approved from birth. The signup IP
+            # is recorded for the owner's customer list.
+            ip = client_ip()
+            is_owner_email = email == cfg.owner_email
+            # AUTO-REJECT (owner's anti-sharing rule): a signup whose
+            # IP already belongs to a DIFFERENT account is a shared /
+            # resold copy starting up — mark it ip_match so the client
+            # shows "Account not activated" and the owner sees why.
+            # The account is still created (the person stays
+            # identifiable, and the owner CAN approve it by hand).
+            # The owner's own signups are exempt, and with no IP
+            # there is nothing to match.
+            reject_reason = None
+            if not is_owner_email and ip:
+                clash = tx.query_one(
+                    "SELECT id FROM site_accounts "
+                    "WHERE signup_ip = ? AND email != ? LIMIT 1",
+                    (ip, email),
+                )
+                if clash is not None:
+                    reject_reason = "ip_match"
+            account_id = tx.insert(
+                "INSERT INTO site_accounts (email, is_owner, approved, "
+                "signup_ip, last_ip, reject_reason, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                (email, 1 if is_owner_email else 0,
+                 1 if is_owner_email else 0, ip, ip, reject_reason, now_iso()),
+            )
+            _log_access(
+                tx, account_id, email, ip,
+                "signup_rejected_ip" if reject_reason else "signup",
             )
         # One active code per email: a fresh request kills every older code.
         tx.execute(
@@ -217,6 +300,12 @@ def verify_otp():
         account = tx.query_one(
             "SELECT * FROM site_accounts WHERE email = ?", (email,)
         )
+        ip = client_ip()
+        tx.execute(
+            "UPDATE site_accounts SET last_ip = ? WHERE id = ?",
+            (ip, account["id"]),
+        )
+        _log_access(tx, account["id"], email, ip, "login")
         tx.execute(
             "INSERT INTO sessions (token_hash, account_id, unlocked, otp_fresh, expires_at, created_at) "
             "VALUES (?, ?, 0, 1, ?, ?)",
@@ -270,6 +359,12 @@ def login():
     token = new_session_token()
     days = SESSION_DAYS if remember else 1
     with db.transaction() as tx:
+        ip = client_ip()
+        tx.execute(
+            "UPDATE site_accounts SET last_ip = ? WHERE id = ?",
+            (ip, account["id"]),
+        )
+        _log_access(tx, account["id"], email, ip, "login")
         tx.execute(
             "INSERT INTO sessions (token_hash, account_id, unlocked, otp_fresh, expires_at, created_at) "
             "VALUES (?, ?, 1, 0, ?, ?)",
@@ -420,6 +515,8 @@ def me():
         ok=True,
         email=g.session["email"],
         isOwner=bool(g.session["is_owner"]),
+        approved=bool(g.session["approved"]),
+        rejectReason=g.session["reject_reason"],
         hasAppPassword=g.session["pw_hash"] is not None,
         unlocked=bool(g.session["unlocked"]),
         otpFresh=bool(g.session["otp_fresh"]),

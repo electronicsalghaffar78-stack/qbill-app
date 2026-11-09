@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 from . import db
-from .auth import require_session, require_unlocked
+from .auth import require_approved, require_session, require_unlocked
 from .crud import _business_id, _invoice_dict
 from .heavy import heavy_endpoint
 from .security import ApiError
@@ -192,6 +192,7 @@ def render_invoice_pdf(business, invoice, party_name):
 # --------------------------------------------------------------- endpoint --
 @bp.get("/invoices/<int:invoice_id>/pdf")
 @require_session
+@require_approved
 @require_unlocked
 @heavy_endpoint
 def invoice_pdf(invoice_id):

@@ -105,6 +105,9 @@ function handleAuthFailure(status, body) {
   // change-password) must surface its message and keep the session.
   if (status === 401 && body && body.error === "Sign-in required.") { setToken(null); showAuth(); return true; }
   if (status === 403 && body && body.code === "locked") { showLock(); return true; }
+  // The owner has not approved this account (or blocked it mid-use):
+  // re-read /me and land on the waiting screen.
+  if (status === 403 && body && body.code === "pending") { refreshMe(); return true; }
   return false;
 }
 
@@ -334,6 +337,7 @@ var AUTH_STEPS = ["stepOne", "stepLogin", "stepEmail", "stepSignup", "stepForgot
   "stepCode", "stepCreate", "stepWelcome", "stepReset"];
 function showAuthStep(step) {
   $("appView").classList.add("hidden");
+  $("pendingView").classList.add("hidden");
   $("btnLock").classList.add("hidden");
   // A session exists on the password steps, so Log out stays available.
   $("btnLogout").classList.toggle("hidden",
@@ -359,12 +363,29 @@ function showLock() {
   // Session exists but is locked: ask for the password, never a dead end.
   showAuthStep("stepWelcome");
 }
+function showPending() {
+  // Signed in, but the owner has not approved this account yet: show
+  // the activation (plans) screen — neither the app nor the popup.
+  // A duplicate-IP signup first sees WHY it was auto-rejected; a
+  // normal new account sees the plain activation text. Both then
+  // see the same plans and owner contact block.
+  var rejected = !!(me && me.rejectReason === "ip_match");
+  $("pendingIpNote").classList.toggle("hidden", !rejected);
+  $("pendingText").classList.toggle("hidden", rejected);
+  $("authModal").classList.add("hidden");
+  $("appView").classList.add("hidden");
+  $("btnLock").classList.add("hidden");
+  $("btnLogout").classList.remove("hidden");
+  $("pendingView").classList.remove("hidden");
+}
 function showApp() {
   $("authModal").classList.add("hidden");
+  $("pendingView").classList.add("hidden");
   $("appView").classList.remove("hidden");
   $("btnLock").classList.remove("hidden");
   $("btnLogout").classList.remove("hidden");
   $("ownerMailCard").classList.toggle("hidden", !(me && me.isOwner));
+  $("ownerAccountsCard").classList.toggle("hidden", !(me && me.isOwner));
   showScreen(currentScreen || "dashboard");
   maybeDailyBackup();
   syncNow();
@@ -377,7 +398,12 @@ function refreshMe() {
   }).then(function (body) {
     if (!body) return;
     me = body;
-    if (!body.hasAppPassword) {
+    if (!body.isOwner && body.approved === false) {
+      // Waiting for the owner's approval — regardless of locked state
+      // or whether a password exists yet.
+      forgotIntent = false;
+      showPending();
+    } else if (!body.hasAppPassword) {
       forgotIntent = false; // a first password is created, never "reset"
       showAuthStep("stepCreate"); // first time: create a password, NOT a lock screen
     } else if (!body.unlocked) {
@@ -683,13 +709,15 @@ $("btnLock").addEventListener("click", function () {
   apiPost("/api/auth/lock", {}).then(function () { refreshMe(); })
     .catch(function () { showLock(); });
 });
-$("btnLogout").addEventListener("click", function () {
+function doLogout() {
   apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
     setToken(null);
     forgotIntent = false;
     showAuth();
   });
-});
+}
+$("btnLogout").addEventListener("click", doLogout);
+$("btnPendingLogout").addEventListener("click", doLogout);
 
 /* ------------------------------------------------------------ screens -- */
 var currentScreen = "dashboard";
@@ -713,7 +741,7 @@ function loadScreen(name, silent) {
   else if (name === "sale") { loadSaleForm(); loadInvoices(); }
   else if (name === "payments") { loadPayments(); fillPartySelects(); }
   else if (name === "expenses") loadExpenses();
-  else if (name === "settings") { loadProfile(); loadBackups(); if (me && me.isOwner) loadMailConfig(); }
+  else if (name === "settings") { loadProfile(); loadBackups(); if (me && me.isOwner) { loadMailConfig(); loadAccounts(); } }
 }
 
 /* ---------------------------------------------------------- dashboard -- */
@@ -1111,6 +1139,43 @@ $("btnMailTest").addEventListener("click", function () {
     setMsg("mailMsg", "Test email sent via " + (body.route || "a route") + ".");
   }).catch(function (e) { setMsg("mailMsg", e.message, true); });
 });
+
+/* ------------------------------------------- owner: customer accounts -- */
+/* The owner's selling control: every account, its IPs, and an
+   Approve / Block button. A blocked account is also signed out
+   server-side, so its next screen is the waiting page (or sign-in). */
+function loadAccounts() {
+  apiGet("/api/admin/accounts", null).then(function (r) {
+    var list = r.body.accounts || [];
+    var box = $("accountList");
+    box.innerHTML = list.length ? "" : '<p class="empty">No accounts yet.</p>';
+    list.forEach(function (a) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = "<div>" +
+        '<div class="main">' + esc(a.email) + "</div>" +
+        '<div class="sub">' + (a.approved ? "Active" : "Waiting") + "</div>" +
+        (a.rejectReason === "ip_match" ? '<div class="sub">Auto-rejected — same IP</div>' : "") +
+        (a.signupIp ? '<div class="sub">Signed up from IP: ' + esc(a.signupIp) + "</div>" : "") +
+        (a.lastIp ? '<div class="sub">Last IP: ' + esc(a.lastIp) + "</div>" : "") +
+        "</div>";
+      if (!a.isOwner) {
+        var btn = document.createElement("button");
+        btn.className = "btn"; btn.type = "button";
+        btn.textContent = a.approved ? "Block" : "Approve";
+        btn.addEventListener("click", function () {
+          apiPost("/api/admin/accounts/" + (a.approved ? "block" : "approve"),
+            { email: a.email }).then(function (body) {
+              setMsg("accountsMsg", body.message || "Done.");
+              loadAccounts();
+            }).catch(function (e) { setMsg("accountsMsg", e.message, true); });
+        });
+        div.appendChild(btn);
+      }
+      box.appendChild(div);
+    });
+  }).catch(function () {});
+}
 
 /* -------------------------------------------------------------- boot --- */
 /* A login WITHOUT "Remember me" ends when the page goes away: lock the

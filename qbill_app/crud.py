@@ -8,7 +8,7 @@ session with the app password unlocked (see auth.py's session model).
 from flask import Blueprint, g, jsonify, request
 
 from . import db
-from .auth import require_session, require_unlocked
+from .auth import require_approved, require_session, require_unlocked
 from .security import ApiError, now_iso
 
 bp = Blueprint("crud", __name__, url_prefix="/api")
@@ -132,6 +132,7 @@ def _invoice_dict(tx, row):
 # -------------------------------------------------------------- parties ----
 @bp.post("/parties")
 @require_session
+@require_approved
 @require_unlocked
 def create_party():
     data = _body()
@@ -161,6 +162,7 @@ def create_party():
 
 @bp.get("/parties")
 @require_session
+@require_approved
 @require_unlocked
 def list_parties():
     with db.transaction() as tx:
@@ -178,6 +180,7 @@ def list_parties():
 # ---------------------------------------------------------------- items ----
 @bp.post("/items")
 @require_session
+@require_approved
 @require_unlocked
 def create_item():
     data = _body()
@@ -208,6 +211,7 @@ def create_item():
 
 @bp.get("/items")
 @require_session
+@require_approved
 @require_unlocked
 def list_items():
     with db.transaction() as tx:
@@ -221,6 +225,7 @@ def list_items():
 # ------------------------------------------------------------- invoices ----
 @bp.post("/invoices")
 @require_session
+@require_approved
 @require_unlocked
 def create_invoice():
     data = _body()
@@ -329,6 +334,7 @@ def create_invoice():
 
 @bp.get("/invoices")
 @require_session
+@require_approved
 @require_unlocked
 def list_invoices():
     with db.transaction() as tx:
@@ -342,6 +348,7 @@ def list_invoices():
 
 @bp.get("/invoices/<int:invoice_id>")
 @require_session
+@require_approved
 @require_unlocked
 def get_invoice(invoice_id):
     with db.transaction() as tx:
@@ -359,6 +366,7 @@ def get_invoice(invoice_id):
 # ------------------------------------------------------------- payments ----
 @bp.get("/payments")
 @require_session
+@require_approved
 @require_unlocked
 def list_payments():
     with db.transaction() as tx:

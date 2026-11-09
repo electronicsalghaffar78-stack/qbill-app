@@ -179,6 +179,13 @@ r = client.post("/api/auth/set-password", headers=H(user_token),
                 json={"password": "shop-pass-1"})
 check("set-password succeeds and unlocks", r.status_code == 200)
 r = client.get("/api/parties", headers=H(user_token))
+check("unapproved account is refused business data (403 pending)",
+      r.status_code == 403 and r.get_json().get("code") == "pending",
+      r.get_data(as_text=True))
+r = client.post("/api/admin/accounts/approve", headers=H(owner_token),
+                json={"email": email4})
+check("owner approves the shopkeeper account", r.status_code == 200)
+r = client.get("/api/parties", headers=H(user_token))
 check("unlocked session can use business data", r.status_code == 200)
 r = client.post("/api/auth/lock", headers=H(user_token))
 r = client.get("/api/parties", headers=H(user_token))
@@ -626,6 +633,8 @@ check(
     "reported case FIXED: a 4-character password is now accepted",
     r.status_code == 200, r.get_data(as_text=True),
 )
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": email5})  # owner approval opens the data gate
 me5 = client.get("/api/auth/me", headers=H(new_token)).get_json()
 r2 = client.get("/api/parties", headers=H(new_token))
 check(
@@ -687,6 +696,8 @@ check(
     r.status_code == 200 and me6.get("otpFresh") is False,
     r.get_data(as_text=True),
 )
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": email6})  # owner approval opens the data gate
 # Data on the account that must survive the reset:
 r = client.post("/api/parties", headers=H(forgot_a),
                 json={"name": "Forgot Test Party"})
@@ -822,6 +833,8 @@ r = client.post("/api/auth/set-password", headers=H(login_otp_token),
                 json={"password": "mypw42"})
 check("classic login setup: password set via the code route",
       r.status_code == 200, r.get_data(as_text=True))
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": login_email})  # owner approval opens the data gate
 client.post("/api/auth/logout", headers=H(login_otp_token))
 
 r = client.post("/api/auth/login", json={"email": "ghost@example.com",
@@ -920,6 +933,189 @@ check("frontend: app.js makes stepLogin the signed-out default",
       _sa >= 0 and 'showAuthStep("stepLogin")' in js[_sa:_sa + 200])
 check("frontend: no 'login code instead' third route on the login panel",
       'id="btnCodeInstead"' not in html and "Email me a login code instead" not in html)
+
+# ============ 12e. owner approval gate (anti-sharing access control) ====
+# Owner's order: QBill is SOLD by him, so a stranger must not be able to
+# self-register and start billing. A new account is born UNAPPROVED: it
+# can sign in and set a password, but every data route answers 403 with
+# code "pending" until the owner approves it from his customer list —
+# which also shows the signup/last IPs. Blocking un-approves AND kills
+# the account's live sessions; the owner's own account can never be
+# blocked and is approved from birth.
+email8 = "customer@example.com"
+r = client.post("/api/auth/request-otp", json={"email": email8},
+                headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"})
+code8 = latest_code(email8)
+r = client.post("/api/auth/verify-otp", json={"email": email8, "code": code8})
+cust_token = (r.get_json() or {}).get("token")
+r = client.post("/api/auth/set-password", headers=H(cust_token),
+                json={"password": "cust42"})
+check("access: new customer signs in and sets a password",
+      bool(cust_token) and r.status_code == 200, r.get_data(as_text=True))
+me8 = client.get("/api/auth/me", headers=H(cust_token)).get_json()
+r = client.get("/api/dashboard", headers=H(cust_token))
+check(
+    "access: unapproved account gets 403 code 'pending' on data routes",
+    me8.get("approved") is False and r.status_code == 403
+    and r.get_json().get("code") == "pending"
+    and r.get_json().get("error")
+    == "Your account is waiting for the owner's approval.",
+    r.get_data(as_text=True),
+)
+r = client.get("/api/admin/accounts", headers=H(cust_token))
+check("access: a non-owner cannot read the customer list (403)",
+      r.status_code == 403)
+r = client.get("/api/admin/accounts", headers=H(owner_token))
+accts = {a["email"]: a for a in (r.get_json() or {}).get("accounts", [])}
+cust_row = accts.get(email8, {})
+owner_row = accts.get(OWNER, {})
+check(
+    "access: owner list shows the customer, unapproved, signup IP = first XFF entry",
+    r.status_code == 200 and cust_row.get("approved") is False
+    and cust_row.get("isOwner") is False
+    and cust_row.get("signupIp") == "203.0.113.7"
+    and cust_row.get("lastIp") == "127.0.0.1"  # verify-otp call had no XFF: last IP tracks the latest login
+    and cust_row.get("lastLoginAt") is not None,
+    json.dumps(cust_row),
+)
+me_owner = client.get("/api/auth/me", headers=H(owner_token)).get_json()
+check(
+    "access: the owner's own account is approved (list + /me agree)",
+    owner_row.get("approved") is True and owner_row.get("isOwner") is True
+    and me_owner.get("approved") is True,
+    json.dumps(owner_row),
+)
+r = client.post("/api/admin/accounts/approve", headers=H(owner_token),
+                json={"email": "nobody@example.com"})
+check("access: approving an unknown email is a 404", r.status_code == 404)
+r = client.post("/api/admin/accounts/approve", headers=H(owner_token),
+                json={"email": email8})
+r2 = client.get("/api/dashboard", headers=H(cust_token))
+check(
+    "access: after the owner approves, the customer's data opens",
+    r.status_code == 200 and r2.status_code == 200,
+    r2.get_data(as_text=True)[:200],
+)
+r = client.post("/api/admin/accounts/block", headers=H(owner_token),
+                json={"email": OWNER})
+check(
+    "access: the owner's own account can never be blocked (400)",
+    r.status_code == 400
+    and r.get_json().get("error") == "The owner's account cannot be blocked.",
+    r.get_data(as_text=True),
+)
+r = client.post("/api/admin/accounts/block", headers=H(owner_token),
+                json={"email": "nobody@example.com"})
+check("access: blocking an unknown email is a 404", r.status_code == 404)
+r = client.post("/api/admin/accounts/block", headers=H(owner_token),
+                json={"email": email8})
+block_ok = r.status_code == 200
+r = client.get("/api/auth/me", headers=H(cust_token))
+check(
+    "access: blocking kills the customer's live session (me = 401)",
+    block_ok and r.status_code == 401, r.get_data(as_text=True)[:120],
+)
+r = client.post("/api/auth/login", json={"email": email8,
+                                         "password": "cust42", "remember": True})
+cust_token2 = (r.get_json() or {}).get("token")
+r2 = client.get("/api/dashboard", headers=H(cust_token2))
+check(
+    "access: a blocked customer who logs in again is pending again (403)",
+    r.status_code == 200 and bool(cust_token2) and r2.status_code == 403
+    and r2.get_json().get("code") == "pending",
+    r2.get_data(as_text=True)[:200],
+)
+html = client.get("/").get_data(as_text=True)
+check(
+    "frontend: activation (pending) view + owner customer-accounts card served",
+    'id="pendingView"' in html and 'id="ownerAccountsCard"' in html
+    and 'id="accountList"' in html,
+)
+
+# ============ 12f. duplicate-IP auto-reject + activation plans screen ====
+# Owner's anti-sharing rule: a second signup from an IP that already
+# has an account is auto-rejected (reject_reason 'ip_match') — the
+# account is still created so the person stays identifiable, and the
+# owner can override by approving (which clears the mark). Anyone not
+# activated sees the plans screen with the owner's prices.
+def _signup_from_ip(email, ip, password):
+    r = client.post("/api/auth/request-otp", json={"email": email},
+                    headers={"X-Forwarded-For": ip})
+    code = latest_code(email)
+    r = client.post("/api/auth/verify-otp", json={"email": email, "code": code})
+    tok = (r.get_json() or {}).get("token")
+    client.post("/api/auth/set-password", headers=H(tok),
+                json={"password": password})
+    return tok
+
+
+ip_a, ip_b, ip_c = ("ipa@example.com", "ipb@example.com", "ipc@example.com")
+tok_ip_a = _signup_from_ip(ip_a, "198.51.100.9", "shop-a1")
+me_a = client.get("/api/auth/me", headers=H(tok_ip_a)).get_json()
+r = client.get("/api/dashboard", headers=H(tok_ip_a))
+check(
+    "ip: first signup from an IP is a NORMAL pending account (no reject mark)",
+    me_a.get("approved") is False and me_a.get("rejectReason") is None
+    and r.status_code == 403 and r.get_json().get("code") == "pending",
+    json.dumps(me_a),
+)
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": ip_a})
+r = client.get("/api/dashboard", headers=H(tok_ip_a))
+check("ip: the first signup is approvable (dashboard opens)",
+      r.status_code == 200)
+
+tok_ip_b = _signup_from_ip(ip_b, "198.51.100.9", "shop-b1")
+me_b = client.get("/api/auth/me", headers=H(tok_ip_b)).get_json()
+r = client.get("/api/dashboard", headers=H(tok_ip_b))
+rej_event = db.query_one(
+    "SELECT id FROM access_log WHERE email = ? AND event = 'signup_rejected_ip'",
+    (ip_b,),
+)
+ok_event = db.query_one(
+    "SELECT id FROM access_log WHERE email = ? AND event = 'signup'", (ip_a,)
+)
+check(
+    "ip: second signup, different email, SAME IP is auto-rejected (ip_match)",
+    me_b.get("approved") is False and me_b.get("rejectReason") == "ip_match"
+    and r.status_code == 403 and r.get_json().get("code") == "pending"
+    and rej_event is not None and ok_event is not None,
+    json.dumps(me_b),
+)
+r = client.get("/api/admin/accounts", headers=H(owner_token))
+ip_rows = {a["email"]: a for a in (r.get_json() or {}).get("accounts", [])}
+check(
+    "ip: owner list carries the rejectReason for the rejected account",
+    ip_rows.get(ip_b, {}).get("rejectReason") == "ip_match"
+    and ip_rows.get(ip_a, {}).get("rejectReason") is None,
+    json.dumps(ip_rows.get(ip_b)),
+)
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": ip_b})
+me_b = client.get("/api/auth/me", headers=H(tok_ip_b)).get_json()
+r = client.get("/api/dashboard", headers=H(tok_ip_b))
+check(
+    "ip: owner approval OVERRIDES the auto-reject (mark cleared, data opens)",
+    me_b.get("approved") is True and me_b.get("rejectReason") is None
+    and r.status_code == 200,
+    json.dumps(me_b),
+)
+tok_ip_c = _signup_from_ip(ip_c, "203.0.113.99", "shop-c1")
+me_c = client.get("/api/auth/me", headers=H(tok_ip_c)).get_json()
+r = client.get("/api/dashboard", headers=H(tok_ip_c))
+check(
+    "ip: a signup from a DIFFERENT IP is a normal pending account",
+    me_c.get("approved") is False and me_c.get("rejectReason") is None
+    and r.status_code == 403,
+    json.dumps(me_c),
+)
+html = client.get("/").get_data(as_text=True)
+check(
+    "frontend: activation screen shows the owner's plans and heading",
+    "Activate your QBill account" in html
+    and "Rs 30,000" in html and "Rs 60,000" in html and "Rs 70,000" in html
+    and "03273799008" in html,
+)
 
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
