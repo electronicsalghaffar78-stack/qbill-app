@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: qbill
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OWNER_EMAIL
+        value: electronicsalghaffar78@gmail.com
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAILJET_API_KEY
+        sync: false
+      - key: MAILJET_API_SECRET
+        sync: false

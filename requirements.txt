@@ -1,0 +1,7 @@
+flask
+gunicorn
+psycopg[binary]
+requests
+reportlab
+qrcode[pil]
+Pillow

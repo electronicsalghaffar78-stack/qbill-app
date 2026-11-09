@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a2540">
+<title>QBill — Billing for Shopkeepers</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">QBill</div>
+  <div id="syncPill" class="pill pill-on">Online · Auto-sync ON</div>
+  <div class="top-actions">
+    <button id="btnLock" class="btn btn-ghost hidden" type="button">Lock</button>
+    <button id="btnLogout" class="btn btn-ghost hidden" type="button">Log out</button>
+  </div>
+</header>
+
+<main>
+  <!-- ======================= LOGIN ======================= -->
+  <section id="authView" class="card auth-card hidden">
+    <h1>Sign in to QBill</h1>
+    <div id="loginStep1">
+      <label>Your email
+        <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="btnSendCode" class="btn btn-primary btn-block" type="button">Send login code</button>
+      <p class="note">We email you a 6-digit code. It is valid for 10 minutes.</p>
+    </div>
+    <div id="loginStep2" class="hidden">
+      <label>6-digit code from your email
+        <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+      </label>
+      <button id="btnVerifyCode" class="btn btn-primary btn-block" type="button">Verify &amp; sign in</button>
+      <button id="btnBackToEmail" class="btn btn-link btn-block" type="button">Use a different email</button>
+    </div>
+    <p id="authMsg" class="msg"></p>
+  </section>
+
+  <!-- ======================= LOCK ======================= -->
+  <section id="lockView" class="card auth-card hidden">
+    <h1>QBill is locked</h1>
+    <label>Your QBill password
+      <input id="lockPassword" type="password" autocomplete="current-password" placeholder="Password">
+    </label>
+    <button id="btnUnlock" class="btn btn-primary btn-block" type="button">Unlock</button>
+    <p id="lockMsg" class="msg"></p>
+  </section>
+
+  <!-- ======================= APP ======================= -->
+  <div id="appView" class="hidden">
+    <nav class="mainnav">
+      <button data-nav="dashboard" class="navbtn active" type="button">Dashboard</button>
+      <button data-nav="parties" class="navbtn" type="button">Parties</button>
+      <button data-nav="items" class="navbtn" type="button">Items</button>
+      <button data-nav="sale" class="navbtn" type="button">New Sale</button>
+      <button data-nav="payments" class="navbtn" type="button">Payments</button>
+      <button data-nav="expenses" class="navbtn" type="button">Expenses</button>
+      <button data-nav="settings" class="navbtn" type="button">Settings</button>
+    </nav>
+    <p id="offlineNote" class="offline-note hidden">You are offline — showing the last loaded data. New entries are saved on this device and will sync automatically.</p>
+    <p id="appMsg" class="msg"></p>
+
+    <!-- Dashboard -->
+    <section id="screen-dashboard" class="screen">
+      <div class="cards">
+        <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
+        <div class="stat"><span class="stat-label">This Month's Sales</span><span class="stat-value" id="dMonth">—</span></div>
+        <div class="stat"><span class="stat-label">Total Receivable</span><span class="stat-value" id="dReceivable">—</span></div>
+        <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="dCash">—</span></div>
+        <div class="stat"><span class="stat-label">Stock Value</span><span class="stat-value" id="dStock">—</span></div>
+        <div class="stat"><span class="stat-label">Profit (this month)</span><span class="stat-value" id="dProfit">—</span></div>
+      </div>
+    </section>
+
+    <!-- Parties -->
+    <section id="screen-parties" class="screen hidden">
+      <form id="partyForm" class="card form-card">
+        <h2>Add party</h2>
+        <label>Name <input id="partyName" type="text" required></label>
+        <label>Phone <input id="partyPhone" type="text"></label>
+        <label>Opening balance (Rs) <input id="partyOpening" type="number" step="0.01" value="0"></label>
+        <button class="btn btn-primary" type="submit">Add party</button>
+      </form>
+      <div id="partyList" class="list"></div>
+    </section>
+
+    <!-- Party ledger -->
+    <section id="screen-ledger" class="screen hidden">
+      <button id="btnLedgerBack" class="btn btn-link" type="button">← All parties</button>
+      <h2 id="ledgerTitle">Ledger</h2>
+      <p id="ledgerBalance" class="ledger-balance"></p>
+      <div id="ledgerList" class="list"></div>
+    </section>
+
+    <!-- Items -->
+    <section id="screen-items" class="screen hidden">
+      <form id="itemForm" class="card form-card">
+        <h2>Add item</h2>
+        <label>Name <input id="itemName" type="text" required></label>
+        <label>Sale price (Rs) <input id="itemSale" type="number" step="0.01" min="0" value="0"></label>
+        <label>Purchase price (Rs) <input id="itemPurchase" type="number" step="0.01" min="0" value="0"></label>
+        <label>Stock qty <input id="itemStock" type="number" step="1" value="0"></label>
+        <button class="btn btn-primary" type="submit">Add item</button>
+      </form>
+      <div id="itemList" class="list"></div>
+    </section>
+
+    <!-- New Sale -->
+    <section id="screen-sale" class="screen hidden">
+      <form id="saleForm" class="card form-card">
+        <h2>New sale invoice</h2>
+        <label>Party
+          <select id="saleParty"><option value="">Cash Sale</option></select>
+        </label>
+        <div id="saleLines"></div>
+        <button id="btnAddLine" class="btn btn-link" type="button">+ Add line</button>
+        <div class="grid2">
+          <label>Discount (Rs) <input id="saleDiscount" type="number" step="0.01" min="0" value="0"></label>
+          <label>Paid now (Rs) <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
+        </div>
+        <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong></p>
+        <button class="btn btn-primary btn-block" type="submit">Save invoice</button>
+      </form>
+      <div id="saleDone" class="card hidden">
+        <p id="saleDoneText"></p>
+        <button id="btnSalePdf" class="btn btn-primary" type="button">Download PDF</button>
+        <button id="btnSaleNew" class="btn btn-link" type="button">Make another sale</button>
+      </div>
+      <h3>Recent invoices</h3>
+      <div id="invoiceList" class="list"></div>
+    </section>
+
+    <!-- Payments -->
+    <section id="screen-payments" class="screen hidden">
+      <form id="paymentForm" class="card form-card">
+        <h2>Add payment</h2>
+        <label>Party
+          <select id="payParty"><option value="">— None —</option></select>
+        </label>
+        <label>Direction
+          <select id="payDirection">
+            <option value="in">In — party paid us</option>
+            <option value="out">Out — we paid party</option>
+          </select>
+        </label>
+        <label>Amount (Rs) <input id="payAmount" type="number" step="0.01" min="0" required></label>
+        <button class="btn btn-primary" type="submit">Save payment</button>
+      </form>
+      <div id="paymentList" class="list"></div>
+    </section>
+
+    <!-- Expenses -->
+    <section id="screen-expenses" class="screen hidden">
+      <form id="expenseForm" class="card form-card">
+        <h2>Add expense</h2>
+        <label>Title <input id="expTitle" type="text" required></label>
+        <label>Category <input id="expCategory" type="text" placeholder="Rent, Fuel, Salary…"></label>
+        <label>Amount (Rs) <input id="expAmount" type="number" step="0.01" min="0" required></label>
+        <button class="btn btn-primary" type="submit">Save expense</button>
+      </form>
+      <div id="expenseList" class="list"></div>
+    </section>
+
+    <!-- Settings -->
+    <section id="screen-settings" class="screen hidden">
+      <form id="profileForm" class="card form-card">
+        <h2>Business profile</h2>
+        <label>Business name <input id="profName" type="text" required></label>
+        <label>Address <input id="profAddress" type="text"></label>
+        <label>Phone <input id="profPhone" type="text"></label>
+        <label>Email <input id="profEmail" type="email"></label>
+        <button class="btn btn-primary" type="submit">Save profile</button>
+      </form>
+
+      <div class="card form-card">
+        <h2>Backups</h2>
+        <p class="note">A backup is made automatically every day and emailed to your login email. Backups made offline on this device upload themselves when the internet returns.</p>
+        <button id="btnBackupNow" class="btn btn-primary" type="button">Back up now</button>
+        <div id="backupList" class="list"></div>
+      </div>
+
+      <div id="ownerMailCard" class="card form-card hidden">
+        <h2>Email Delivery (OTP) — owner</h2>
+        <p class="note">Keys are kept only on the server and are never shown again. Leave a key field empty to keep the saved key.</p>
+        <p id="mailRoutes" class="note"></p>
+        <label>Resend API key <input id="mkResend" type="password" autocomplete="off" placeholder="Saved / not saved"></label>
+        <label>Brevo API key <input id="mkBrevo" type="password" autocomplete="off" placeholder="Saved / not saved"></label>
+        <label>Mailjet API key <input id="mkMjKey" type="password" autocomplete="off" placeholder="Saved / not saved"></label>
+        <label>Mailjet API secret <input id="mkMjSecret" type="password" autocomplete="off" placeholder="Saved / not saved"></label>
+        <label>From email <input id="mkFromEmail" type="email"></label>
+        <label>From name <input id="mkFromName" type="text"></label>
+        <button id="btnMailSave" class="btn btn-primary" type="button">Save email settings</button>
+        <div class="grid2" style="margin-top:12px">
+          <label>Test email to <input id="mailTestTo" type="email" placeholder="email@example.com"></label>
+          <button id="btnMailTest" class="btn" type="button" style="align-self:end">Send test email</button>
+        </div>
+        <p id="mailMsg" class="msg"></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- ============ SET-PASSWORD MODAL ============ -->
+<div id="pwModal" class="modal hidden">
+  <div class="modal-box card">
+    <h2>Set a password</h2>
+    <p class="note">Set your QBill password. You will use it to open QBill on this device — no email code needed for daily use.</p>
+    <label>New password (min 6 characters)
+      <input id="pwNew" type="password" autocomplete="new-password">
+    </label>
+    <button id="btnSetPassword" class="btn btn-primary btn-block" type="button">Set password &amp; open QBill</button>
+    <p id="pwMsg" class="msg"></p>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
