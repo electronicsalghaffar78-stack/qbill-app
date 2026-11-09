@@ -1,0 +1,43 @@
+name: keep-warm
+
+# Keeps the free Render service awake AND heals it when it jams.
+# Every 10 minutes this pings /healthz. A healthy service answers
+# in seconds and the run ends. If THREE checks spread over ~3
+# minutes all fail, the instance is treated as frozen and the
+# workflow calls the Render deploy hook stored in the
+# RENDER_DEPLOY_HOOK_URL repository secret, which redeploys and
+# restarts the service with no human involved. A single failed
+# ping never triggers a redeploy.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check QBill health, heal via deploy hook if frozen
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          ok=0
+          for i in 1 2 3; do
+            if curl -sS --max-time 45 https://qbill.onrender.com/healthz; then
+              ok=1
+              break
+            fi
+            echo "health check $i failed"
+            sleep 60
+          done
+          if [ "$ok" = "1" ]; then
+            echo "QBill is healthy."
+            exit 0
+          fi
+          echo "QBill appears frozen - triggering a redeploy via the deploy hook."
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret is not set; cannot heal automatically."
+            exit 1
+          fi
+          curl -sS --max-time 60 -X POST "$DEPLOY_HOOK"
+          echo "Redeploy triggered."
