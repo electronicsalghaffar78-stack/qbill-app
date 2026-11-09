@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Store</title>
+<style>
+  :root { --orange:#f26522; --navy:#101c30; --ink:#1c2733; --line:#e3e8ef; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color:var(--ink); background:#f6f8fa; }
+  header { background:var(--navy); color:#fff; padding:16px; position:sticky; top:0; z-index:5; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:2px 0 0; opacity:.85; font-size:13px; }
+  main { max-width:860px; margin:0 auto; padding:14px; }
+  .search { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:9px; font-size:15px; }
+  .pills { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .pill { border:1px solid var(--line); background:#fff; border-radius:999px; padding:6px 13px; font-size:13.5px; cursor:pointer; }
+  .pill.active { background:var(--orange); color:#fff; border-color:var(--orange); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
+  .item { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+  .item .name { font-weight:700; }
+  .item .price { color:var(--orange); font-weight:800; }
+  .item .was { text-decoration:line-through; color:#8a94a6; font-size:13px; font-weight:400; margin-left:6px; }
+  .item .stock { font-size:12.5px; color:#667085; }
+  .item button { margin-top:auto; background:var(--orange); color:#fff; border:none; border-radius:8px; padding:9px; font-weight:700; cursor:pointer; }
+  .item button:disabled { background:#c3cedb; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:14px; }
+  .card h2 { margin:0 0 10px; font-size:17px; }
+  .crow { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #f0f2f5; }
+  .crow .qty button { width:28px; height:28px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  label { display:block; font-size:13.5px; font-weight:600; margin-top:10px; }
+  input, textarea { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; margin-top:4px; font-size:15px; }
+  .order-btn { width:100%; background:var(--orange); color:#fff; border:none; border-radius:9px; padding:13px; font-size:16px; font-weight:800; margin-top:14px; cursor:pointer; }
+  .note { color:#667085; font-size:13px; }
+  .ok { background:#e6f4ea; border:1px solid #a3d9b1; padding:12px; border-radius:10px; }
+  .err { color:#b3261e; }
+  .total { font-weight:800; text-align:right; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="storeName">Online Store</h1>
+  <p id="storeSub">Order online — pay Cash on Delivery.</p>
+</header>
+<main>
+  <p id="storeMsg" class="note">Loading the store…</p>
+  <div id="storeMain" style="display:none">
+    <input id="search" class="search" type="search" placeholder="Search items…">
+    <div class="pills" id="pills"></div>
+    <div class="grid" id="grid"></div>
+    <div class="card" id="cartCard">
+      <h2>Your Cart</h2>
+      <div id="cartRows"><p class="note">Your cart is empty.</p></div>
+      <div class="total" id="cartTotal"></div>
+    </div>
+    <form class="card" id="orderForm">
+      <h2>Place Order — Cash on Delivery</h2>
+      <label>Your name <input id="custName" required></label>
+      <label>Phone (WhatsApp) <input id="custPhone" required></label>
+      <label>Delivery address <textarea id="custAddress" rows="2"></textarea></label>
+      <label>Note <input id="custNote"></label>
+      <p class="note" id="minNote"></p>
+      <button class="order-btn" type="submit">Place Order</button>
+      <p id="orderMsg"></p>
+    </form>
+  </div>
+</main>
+<script>
+(function () {
+  var bizId = (location.pathname.match(/\/store\/(\d+)/) || [])[1];
+  var data = null;
+  var cart = {};
+  try { cart = JSON.parse(localStorage.getItem("qbill_cart_" + bizId) || "{}"); } catch (e) { cart = {}; }
+  var activeCat = "All";
+  function rs(p) {
+    p = Math.abs(p || 0);
+    var r = Math.floor(p / 100), ps = p % 100;
+    return "Rs " + r.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + (ps < 10 ? "0" : "") + ps;
+  }
+  function saveCart() { localStorage.setItem("qbill_cart_" + bizId, JSON.stringify(cart)); }
+  function itemById(id) {
+    return (data.items || []).filter(function (i) { return String(i.itemId) === String(id); })[0];
+  }
+  function priceOf(i) { return i.pricePaisa; }
+  function render() {
+    var q = document.getElementById("search").value.trim().toLowerCase();
+    var cats = ["All"];
+    data.items.forEach(function (i) { if (i.category && cats.indexOf(i.category) < 0) cats.push(i.category); });
+    document.getElementById("pills").innerHTML = cats.map(function (c) {
+      return '<button type="button" class="pill' + (c === activeCat ? " active" : "") + '" data-cat="' + c + '">' + c + "</button>";
+    }).join("");
+    document.querySelectorAll("[data-cat]").forEach(function (b) {
+      b.addEventListener("click", function () { activeCat = b.getAttribute("data-cat"); render(); });
+    });
+    var list = data.items.filter(function (i) {
+      if (activeCat !== "All" && i.category !== activeCat) return false;
+      return !q || i.name.toLowerCase().indexOf(q) >= 0;
+    });
+    document.getElementById("grid").innerHTML = list.length ? list.map(function (i) {
+      var p = priceOf(i);
+      var out = !i.inStock;
+      return '<div class="item"><div class="name">' + i.name + '</div>' +
+        '<div class="price">' + rs(p) + "</div>" +
+        '<div class="stock">' + (out ? "Out of stock" : (i.category || "")) + "</div>" +
+        '<button data-add="' + i.itemId + '"' + (out ? " disabled" : "") + ">Add to Cart</button></div>";
+    }).join("") : '<p class="note">No items match.</p>';
+    document.querySelectorAll("[data-add]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-add");
+        cart[id] = (cart[id] || 0) + 1;
+        saveCart(); renderCart();
+      });
+    });
+    renderCart();
+  }
+  function totals() {
+    var sub = 0;
+    Object.keys(cart).forEach(function (id) {
+      var i = itemById(id);
+      if (i) sub += priceOf(i) * cart[id];
+    });
+    var delivery = sub > 0 ? (data.store.deliveryChargesPaisa || 0) : 0;
+    return { sub: sub, delivery: delivery, total: sub + delivery };
+  }
+  function renderCart() {
+    var rows = Object.keys(cart).filter(function (id) { return cart[id] > 0 && itemById(id); });
+    var box = document.getElementById("cartRows");
+    if (!rows.length) {
+      box.innerHTML = '<p class="note">Your cart is empty.</p>';
+      document.getElementById("cartTotal").textContent = "";
+      return;
+    }
+    box.innerHTML = rows.map(function (id) {
+      var i = itemById(id);
+      return '<div class="crow"><span>' + i.name + " · " + rs(priceOf(i)) + '</span>' +
+        '<span class="qty"><button type="button" data-dec="' + id + '">−</button> ' + cart[id] +
+        ' <button type="button" data-inc="' + id + '">+</button></span>' +
+        "<strong>" + rs(priceOf(i) * cart[id]) + "</strong></div>";
+    }).join("");
+    var t = totals();
+    document.getElementById("cartTotal").textContent =
+      "Subtotal " + rs(t.sub) + (t.delivery ? " · Delivery " + rs(t.delivery) : "") + " · Total " + rs(t.total);
+    box.querySelectorAll("[data-inc]").forEach(function (b) {
+      b.addEventListener("click", function () { cart[b.getAttribute("data-inc")] += 1; saveCart(); renderCart(); });
+    });
+    box.querySelectorAll("[data-dec]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-dec");
+        cart[id] -= 1;
+        if (cart[id] <= 0) delete cart[id];
+        saveCart(); renderCart();
+      });
+    });
+  }
+  document.getElementById("search").addEventListener("input", render);
+  document.getElementById("orderForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var msg = document.getElementById("orderMsg");
+    var lines = Object.keys(cart).filter(function (id) { return cart[id] > 0; })
+      .map(function (id) { return { item_id: parseInt(id, 10), qty: cart[id] }; });
+    if (!lines.length) { msg.textContent = "Your cart is empty."; msg.className = "err"; return; }
+    fetch("/api/public/store/" + bizId + "/order", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customer_name: document.getElementById("custName").value.trim(),
+        phone: document.getElementById("custPhone").value.trim(),
+        address: document.getElementById("custAddress").value.trim(),
+        note: document.getElementById("custNote").value.trim(),
+        lines: lines
+      })
+    }).then(function (resp) {
+      return resp.json().then(function (body) {
+        if (!resp.ok) throw new Error(body.error || "Order failed");
+        cart = {}; saveCart(); render();
+        document.getElementById("orderForm").reset();
+        msg.className = "ok";
+        msg.textContent = "Order placed! Order #" + body.orderId + " · Total " + rs(body.totalPaisa) +
+          ". The shop will contact you on WhatsApp to confirm. Payment is Cash on Delivery.";
+      });
+    }).catch(function (e) { msg.textContent = e.message; msg.className = "err"; });
+  });
+  fetch("/api/public/store/" + bizId).then(function (resp) {
+    return resp.json().then(function (body) {
+      if (!resp.ok) throw new Error(body.error || "Store unavailable");
+      data = body;
+      document.getElementById("storeName").textContent = body.store.name || "Online Store";
+      document.getElementById("storeSub").textContent =
+        (body.store.name || "") + " · Order online — pay Cash on Delivery.";
+      document.title = document.getElementById("storeName").textContent;
+      if (body.store.minOrderPaisa > 0) {
+        document.getElementById("minNote").textContent =
+          "Minimum order amount: " + rs(body.store.minOrderPaisa);
+      }
+      document.getElementById("storeMsg").style.display = "none";
+      document.getElementById("storeMain").style.display = "";
+      render();
+    });
+  }).catch(function (e) {
+    document.getElementById("storeMsg").textContent = e.message;
+    document.getElementById("storeMsg").className = "err";
+  });
+})();
+</script>
+</body>
+</html>

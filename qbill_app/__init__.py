@@ -15,7 +15,7 @@ from . import db
 from .config import Config
 from .security import ApiError
 
-APP_VERSION = "2026-11-09.12-vyapar"
+APP_VERSION = "2026-11-10.13-vyapar2"
 
 
 def create_app():
@@ -38,7 +38,14 @@ def create_app():
     from .backups import bp as backups_bp
     from .business import bp as business_bp
     from .crud import bp as crud_bp
+    from .money import bp as money_bp
     from .pdf import bp as pdf_bp
+    from .reports2 import bp as reports2_bp
+    from .settings_api import bp as settings_bp
+    from .stockx import bp as stockx_bp
+    from .store import bp as store_bp, public_bp as store_public_bp
+    from .team import bp as team_bp
+    from .utilities import bp as utilities_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -46,6 +53,14 @@ def create_app():
     app.register_blueprint(business_bp)
     app.register_blueprint(pdf_bp)
     app.register_blueprint(backups_bp)
+    app.register_blueprint(settings_bp)
+    app.register_blueprint(money_bp)
+    app.register_blueprint(stockx_bp)
+    app.register_blueprint(reports2_bp)
+    app.register_blueprint(team_bp)
+    app.register_blueprint(store_bp)
+    app.register_blueprint(store_public_bp)
+    app.register_blueprint(utilities_bp)
 
     @app.errorhandler(ApiError)
     def _api_error(err):
@@ -84,5 +99,11 @@ def create_app():
         resp = send_from_directory(static_dir, "manifest.webmanifest")
         resp.headers["Content-Type"] = "application/manifest+json"
         return resp
+
+    @app.get("/store/<int:business_id>")
+    def storefront(business_id):
+        # Public Online Store page (Vyapar Online Store): a standalone
+        # page that talks to /api/public/store/<id>.
+        return send_from_directory(static_dir, "store.html")
 
     return app

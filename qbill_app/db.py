@@ -235,6 +235,208 @@ def _ddl():
              client_ref TEXT,
              created_at TEXT NOT NULL
            )""",
+        # ---- Vyapar apply-build (2026-11-10.13) tables ----
+        """CREATE TABLE IF NOT EXISTS business_settings (
+             business_id INTEGER PRIMARY KEY,
+             data TEXT NOT NULL DEFAULT '{{}}'
+           )""",
+        """CREATE TABLE IF NOT EXISTS terms_library (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             header TEXT NOT NULL,
+             description TEXT NOT NULL DEFAULT '',
+             applies TEXT NOT NULL DEFAULT 'sale',
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS godowns (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             gtype TEXT NOT NULL DEFAULT 'Godown',
+             is_main INTEGER NOT NULL DEFAULT 0,
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS godown_stock (
+             id {ID},
+             business_id INTEGER NOT NULL,
+             godown_id INTEGER NOT NULL,
+             item_id INTEGER NOT NULL,
+             qty INTEGER NOT NULL DEFAULT 0,
+             UNIQUE(godown_id, item_id)
+           )""",
+        """CREATE TABLE IF NOT EXISTS stock_transfers (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             item_id INTEGER NOT NULL,
+             from_godown_id INTEGER NOT NULL,
+             to_godown_id INTEGER NOT NULL,
+             qty INTEGER NOT NULL DEFAULT 0,
+             note TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS item_batches (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             item_id INTEGER NOT NULL,
+             batch_no TEXT NOT NULL DEFAULT '',
+             exp_date TEXT NOT NULL DEFAULT '',
+             mfg_date TEXT NOT NULL DEFAULT '',
+             qty INTEGER NOT NULL DEFAULT 0,
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS bank_accounts (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             display_name TEXT NOT NULL,
+             opening_balance_paisa {M} NOT NULL DEFAULT 0,
+             as_of_date TEXT NOT NULL DEFAULT '',
+             account_number TEXT NOT NULL DEFAULT '',
+             iban TEXT NOT NULL DEFAULT '',
+             qr_handle TEXT NOT NULL DEFAULT '',
+             bank_name TEXT NOT NULL DEFAULT '',
+             holder_name TEXT NOT NULL DEFAULT '',
+             print_details INTEGER NOT NULL DEFAULT 0,
+             print_qr INTEGER NOT NULL DEFAULT 0,
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS bank_transactions (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             bank_account_id INTEGER NOT NULL,
+             kind TEXT NOT NULL DEFAULT 'deposit',
+             amount_paisa {M} NOT NULL DEFAULT 0,
+             note TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS cheques (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             cheque_no TEXT NOT NULL DEFAULT '',
+             bank_name TEXT NOT NULL DEFAULT '',
+             amount_paisa {M} NOT NULL DEFAULT 0,
+             party_id INTEGER,
+             status TEXT NOT NULL DEFAULT 'pending',
+             due_date TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS loan_accounts (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             lender TEXT NOT NULL DEFAULT '',
+             principal_paisa {M} NOT NULL DEFAULT 0,
+             paid_paisa {M} NOT NULL DEFAULT 0,
+             interest_bp INTEGER NOT NULL DEFAULT 0,
+             start_date TEXT NOT NULL DEFAULT '',
+             note TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS expense_categories (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             ctype TEXT NOT NULL DEFAULT 'Indirect Expense',
+             UNIQUE(business_id, name)
+           )""",
+        """CREATE TABLE IF NOT EXISTS expense_items (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             UNIQUE(business_id, name)
+           )""",
+        """CREATE TABLE IF NOT EXISTS other_incomes (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             title TEXT NOT NULL,
+             category TEXT NOT NULL DEFAULT '',
+             amount_paisa {M} NOT NULL DEFAULT 0,
+             party_id INTEGER,
+             note TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS income_categories (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             UNIQUE(business_id, name)
+           )""",
+        """CREATE TABLE IF NOT EXISTS chart_accounts (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             group_name TEXT NOT NULL DEFAULT 'Assets',
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS journal_entries (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             entry_date TEXT NOT NULL DEFAULT '',
+             narration TEXT NOT NULL DEFAULT '',
+             total_paisa {M} NOT NULL DEFAULT 0,
+             created_at TEXT NOT NULL,
+             client_ref TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS journal_lines (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             entry_id INTEGER NOT NULL,
+             account_id INTEGER NOT NULL,
+             debit_paisa {M} NOT NULL DEFAULT 0,
+             credit_paisa {M} NOT NULL DEFAULT 0
+           )""",
+        """CREATE TABLE IF NOT EXISTS team_members (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             name TEXT NOT NULL,
+             contact TEXT NOT NULL,
+             role TEXT NOT NULL DEFAULT 'Biller',
+             perms TEXT NOT NULL DEFAULT '{{}}',
+             status TEXT NOT NULL DEFAULT 'active',
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS audit_log (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             invoice_id INTEGER,
+             action TEXT NOT NULL DEFAULT '',
+             detail TEXT NOT NULL DEFAULT '',
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS store_items (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             item_id INTEGER NOT NULL,
+             store_price_paisa {M} NOT NULL DEFAULT 0,
+             in_stock INTEGER NOT NULL DEFAULT 1,
+             UNIQUE(business_id, item_id)
+           )""",
+        """CREATE TABLE IF NOT EXISTS store_orders (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             customer_name TEXT NOT NULL DEFAULT '',
+             phone TEXT NOT NULL DEFAULT '',
+             address TEXT NOT NULL DEFAULT '',
+             total_paisa {M} NOT NULL DEFAULT 0,
+             status TEXT NOT NULL DEFAULT 'pending',
+             invoice_id INTEGER,
+             created_at TEXT NOT NULL
+           )""",
+        """CREATE TABLE IF NOT EXISTS store_order_lines (
+             id {ID},
+             business_id INTEGER NOT NULL REFERENCES businesses(id),
+             order_id INTEGER NOT NULL,
+             item_id INTEGER,
+             qty INTEGER NOT NULL DEFAULT 0,
+             rate_paisa {M} NOT NULL DEFAULT 0,
+             amount_paisa {M} NOT NULL DEFAULT 0
+           )""",
     ]
 
 
@@ -272,6 +474,64 @@ _ADDED_COLUMNS = [
     # a free-text tax note and the business's own terms & conditions.
     ("businesses", "tax_note", "TEXT"),
     ("businesses", "terms", "TEXT"),
+    # ---- Vyapar apply-build (2026-11-10.13) columns ----
+    ("sessions", "active_business_id", "INTEGER"),
+    ("parties", "group_name", "TEXT NOT NULL DEFAULT ''"),
+    ("parties", "status", "TEXT NOT NULL DEFAULT 'active'"),
+    ("parties", "billing_address", "TEXT NOT NULL DEFAULT ''"),
+    ("parties", "shipping_address", "TEXT NOT NULL DEFAULT ''"),
+    ("parties", "email", "TEXT NOT NULL DEFAULT ''"),
+    ("parties", "extras", "TEXT NOT NULL DEFAULT '{}'"),
+    ("parties", "loyalty_points", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "item_type", "TEXT NOT NULL DEFAULT 'product'"),
+    ("items", "item_code", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "category", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "unit", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "secondary_unit", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "conversion", "REAL NOT NULL DEFAULT 0"),
+    ("items", "wholesale_price_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "mrp_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "tax_bp", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "discount_bp", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "min_stock", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "location", "TEXT NOT NULL DEFAULT ''"),
+    ("items", "description", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "due_date", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "payment_terms", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "billing_address", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "shipping_address", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "transport_name", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "vehicle_no", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "delivery_date", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "delivery_location", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "po_number", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "description", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "terms_id", "INTEGER"),
+    ("invoices", "repeat_freq", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "attachment_name", "TEXT NOT NULL DEFAULT ''"),
+    ("invoices", "loyalty_points_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoices", "loyalty_redeemed_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoices", "loyalty_points_earned", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoices", "online_order_id", "INTEGER"),
+    ("invoices", "deleted_at", "TEXT"),
+    ("invoice_lines", "discount_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoice_lines", "tax_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoice_lines", "discount_bp", "INTEGER"),
+    ("invoice_lines", "tax_bp", "INTEGER"),
+    ("invoice_lines", "free_qty", "INTEGER NOT NULL DEFAULT 0"),
+    ("invoice_lines", "batch_no", "TEXT NOT NULL DEFAULT ''"),
+    ("invoice_lines", "exp_date", "TEXT NOT NULL DEFAULT ''"),
+    ("invoice_lines", "serial_no", "TEXT NOT NULL DEFAULT ''"),
+    ("payments", "mode", "TEXT NOT NULL DEFAULT 'cash'"),
+    ("payments", "bank_account_id", "INTEGER"),
+    ("payments", "cheque_no", "TEXT NOT NULL DEFAULT ''"),
+    ("payments", "reference_no", "TEXT NOT NULL DEFAULT ''"),
+    ("payments", "note", "TEXT NOT NULL DEFAULT ''"),
+    ("expenses", "party_id", "INTEGER"),
+    ("expenses", "paid_paisa", "INTEGER"),
+    ("expenses", "expense_item", "TEXT NOT NULL DEFAULT ''"),
+    ("expenses", "category_type", "TEXT NOT NULL DEFAULT ''"),
+    ("expenses", "tax_paisa", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

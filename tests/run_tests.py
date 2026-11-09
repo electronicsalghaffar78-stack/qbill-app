@@ -1275,6 +1275,314 @@ check(
     and 'id="searchTx"' in html and 'data-setcard="transaction"' in html,
 )
 
+# ============ 12h. vyapar2 build (settings, stock, money, store…) =====
+# The consolidated Vyapar apply-build: settings document + terms
+# library, per-line discount/tax, proforma, invoice edit/delete +
+# recycle bin, godowns/batches, bank accounts, allocate, expenses
+# rework, other income, reports, loyalty, online store, team roles,
+# accounting. All against the shopkeeper session (user_token).
+UH = H(user_token)
+
+def _v2_item(name, **kw):
+    payload = {"name": name, "sale_price_paisa": kw.get("sale", 10000),
+               "purchase_price_paisa": kw.get("purchase", 8000),
+               "stock_qty": kw.get("stock", 10)}
+    for key in ("min_stock", "batches", "item_code", "category"):
+        if key in kw:
+            payload[key] = kw[key]
+    rr = client.post("/api/items", headers=UH, json=payload)
+    return rr, (rr.get_json() or {}).get("item", {})
+
+def _v2_sale(party_id, lines, **kw):
+    payload = {"type": "sale", "party_id": party_id, "lines": lines}
+    payload.update(kw)
+    rr = client.post("/api/invoices", headers=UH, json=payload)
+    return rr, (rr.get_json() or {}).get("invoice", {})
+
+# -- settings document round-trip + terms library ----------------------
+r = client.put("/api/settings", headers=UH, json={"settings": {"decimal_places": 0}})
+r2 = client.get("/api/settings", headers=UH)
+check("v2 settings: PUT then GET round-trips a value",
+      r.status_code == 200
+      and (r2.get_json() or {}).get("settings", {}).get("decimal_places") == 0)
+client.put("/api/settings", headers=UH, json={"settings": {"decimal_places": 2}})
+r = client.get("/api/terms", headers=UH)
+terms = (r.get_json() or {}).get("terms", [])
+check("v2 terms: library is seeded with named terms that carry 'applies'",
+      len(terms) >= 6 and all(t.get("applies") for t in terms),
+      "count={}".format(len(terms)))
+r = client.post("/api/terms", headers=UH, json={
+    "header": "V2 Test Terms", "description": "Test only.", "applies": ["sale"]})
+new_term = (r.get_json() or {}).get("term", {})
+r = client.delete("/api/terms/{}".format(new_term.get("id")), headers=UH)
+check("v2 terms: add then delete a term",
+      bool(new_term.get("id")) and r.status_code == 200)
+
+# -- proforma + prefix override ----------------------------------------
+r = client.post("/api/parties", headers=UH, json={"name": "V2 Customer"})
+v2_party = r.get_json()["party"]["id"]
+_, v2_item = _v2_item("V2 Widget", stock=10)
+r, prof = _mkdoc({"type": "proforma", "party_id": v2_party,
+                  "lines": [{"item_id": v2_item["id"], "qty": 2, "rate_paisa": 10000}]})
+stock_now = {i["id"]: i["stockQty"] for i in
+             client.get("/api/items", headers=UH).get_json()["items"]}[v2_item["id"]]
+check("v2 proforma: PI- prefix, no balance, no stock move",
+      r.status_code == 201 and prof.get("invoiceNo", "").startswith("PI-")
+      and prof.get("balancePaisa") == 0 and stock_now == 10,
+      json.dumps(prof))
+client.put("/api/settings", headers=UH, json={"settings": {"prefixes": {"sale": "INV-"}}})
+r, inv_pref = _v2_sale(v2_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}])
+client.put("/api/settings", headers=UH, json={"settings": {"prefixes": {"sale": "S-"}}})
+check("v2 prefixes: a settings prefix override drives the invoice number",
+      inv_pref.get("invoiceNo", "").startswith("INV-"), inv_pref.get("invoiceNo", ""))
+
+# -- per-line discount / tax --------------------------------------------
+client.put("/api/settings", headers=UH, json={"settings": {
+    "tax_enabled": True, "item_wise_tax": True, "item_wise_discount": True}})
+r, inv_lt = _v2_sale(v2_party, [{
+    "item_id": v2_item["id"], "qty": 2, "rate_paisa": 10000,
+    "discount_paisa": 1000, "tax_paisa": 500}])
+client.put("/api/settings", headers=UH, json={"settings": {"tax_enabled": False}})
+check("v2 lines: per-line discount and tax land in the total",
+      inv_lt.get("totalPaisa") == 19500 and inv_lt.get("discountPaisa") == 1000
+      and inv_lt.get("taxPaisa") == 500, json.dumps(inv_lt))
+
+# -- stop sale on negative stock ----------------------------------------
+_, small_item = _v2_item("V2 Scarce", stock=2)
+client.put("/api/settings", headers=UH, json={"settings": {"stop_sale_negative_stock": True}})
+r, _ = _v2_sale(v2_party, [{"item_id": small_item["id"], "qty": 5, "rate_paisa": 10000}])
+client.put("/api/settings", headers=UH, json={"settings": {"stop_sale_negative_stock": False}})
+check("v2 stock: Stop Sale on Negative Stock refuses an oversell (400)",
+      r.status_code == 400)
+
+# -- invoice edit + history ----------------------------------------------
+r, inv_e = _v2_sale(v2_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}])
+stock_mid = {i["id"]: i["stockQty"] for i in
+             client.get("/api/items", headers=UH).get_json()["items"]}[v2_item["id"]]
+r = client.put("/api/invoices/{}".format(inv_e["id"]), headers=UH, json={
+    "type": "sale", "party_id": v2_party, "paid_paisa": 0,
+    "lines": [{"item_id": v2_item["id"], "qty": 3, "rate_paisa": 10000}]})
+inv_e2 = (r.get_json() or {}).get("invoice", {})
+stock_after = {i["id"]: i["stockQty"] for i in
+               client.get("/api/items", headers=UH).get_json()["items"]}[v2_item["id"]]
+hist = client.get("/api/invoices/{}/history".format(inv_e["id"]),
+                  headers=UH).get_json().get("history", [])
+check("v2 edit: PUT re-prices the bill, moves the extra stock, writes history",
+      inv_e2.get("totalPaisa") == 30000 and stock_after == stock_mid - 2
+      and any(h.get("action") == "edited" for h in hist),
+      json.dumps({"total": inv_e2.get("totalPaisa"), "stock": stock_after}))
+
+# -- delete -> recycle bin -> restore -------------------------------------
+stock_before_del = stock_after
+r = client.delete("/api/invoices/{}".format(inv_e["id"]), headers=UH)
+bin_rows = client.get("/api/recycle-bin", headers=UH).get_json().get("invoices", [])
+stock_deleted = {i["id"]: i["stockQty"] for i in
+                 client.get("/api/items", headers=UH).get_json()["items"]}[v2_item["id"]]
+r2 = client.post("/api/recycle-bin/{}/restore".format(inv_e["id"]),
+                 headers=UH, json={})
+stock_restored = {i["id"]: i["stockQty"] for i in
+                  client.get("/api/items", headers=UH).get_json()["items"]}[v2_item["id"]]
+check("v2 recycle: delete reverses stock, bin lists it, restore brings both back",
+      r.status_code == 200
+      and any(b["id"] == inv_e["id"] for b in bin_rows)
+      and stock_deleted == stock_before_del + 3
+      and r2.status_code == 200 and stock_restored == stock_before_del)
+
+# -- godowns + stock transfer + batches ------------------------------------
+godowns = client.get("/api/godowns", headers=UH).get_json().get("godowns", [])
+main_g = [g for g in godowns if g.get("isMain")]
+r = client.post("/api/godowns", headers=UH, json={"name": "V2 Branch", "type": "Retail Store"})
+branch_g = (r.get_json() or {}).get("godown", {})
+_, batch_item = _v2_item("V2 Batched", stock=0, batches=[
+    {"batch_no": "B1", "qty": 6, "exp_date": "03/27", "mfg_date": "01/26"}])
+r = client.post("/api/stock-transfers", headers=UH, json={
+    "item_id": batch_item["id"], "qty": 2,
+    "from_godown_id": main_g[0]["id"], "to_godown_id": branch_g.get("id")})
+branch_stock = client.get("/api/godowns/{}/stock".format(branch_g.get("id")),
+                          headers=UH).get_json().get("items", [])
+batch_rows = client.get("/api/reports/item-batch", headers=UH).get_json().get("rows", [])
+low_rows = client.get("/api/reports/low-stock", headers=UH).get_json().get("rows", [])
+check("v2 stock: main godown exists; transfer lands; batch + low-stock reports read",
+      bool(main_g) and r.status_code in (200, 201)
+      and any(s["id"] == batch_item["id"] and s["qty"] == 2 for s in branch_stock)
+      and any(b["batchNo"] == "B1" for b in batch_rows)
+      and isinstance(low_rows, list))
+_, low_item = _v2_item("V2 Low", stock=3, min_stock=5)
+low_rows = client.get("/api/reports/low-stock", headers=UH).get_json().get("rows", [])
+dash = client.get("/api/dashboard", headers=UH).get_json().get("dashboard", {})
+check("v2 stock: low stock means below Min Stock To Maintain (not zero)",
+      any(x["item"] == "V2 Low" for x in low_rows)
+      and (dash.get("lowStockCount") or 0) >= 1
+      and isinstance(dash.get("salesSeries"), list)
+      and "salesVsLastMonthPct" in dash)
+
+# -- bank accounts, payment via bank, Pay To on the PDF ---------------------
+r = client.post("/api/bank-accounts", headers=UH, json={
+    "display_name": "V2 Bank", "opening_balance_paisa": 100000,
+    "account_number": "PK00V2", "iban": "PK36V2BANK", "qr_handle": "03270000000",
+    "bank_name": "Test Bank", "holder_name": "V2 Holder",
+    "print_details": True, "print_qr": True})
+bank = (r.get_json() or {}).get("bankAccount", {})
+r = client.post("/api/bank-accounts/{}/transact".format(bank.get("id")),
+                headers=UH, json={"kind": "deposit", "amount_paisa": 50000})
+bal = (r.get_json() or {}).get("balancePaisa")
+r, inv_b = _v2_sale(v2_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}])
+r = client.post("/api/payments", headers=UH, json={
+    "party_id": v2_party, "direction": "in", "amount_paisa": 10000,
+    "invoice_id": inv_b["id"], "mode": "bank", "bank_account_id": bank.get("id")})
+txs = client.get("/api/bank-accounts/{}/transactions".format(bank.get("id")),
+                 headers=UH).get_json().get("transactions", [])
+pdf = client.get("/api/invoices/{}/pdf".format(inv_b["id"]), headers=UH)
+check("v2 money: bank balance moves; a bank payment lands as a deposit row; Pay To prints",
+      bal == 150000
+      and any(t.get("kind") == "deposit" and t.get("amountPaisa") == 10000 for t in txs)
+      and pdf.status_code == 200 and b"Pay To" in pdf.get_data(),
+      "balance={} kinds={}".format(bal, [t.get("kind") for t in txs]))
+
+# -- link payments to invoices (allocate) -----------------------------------
+r = client.post("/api/parties", headers=UH, json={"name": "V2 Alloc"})
+alloc_party = r.get_json()["party"]["id"]
+_, a1 = _v2_sale(alloc_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}])
+_, a2 = _v2_sale(alloc_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}])
+r = client.post("/api/payments/allocate", headers=UH, json={
+    "party_id": alloc_party, "amount_paisa": 15000, "direction": "in"})
+alloc = r.get_json() or {}
+check("v2 money: allocate spreads one payment over the oldest bills first",
+      len(alloc.get("allocations", [])) == 2
+      and alloc.get("allocations", [{}])[0].get("amountPaisa") == 10000
+      and alloc.get("unallocatedPaisa") == 0, json.dumps(alloc))
+
+# -- expenses rework + other income ------------------------------------------
+r = client.post("/api/expenses", headers=UH, json={
+    "title": "V2 Generator Diesel", "category": "Fuel", "category_type": "Direct Expense",
+    "expense_item": "Diesel", "amount_paisa": 20000, "paid_paisa": 5000})
+exp = (r.get_json() or {}).get("expense", {})
+cats = client.get("/api/expense-categories", headers=UH).get_json().get("categories", [])
+r = client.post("/api/other-income", headers=UH, json={
+    "title": "V2 Scrap Sale", "category": "Scrap", "amount_paisa": 7000})
+pnl = client.get("/api/pnl", headers=UH).get_json().get("pnl", {})
+check("v2 money: expense keeps paid/balance + a typed category; other income reaches P&L",
+      exp.get("balancePaisa") == 15000
+      and any(c.get("name") == "Fuel" and c.get("type") == "Direct Expense" for c in cats)
+      and (pnl.get("otherIncomePaisa") or 0) >= 7000, json.dumps(exp))
+
+# -- reports smoke ------------------------------------------------------------
+ok_reports = True
+for path, key in (("/api/reports/all-transactions", "entries"),
+                  ("/api/reports/cash-flow", "rows"),
+                  ("/api/reports/tax-rate-report", "rows"),
+                  ("/api/reports/sales-graph?period=monthly", "points"),
+                  ("/api/reports/bill-wise-profit", "rows")):
+    rr = client.get(path, headers=UH)
+    if rr.status_code != 200 or not isinstance((rr.get_json() or {}).get(key), list):
+        ok_reports = False
+check("v2 reports: all-transactions / cash-flow / tax-rate / sales-graph / bill-profit respond",
+      ok_reports)
+
+# -- loyalty -------------------------------------------------------------------
+client.put("/api/settings", headers=UH, json={"settings": {"loyalty": {
+    "enabled": True, "spend_per_point_paisa": 10000, "redeem_value_paisa": 100,
+    "max_redeem_pct": 50, "min_invoice_redeem_paisa": 0,
+    "min_invoice_earn_paisa": 0, "expiry_days": 365}}})
+r = client.post("/api/parties", headers=UH, json={"name": "V2 Loyal"})
+loyal_party = r.get_json()["party"]["id"]
+_, lv = _v2_sale(loyal_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 100000}],
+                 paid_paisa=100000)
+pts = {p["id"]: p["loyaltyPoints"] for p in
+       client.get("/api/parties", headers=UH).get_json()["parties"]}[loyal_party]
+_, lv2 = _v2_sale(loyal_party, [{"item_id": v2_item["id"], "qty": 1, "rate_paisa": 10000}],
+                  paid_paisa=9500, loyalty_points_used=5)
+pts2 = {p["id"]: p["loyaltyPoints"] for p in
+        client.get("/api/parties", headers=UH).get_json()["parties"]}[loyal_party]
+client.put("/api/settings", headers=UH, json={"settings": {"loyalty": {"enabled": False}}})
+check("v2 loyalty: a paid bill earns points; redeeming spends them at the set value",
+      pts == 10 and lv2.get("loyaltyRedeemedPaisa") == 500 and pts2 == 6,
+      "pts={} redeemed={} pts2={}".format(pts, lv2.get("loyaltyRedeemedPaisa"), pts2))
+
+# -- online store ----------------------------------------------------------------
+r = client.get("/api/store/settings", headers=UH)
+biz_id = (r.get_json() or {}).get("businessId")
+client.put("/api/store/settings", headers=UH, json={"store": {
+    "enabled": True, "delivery_charges_paisa": 10000, "accept_orders": True}})
+client.put("/api/store/items/{}".format(v2_item["id"]), headers=UH, json={
+    "listed": True, "store_price_paisa": 12000, "in_stock": True})
+pub = client.get("/api/public/store/{}".format(biz_id))
+pub_items = (pub.get_json() or {}).get("items", [])
+r = client.post("/api/public/store/{}/order".format(biz_id), json={
+    "customer_name": "Web Buyer", "phone": "03001112222",
+    "address": "Larkana", "lines": [{"item_id": v2_item["id"], "qty": 1}]})
+order_id = (r.get_json() or {}).get("orderId")
+r2 = client.post("/api/store/orders/{}/convert".format(order_id), headers=UH, json={})
+conv = r2.get_json() or {}
+orders = client.get("/api/store/orders", headers=UH).get_json().get("orders", [])
+client.put("/api/store/settings", headers=UH, json={"store": {"enabled": False}})
+check("v2 store: public catalogue + COD order + convert-to-sale (delivery rides along)",
+      pub.status_code == 200 and any(i["itemId"] == v2_item["id"] for i in pub_items)
+      and r.status_code == 201
+      and conv.get("invoiceId") and conv.get("order", {}).get("totalPaisa") == 22000
+      and any(o["id"] == order_id and o["status"] == "converted" for o in orders),
+      json.dumps({"order": order_id, "conv": conv.get("order", {}).get("totalPaisa")}))
+
+# -- team & roles ------------------------------------------------------------------
+tok_member = _signup_from_ip("member2@example.com", "198.51.100.77", "member-pass-1")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "member2@example.com"})
+r = client.post("/api/team", headers=UH, json={
+    "name": "Member Two", "contact": "member2@example.com", "role": "Biller"})
+r = client.post("/api/team/switch", headers=H(tok_member), json={"business_id": biz_id})
+me_m = client.get("/api/auth/me", headers=H(tok_member)).get_json()
+r = client.post("/api/expenses", headers=H(tok_member), json={
+    "title": "Nope", "amount_paisa": 100})
+denied = r.status_code == 403 and (r.get_json() or {}).get("code") == "forbidden_role"
+client.post("/api/team/switch", headers=H(tok_member), json={"business_id": None})
+check("v2 team: member switches into the shop as Biller; Expenses create is refused by role",
+      me_m.get("activeBusinessId") == biz_id and me_m.get("activeRole") == "Biller"
+      and denied, json.dumps(me_m))
+
+# -- accounting ----------------------------------------------------------------------
+client.put("/api/settings", headers=UH, json={"settings": {"accounting_enabled": True}})
+accts = client.get("/api/accounts", headers=UH).get_json().get("accounts", [])
+ids = [a["id"] for a in accts[:2]]
+r = client.post("/api/journal", headers=UH, json={
+    "narration": "V2 unbalanced", "lines": [
+        {"account_id": ids[0], "debit_paisa": 1000, "credit_paisa": 0},
+        {"account_id": ids[1], "debit_paisa": 0, "credit_paisa": 500}]})
+unbalanced_refused = r.status_code == 400
+r = client.post("/api/journal", headers=UH, json={
+    "narration": "V2 balanced", "lines": [
+        {"account_id": ids[0], "debit_paisa": 1000, "credit_paisa": 0},
+        {"account_id": ids[1], "debit_paisa": 0, "credit_paisa": 1000}]})
+tb = client.get("/api/reports/trial-balance", headers=UH).get_json()
+bs = client.get("/api/reports/balance-sheet", headers=UH).get_json()
+client.put("/api/settings", headers=UH, json={"settings": {"accounting_enabled": False}})
+check("v2 accounting: seeded chart; Debit=Credit enforced; trial balance balances",
+      len(accts) >= 11 and unbalanced_refused and r.status_code in (200, 201)
+      and tb.get("totalDebitPaisa") == tb.get("totalCreditPaisa")
+      and "totalAssetsPaisa" in bs)
+
+# -- utilities: import + verify -------------------------------------------------------
+r = client.post("/api/utilities/import/validate", headers=UH, json={
+    "kind": "items", "rows": [
+        {"name": "V2 Imported", "sale_price": "10.00", "stock_qty": "4"},
+        {"sale_price": "5.00"}]})
+val = r.get_json() or {}
+r2 = client.post("/api/utilities/import/confirm", headers=UH, json={
+    "kind": "items", "batch": "v2batch1", "rows": val.get("valid", [])})
+verify = client.get("/api/utilities/verify", headers=UH).get_json().get("checks", [])
+check("v2 utilities: import validates (1 valid / 1 error), imports, data verifies clean",
+      len(val.get("valid", [])) == 1 and len(val.get("errors", [])) == 1
+      and (r2.get_json() or {}).get("imported") == 1
+      and verify and all(c.get("ok") for c in verify),
+      json.dumps({"valid": len(val.get("valid", [])), "checks": verify}))
+
+# -- frontend: new screens are served --------------------------------------------------
+html = client.get("/").get_data(as_text=True)
+check("v2 frontend: graph, widgets, store, preview and print settings markup served",
+      'id="saleGraph"' in html and "data-widget" in html
+      and 'id="screen-store"' in html and 'id="screen-preview"' in html
+      and 'data-setcard="print"' in html and 'id="screen-accounting"' in html
+      and 'id="screen-utilities"' in html and 'id="screen-grow"' in html)
+
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
 r = client.get("/api/auth/me", headers=H(owner_token))

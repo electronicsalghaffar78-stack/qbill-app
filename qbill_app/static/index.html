@@ -33,6 +33,7 @@
         <button class="mega-item" data-act="doc:sale_return" type="button"><span>Sale Return <em>Cr Note</em></span><kbd>Alt + R</kbd></button>
         <button class="mega-item" data-act="doc:sale_order" type="button"><span>Sale Order</span><kbd>Alt + F</kbd></button>
         <button class="mega-item" data-act="doc:estimate" type="button"><span>Estimate/Quotation</span><kbd>Alt + M</kbd></button>
+        <button class="mega-item" data-act="doc:proforma" type="button"><span>Proforma Invoice</span><kbd>Alt + N</kbd></button>
         <button class="mega-item" data-act="doc:challan" type="button"><span>Delivery Challan</span><kbd>Alt + D</kbd></button>
       </div>
       <div class="mega-col">
@@ -45,6 +46,7 @@
       <div class="mega-col">
         <h4>OTHERS</h4>
         <button class="mega-item" data-act="expenses" type="button"><span>Expenses</span><kbd>Alt + E</kbd></button>
+        <button class="mega-item" data-act="otherincome" type="button"><span>Other Income</span><kbd>Alt + Y</kbd></button>
       </div>
     </div>
     <div class="mega-foot">Shortcut to open this menu: <kbd>Ctrl</kbd> + <kbd>Enter</kbd></div>
@@ -64,6 +66,7 @@
         <div class="nav-group-body" id="group-sale">
           <button data-nav="salebook" class="navbtn sub" type="button">Sale Invoices</button>
           <button data-nav="estimates" class="navbtn sub" type="button">Estimate/Quotation</button>
+          <button data-nav="proformas" class="navbtn sub" type="button">Proforma Invoice</button>
           <button data-nav="paymentin" class="navbtn sub" type="button">Payment In</button>
           <button data-nav="saleorders" class="navbtn sub" type="button">Sale Order</button>
           <button data-nav="challans" class="navbtn sub" type="button">Delivery Challan</button>
@@ -81,15 +84,33 @@
       </div>
       <button data-nav="quickbilling" class="navbtn" type="button">Quick Billing</button>
       <button data-nav="expenses" class="navbtn" type="button">Expenses</button>
+      <button data-nav="otherincome" class="navbtn" id="navOtherIncome" type="button">Other Income</button>
       <button data-nav="cashbank" class="navbtn" type="button">Cash &amp; Bank</button>
+      <div class="nav-group">
+        <button class="nav-group-head" data-group="stock" type="button">STOCK <span class="chev">▾</span></button>
+        <div class="nav-group-body" id="group-stock">
+          <button data-nav="godowns" class="navbtn sub" type="button">Manage Godowns</button>
+          <button data-nav="stocktransfer" class="navbtn sub" type="button">Stock Transfer</button>
+          <button data-nav="lowstock" class="navbtn sub" type="button">Low Stock Summary</button>
+          <button data-nav="stockdetail" class="navbtn sub" type="button">Stock Detail</button>
+        </div>
+      </div>
       <div class="nav-group">
         <button class="nav-group-head" data-group="reports" type="button">REPORTS <span class="chev">▾</span></button>
         <div class="nav-group-body" id="group-reports">
           <button data-nav="pnl" class="navbtn sub" type="button">Profit &amp; Loss</button>
           <button data-nav="daybook" class="navbtn sub" type="button">Day Book</button>
           <button data-nav="stock" class="navbtn sub" type="button">Stock Summary</button>
+          <button data-nav="reports" class="navbtn sub" type="button">All Reports</button>
+          <button data-nav="salesgraph" class="navbtn sub" type="button">Sales Graph</button>
         </div>
       </div>
+      <button data-nav="store" class="navbtn" id="navStore" type="button">Online Store</button>
+      <button data-nav="loyalty" class="navbtn" type="button">Loyalty Points</button>
+      <button data-nav="accounting" class="navbtn" id="navAccounting" type="button">Accounting</button>
+      <button data-nav="team" class="navbtn" type="button">Sync, Share &amp; Backup</button>
+      <button data-nav="utilities" class="navbtn" type="button">Utilities</button>
+      <button data-nav="grow" class="navbtn" type="button">Grow Your Business</button>
       <button data-nav="settings" class="navbtn" type="button">Settings</button>
     </nav>
     <div class="side-foot"><div id="syncPillSide" class="pill pill-on">Online · Auto-sync ON</div></div>
@@ -101,6 +122,7 @@
   <div id="appView" class="hidden">
     
     <p id="offlineNote" class="offline-note hidden">You are offline — showing the last loaded data. New entries are saved on this device and will sync automatically.</p>
+    <p id="memberBanner" class="offline-note hidden">You are now logged in as <strong id="memberRoleName"></strong> in <strong id="memberBizName"></strong>. <button id="btnSwitchOwn" class="btn btn-link" type="button">Switch to my own business</button></p>
     <p id="appMsg" class="msg"></p>
 
     <!-- Dashboard -->
@@ -108,16 +130,47 @@
       <div class="dash-grid">
         <div class="dash-main">
           <div class="card sale-hero">
-            <div class="sale-hero-top"><span class="stat-label">Sale</span><span class="hero-per">This Month</span></div>
+            <div class="sale-hero-top"><span class="stat-label">Sale</span><span class="hero-per" id="dVsLast">This Month</span></div>
             <div class="hero-value" id="dMonth">—</div>
             <div class="hero-sub">Total Sale (This Month)</div>
           </div>
+          <div class="card">
+            <div class="book-head">
+              <h3 style="margin:0">Total Sale</h3>
+              <div style="display:flex; gap:8px; align-items:center">
+                <span class="hero-per" id="saleGraphPct" style="background:#eef4ff; color:#174a75"></span>
+                <select id="saleGraphPeriod" style="width:auto; margin:0">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+                <button id="btnPrivacy" class="btn btn-mini" type="button" title="Hide amounts">👁 Hide amounts</button>
+              </div>
+            </div>
+            <div id="saleGraphWrap" style="position:relative">
+              <svg id="saleGraph" width="100%" height="180" viewBox="0 0 640 180" preserveAspectRatio="none" aria-label="Total Sale graph"></svg>
+              <div id="saleGraphTip" class="graph-tip hidden"></div>
+            </div>
+            <p class="note" id="saleGraphNote">Hover a point to see the date and amount.</p>
+          </div>
           <div class="cards">
             <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
-            <div class="stat"><span class="stat-label">You'll Receive</span><span class="stat-value pos" id="dReceivable">—</span></div>
+            <div class="stat"><span class="stat-label">You'll Receive</span><span class="stat-value pos" id="dReceivable">—</span><span class="note" id="dTopParty"></span></div>
             <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span></div>
             <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span></div>
             <div class="stat"><span class="stat-label">Profit (This Month)</span><span class="stat-value" id="dProfit">—</span></div>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0">Most Used Reports</h3>
+            <div class="filter-chips" style="margin:0">
+              <button class="fchip" data-report-link="all-transactions" type="button">All Transactions</button>
+              <button class="fchip" data-report-link="bill-wise-profit" type="button">Bill Wise Profit</button>
+              <button class="fchip" data-report-link="cash-flow" type="button">Cash Flow</button>
+              <button class="fchip" data-report-link="party-pnl" type="button">Party wise P&amp;L</button>
+              <button class="fchip" data-report-link="tax-report" type="button">Tax Report</button>
+              <button class="fchip" data-report-link="low-stock" type="button">Low Stock Summary</button>
+            </div>
           </div>
         </div>
         <aside class="dash-side">
@@ -126,14 +179,33 @@
             <div class="kv"><span>Stock Value</span><strong id="dStock">—</strong></div>
             <div class="kv hidden" id="dLowRow"><span>Low Stocks</span><strong class="neg-text" id="dLowStock">0 items</strong></div>
           </div>
+          <div class="card side-card hidden" id="dExpiringCard">
+            <h3>Expiring Stocks</h3>
+            <div id="dExpiringList"></div>
+          </div>
           <div class="card side-card">
             <h3>Sale</h3>
             <div class="kv"><span>Sale Orders (Open)</span><strong id="dOpenOrders">0</strong></div>
             <div class="kv"><span>Delivery Challans (Open)</span><strong id="dOpenChallans">0</strong></div>
           </div>
-          <div class="card side-card">
+          <div class="card side-card" id="widgetCashCard">
             <h3>Cash &amp; Bank</h3>
             <div class="kv"><span>Cash in Hand</span><strong id="dCash">—</strong></div>
+            <div class="kv" id="widgetBankRow"><span>Total Bank Balance</span><strong id="dBank">—</strong></div>
+          </div>
+          <div class="card side-card">
+            <h3>Add Widget of Your Choice</h3>
+            <label class="check-row"><input type="checkbox" data-widget="cash_in_hand"> <span>Cash In Hand</span></label>
+            <label class="check-row"><input type="checkbox" data-widget="bank_balance"> <span>Total Bank Balance</span></label>
+            <label class="check-row"><input type="checkbox" data-widget="low_stock"> <span>Low Stocks Items</span></label>
+            <label class="check-row"><input type="checkbox" data-widget="expiring_stock"> <span>Expiring Stocks</span></label>
+            <label style="margin-top:8px">Expiring Stocks range
+              <select id="expiringRange">
+                <option value="7">Next 7 days</option>
+                <option value="30" selected>Next 30 days</option>
+                <option value="90">Next 90 days</option>
+              </select>
+            </label>
           </div>
         </aside>
       </div>
@@ -142,12 +214,34 @@
     <!-- Parties -->
     <section id="screen-parties" class="screen hidden">
       <form id="partyForm" class="card form-card">
-        <h2>Add party</h2>
-        <label>Name <input id="partyName" type="text" required></label>
-        <label>Phone <input id="partyPhone" type="text"></label>
-        <label>Opening balance (Rs) <input id="partyOpening" type="number" step="0.01" value="0"></label>
-        <button class="btn btn-primary" type="submit">Add party</button>
+        <h2 id="partyFormTitle">Add party</h2>
+        <div class="grid2">
+          <label>Name <input id="partyName" type="text" required></label>
+          <label>Phone <input id="partyPhone" type="text"></label>
+          <label>Opening balance (Rs) <input id="partyOpening" type="number" step="0.01" value="0"></label>
+          <label>Party Group
+            <select id="partyGroup"><option value="">— No group —</option></select>
+          </label>
+          <label>New group name <input id="partyGroupNew" type="text" placeholder="Or type a new group"></label>
+          <label>Status
+            <select id="partyStatus"><option value="active">Active</option><option value="inactive">Inactive</option></select>
+          </label>
+          <label>Email <input id="partyEmail" type="email"></label>
+          <label>Loyalty Points <input id="partyLoyalty" type="number" step="1" min="0" value="0"></label>
+        </div>
+        <label>Billing Address <textarea id="partyBilling" rows="2"></textarea></label>
+        <label>Shipping Address <textarea id="partyShipping" rows="2"></textarea></label>
+        <div class="grid2" id="partyExtras"></div>
+        <button class="btn btn-primary" type="submit" id="partySubmitBtn">Add party</button>
+        <button class="btn btn-link hidden" id="partyCancelEdit" type="button">Cancel edit</button>
       </form>
+      <div class="card hidden" id="reminderCard">
+        <h2>Payment Reminders</h2>
+        <p class="note">Parties with money due. Send a reminder on WhatsApp — one tap per party, or open them one by one from the bulk list.</p>
+        <button class="btn btn-primary" id="btnSendRemindersBulk" type="button">Send Reminders in Bulk</button>
+        <div id="reminderList" class="list" style="margin-top:10px"></div>
+      </div>
+      <div class="filter-chips" id="partyGroupChips"></div>
       <div id="partyList" class="list"></div>
     </section>
 
@@ -161,15 +255,138 @@
 
     <!-- Items -->
     <section id="screen-items" class="screen hidden">
-      <form id="itemForm" class="card form-card">
-        <h2>Add item</h2>
-        <label>Name <input id="itemName" type="text" required></label>
-        <label>Sale price (Rs) <input id="itemSale" type="number" step="0.01" min="0" value="0"></label>
-        <label>Purchase price (Rs) <input id="itemPurchase" type="number" step="0.01" min="0" value="0"></label>
-        <label>Stock qty <input id="itemStock" type="number" step="1" value="0"></label>
-        <button class="btn btn-primary" type="submit">Add item</button>
-      </form>
-      <div id="itemList" class="list"></div>
+      <div class="filter-chips">
+        <button class="fchip active" data-itemtab="products" type="button">PRODUCTS</button>
+        <button class="fchip" data-itemtab="services" type="button">SERVICES</button>
+        <button class="fchip" data-itemtab="category" type="button">CATEGORY</button>
+        <button class="fchip" data-itemtab="units" type="button">UNITS</button>
+      </div>
+      <div id="itemsMain">
+        <form id="itemForm" class="card form-card">
+          <h2 id="itemFormTitle">Add Item</h2>
+          <div class="grid2">
+            <label>Item Name <input id="itemName" type="text" required></label>
+            <label>Type
+              <select id="itemType"><option value="product">Product</option><option value="service">Service</option></select>
+            </label>
+            <label>Item Code
+              <span style="display:flex; gap:6px"><input id="itemCode" type="text" style="margin-top:0"><button id="btnAssignCode" class="btn btn-mini" type="button">Assign Code</button></span>
+            </label>
+            <label>Category
+              <select id="itemCategory"><option value="">— None —</option></select>
+            </label>
+            <label>New category <input id="itemCategoryNew" type="text" placeholder="Or type a new category"></label>
+            <label>Sale price (Rs) <input id="itemSale" type="number" step="0.01" min="0" value="0"></label>
+            <label>Purchase price (Rs) <input id="itemPurchase" type="number" step="0.01" min="0" value="0"></label>
+            <label>Wholesale price (Rs) <input id="itemWholesale" type="number" step="0.01" min="0" value="0"></label>
+            <label>MRP (Rs) <input id="itemMrp" type="number" step="0.01" min="0" value="0"></label>
+            <label>Tax % <input id="itemTaxPct" type="number" step="0.01" min="0" value="0"></label>
+            <label>Discount % <input id="itemDiscountPct" type="number" step="0.01" min="0" value="0"></label>
+            <label>Unit
+              <select id="itemUnit"></select>
+            </label>
+            <label>Secondary Unit
+              <select id="itemSecondaryUnit"><option value="">— None —</option></select>
+            </label>
+            <label>Conversion (1 primary = ? secondary) <input id="itemConversion" type="number" step="0.01" min="0" value="0"></label>
+            <label>Min Stock To Maintain <input id="itemMinStock" type="number" step="1" min="0" value="0"></label>
+            <label>Item Location <input id="itemLocation" type="text" placeholder="e.g. Rack 3, Main Godown shelf"></label>
+          </div>
+          <label>Description <textarea id="itemDescription" rows="2"></textarea></label>
+          <div id="itemStockBlock">
+            <label>Opening stock qty <input id="itemStock" type="number" step="1" value="0"></label>
+            <h3>ITEM TRACKING DETAIL — batch-wise opening stock</h3>
+            <div id="batchRows"></div>
+            <button id="btnAddBatchRow" class="btn btn-link" type="button">+ Add Batch</button>
+            <p class="note">When batches are added, the opening stock becomes the total of the batches.</p>
+          </div>
+          <button class="btn btn-primary" type="submit" id="itemSubmitBtn">Add Item</button>
+          <button class="btn btn-link hidden" id="itemCancelEdit" type="button">Cancel edit</button>
+        </form>
+        <div class="card">
+          <h3 style="margin-top:0">Bulk tools</h3>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button id="btnBulkImport" class="btn" type="button">Bulk Import Items</button>
+            <button id="btnBulkUpdate" class="btn" type="button">Bulk Update Items</button>
+            <button id="btnBulkSheet" class="btn" type="button">Add Items (bulk sheet)</button>
+          </div>
+          <div id="bulkImportBox" class="hidden" style="margin-top:12px">
+            <p class="note">1) Download the template. 2) Fill it. 3) Choose the file — rows are checked first (Valid / Errors), then imported.</p>
+            <p><a href="#" id="lnkItemTemplate">Download Items template (CSV)</a> · <a href="#" id="lnkPartyTemplate">Download Parties template (CSV)</a></p>
+            <label>Import kind
+              <select id="importKind"><option value="items">Items</option><option value="parties">Parties</option></select>
+            </label>
+            <input id="importFile" type="file" accept=".csv,text/csv">
+            <div class="filter-chips" style="margin-top:10px">
+              <button class="fchip active" data-importtab="valid" type="button">Valid (<span id="importValidCount">0</span>)</button>
+              <button class="fchip" data-importtab="errors" type="button">Errors (<span id="importErrorCount">0</span>)</button>
+            </div>
+            <div id="importResult" class="list"></div>
+            <button id="btnImportGo" class="btn btn-primary hidden" type="button">Import valid rows</button>
+          </div>
+          <div id="bulkUpdateBox" class="hidden" style="margin-top:12px">
+            <p class="note">Edit prices and stock in the grid, then Save. Tabs: Pricing / Stock / Item Information are all in this one grid.</p>
+            <div class="table-card card" style="padding:0; overflow-x:auto">
+              <table class="tx-table"><thead><tr><th>Item</th><th class="num">Sale (Rs)</th><th class="num">Purchase (Rs)</th><th class="num">Wholesale (Rs)</th><th class="num">MRP (Rs)</th><th class="num">Stock</th><th class="num">Min Stock</th></tr></thead><tbody id="bulkUpdateBody"></tbody></table>
+            </div>
+            <button id="btnBulkUpdateSave" class="btn btn-primary" type="button">Save all changes</button>
+          </div>
+          <div id="bulkSheetBox" class="hidden" style="margin-top:12px">
+            <div id="bulkSheetRows"></div>
+            <button id="btnBulkSheetRow" class="btn btn-link" type="button">+ Add Row</button>
+            <button id="btnBulkSheetSave" class="btn btn-primary" type="button">Save all items</button>
+          </div>
+        </div>
+        <div id="itemList" class="list"></div>
+      </div>
+      <div id="itemsCategory" class="hidden">
+        <div class="card">
+          <h2>Item Categories</h2>
+          <div id="categoryList" class="list"></div>
+          <div class="grid2" style="margin-top:10px">
+            <label>New category <input id="catNew" type="text"></label>
+            <button id="btnCatAdd" class="btn" type="button" style="align-self:end">Add Category</button>
+          </div>
+        </div>
+      </div>
+      <div id="itemsUnits" class="hidden">
+        <div class="card">
+          <h2>Units</h2>
+          <div id="unitList" class="list"></div>
+          <div class="grid2" style="margin-top:10px">
+            <label>Unit name <input id="unitNew" type="text" placeholder="e.g. Box"></label>
+            <label>Secondary unit <input id="unitNewSecondary" type="text" placeholder="e.g. Pcs"></label>
+            <label>Conversion (1 unit = ? secondary) <input id="unitNewConv" type="number" step="0.01" value="0"></label>
+            <button id="btnUnitAdd" class="btn" type="button" style="align-self:end">Add Unit</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Item detail -->
+    <section id="screen-itemdetail" class="screen hidden">
+      <button id="btnItemBack" class="btn btn-link" type="button">← All items</button>
+      <h2 id="itemDetailTitle">Item</h2>
+      <p id="itemDetailSub" class="sub"></p>
+      <div class="card">
+        <h3 style="margin-top:0">Add Stock - Batches</h3>
+        <div class="grid2">
+          <label>Batch No. <input id="batchNo" type="text"></label>
+          <label>Quantity <input id="batchQty" type="number" step="1" min="1" value="1"></label>
+          <label>Exp Date (mm/yy) <input id="batchExp" type="text" placeholder="12/27"></label>
+          <label>Mfg Date <input id="batchMfg" type="text" placeholder="01/26"></label>
+        </div>
+        <button id="btnBatchAdd" class="btn btn-primary" type="button">Add Batch Stock</button>
+        <div id="batchList" class="list" style="margin-top:10px"></div>
+      </div>
+      <div class="card table-card">
+        <h3 style="padding:10px 14px 0">Transactions</h3>
+        <table class="tx-table">
+          <thead><tr><th>Date</th><th>Type</th><th>Ref</th><th class="num">Qty</th><th class="num">Amount</th><th>Status</th></tr></thead>
+          <tbody id="itemTxBody"></tbody>
+        </table>
+        <p id="itemTxEmpty" class="empty hidden">No transactions yet.</p>
+      </div>
     </section>
 
     <!-- Document form (shared by every document type) -->
@@ -202,23 +419,78 @@
           <label>New party phone <input id="docNewPartyPhone" type="text"></label>
           <button id="btnDocPartySave" class="btn" type="button">Add party</button>
         </div>
-        <div class="doc-lines-head"><span>Item</span><span>Qty</span><span>Unit</span><span>Price/Unit</span><span>Amount</span><span></span></div>
+        <div class="doc-lines-head"><span>Item</span><span>Qty</span><span>Free</span><span>Unit</span><span>Price/Unit</span><span>Disc %</span><span>Tax %</span><span>Amount</span><span></span></div>
+        <div id="docBarcodeRow" class="hidden" style="margin:6px 0">
+          <label>Scan Barcode / Item Code <input id="docBarcode" type="text" placeholder="Scan or type a code, then press Enter"></label>
+        </div>
         <div id="saleLines"></div>
         <button id="btnAddLine" class="btn btn-link" type="button">+ Add Row</button>
         <div class="doc-totals">
-          <label>Discount (Rs) <input id="saleDiscount" type="number" step="0.01" min="0" value="0"></label>
-          <label>Tax (Rs) <input id="saleTax" type="number" step="0.01" min="0" value="0"></label>
           <label id="docPaidWrap"><span id="docPaidLabel">Paid now (Rs)</span> <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
           <label class="check-row"><input id="docRoundOff" type="checkbox"> <span>Round Off</span></label>
-          <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong></p>
+          <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong><br><span class="note" id="docProfitHint"></span></p>
+        </div>
+        <div class="card" style="box-shadow:none; margin:10px 0">
+          <h3 style="margin-top:0">More Details</h3>
+          <div class="grid2">
+            <label>Billing Address <textarea id="docBilling" rows="2"></textarea></label>
+            <label id="docShippingWrap">Shipping Address <textarea id="docShipping" rows="2"></textarea></label>
+            <label id="docDueWrap">Due Date <input id="docDueDate" type="date"></label>
+            <label id="docTermsWrap">Payment Terms
+              <select id="docPayTerms"><option value="">— None —</option><option>Due on Receipt</option><option>Net 7</option><option>Net 15</option><option>Net 30</option></select>
+            </label>
+            <label id="docPoWrap">Customer P.O. Number <input id="docPoNumber" type="text"></label>
+            <label id="docRepeatWrap">Repeat Invoice
+              <select id="docRepeat"><option value="">Never</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>
+            </label>
+            <label>Transport Name <input id="docTransport" type="text"></label>
+            <label>Vehicle Number <input id="docVehicle" type="text"></label>
+            <label>Delivery Date <input id="docDeliveryDate" type="date"></label>
+            <label>Delivery Location <input id="docDeliveryLoc" type="text"></label>
+          </div>
+          <label>ADD DESCRIPTION <textarea id="docDescription" rows="2"></textarea></label>
+          <label>ADD IMAGE / DOCUMENT (file name note) <input id="docAttachment" type="text" placeholder="e.g. gate-pass.jpg"></label>
+          <h3>ADD TERMS AND CONDITIONS</h3>
+          <div id="docTermsPicker" class="list"></div>
+          <div id="docLoyaltyBlock" class="hidden">
+            <h3>Loyalty Points</h3>
+            <p class="note" id="docLoyaltyInfo"></p>
+            <label>Use points <input id="docLoyaltyUse" type="number" step="1" min="0" value="0"></label>
+          </div>
         </div>
         <button class="btn btn-primary btn-block" id="docSaveBtn" type="submit">Save</button>
       </form>
-      <div id="saleDone" class="card hidden">
-        <p id="saleDoneText"></p>
-        <button id="btnSalePdf" class="btn btn-primary" type="button">Share (PDF)</button>
-        <button id="btnSaleNew" class="btn btn-link" type="button">Make another</button>
-        <button id="btnSaleBook" class="btn btn-link" type="button">Open the book</button>
+    </section>
+
+    <!-- Invoice Preview (after save) -->
+    <section id="screen-preview" class="screen hidden">
+      <div class="book-head">
+        <h2 id="previewTitle">Invoice Preview</h2>
+        <button id="btnPreviewBack" class="btn" type="button">← Back</button>
+      </div>
+      <div class="card" id="previewCard">
+        <div id="previewBody"></div>
+      </div>
+      <div class="card">
+        <div class="grid2">
+          <label>Print Theme
+            <select id="previewTheme"></select>
+          </label>
+          <label>Colour <input id="previewColor" type="color" value="#f26522"></label>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px">
+          <button id="btnPreviewWhats" class="btn" type="button">Share on WhatsApp</button>
+          <button id="btnPreviewGmail" class="btn" type="button">Share via Gmail</button>
+          <button id="btnPreviewMsg" class="btn" type="button">Share via Message</button>
+          <button id="btnPreviewPdf" class="btn btn-primary" type="button">Download PDF</button>
+          <button id="btnPreviewThermal" class="btn" type="button">Print (Thermal)</button>
+          <button id="btnPreviewPrint" class="btn" type="button">Print (Normal)</button>
+        </div>
+        <label class="check-row" style="margin-top:10px"><input id="previewNoShow" type="checkbox"> <span>Do not show invoice preview again</span></label>
+        <div style="display:flex; gap:8px; margin-top:8px">
+          <button id="btnSaleNew" class="btn btn-link" type="button">Make another</button>
+          <button id="btnSaleBook" class="btn btn-link" type="button">Open the book</button>
+        </div>
       </div>
     </section>
 
@@ -241,9 +513,37 @@
             <option value="out">Out — we paid party</option>
           </select>
         </label>
+        <label>Payment Mode
+          <select id="payMode">
+            <option value="cash">Cash</option>
+            <option value="bank">Bank Transfer</option>
+            <option value="jazzcash">JazzCash</option>
+            <option value="easypaisa">EasyPaisa</option>
+            <option value="cheque">Cheque</option>
+          </select>
+        </label>
+        <label id="payBankWrap" class="hidden">Bank Account
+          <select id="payBank"><option value="">— None —</option></select>
+        </label>
+        <label id="payChequeWrap" class="hidden">Cheque No. <input id="payCheque" type="text"></label>
+        <label>Reference No. <input id="payReference" type="text"></label>
         <label>Amount (Rs) <input id="payAmount" type="number" step="0.01" min="0" required></label>
+        <label id="payDiscountWrap" class="hidden">Discount (Rs) <input id="payDiscount" type="number" step="0.01" min="0" value="0"></label>
         <button class="btn btn-primary" type="submit">Save payment</button>
       </form>
+      <div class="card" id="allocateCard">
+        <h2>Link Payments to Invoices</h2>
+        <p class="note">One payment from a party, spread over their open bills — oldest bill first.</p>
+        <div class="grid2">
+          <label>Party <select id="allocParty"><option value="">— Choose party —</option></select></label>
+          <label>Amount (Rs) <input id="allocAmount" type="number" step="0.01" min="0" value="0"></label>
+          <label>Direction
+            <select id="allocDirection"><option value="in">In — party paid us</option><option value="out">Out — we paid party</option></select>
+          </label>
+        </div>
+        <button id="btnAllocate" class="btn btn-primary" type="button">Allocate Payment</button>
+        <p id="allocResult" class="note"></p>
+      </div>
       <div id="paymentList" class="list"></div>
     </section>
 
@@ -252,11 +552,52 @@
       <form id="expenseForm" class="card form-card">
         <h2>Add expense</h2>
         <label>Title <input id="expTitle" type="text" required></label>
-        <label>Category <input id="expCategory" type="text" placeholder="Rent, Fuel, Salary…"></label>
-        <label>Amount (Rs) <input id="expAmount" type="number" step="0.01" min="0" required></label>
+        <div class="grid2">
+          <label>Category
+            <select id="expCategory"><option value="">— None —</option></select>
+          </label>
+          <label>Category Type
+            <select id="expCategoryType"><option>Indirect Expense</option><option>Direct Expense</option></select>
+          </label>
+          <label>New category <input id="expCategoryNew" type="text" placeholder="Or type a new one"></label>
+          <label>Expense Item
+            <select id="expItem"><option value="">— None —</option></select>
+          </label>
+          <label>New expense item <input id="expItemNew" type="text" placeholder="Or type a new one"></label>
+          <label>Party (optional)
+            <select id="expParty"><option value="">— None —</option></select>
+          </label>
+        </div>
+        <label class="check-row"><input id="expTaxOn" type="checkbox"> <span>Tax on Expense</span></label>
+        <div class="grid2">
+          <label>Amount (Rs) <input id="expAmount" type="number" step="0.01" min="0" required></label>
+          <label id="expTaxWrap" class="hidden">Tax (Rs) <input id="expTax" type="number" step="0.01" min="0" value="0"></label>
+          <label>Paid (Rs) <input id="expPaid" type="number" step="0.01" min="0" placeholder="Blank = fully paid"></label>
+        </div>
         <button class="btn btn-primary" type="submit">Save expense</button>
       </form>
       <div id="expenseList" class="list"></div>
+    </section>
+
+    <!-- Other Income -->
+    <section id="screen-otherincome" class="screen hidden">
+      <form id="incomeForm" class="card form-card">
+        <h2>Add Other Income</h2>
+        <label>Title <input id="incTitle" type="text" required></label>
+        <div class="grid2">
+          <label>Category
+            <select id="incCategory"><option value="">— None —</option></select>
+          </label>
+          <label>New category <input id="incCategoryNew" type="text" placeholder="Or type a new one"></label>
+          <label>Party (optional)
+            <select id="incParty"><option value="">— None —</option></select>
+          </label>
+          <label>Amount (Rs) <input id="incAmount" type="number" step="0.01" min="0" required></label>
+        </div>
+        <label>Note <input id="incNote" type="text"></label>
+        <button class="btn btn-primary" type="submit">Save income</button>
+      </form>
+      <div id="incomeList" class="list"></div>
     </section>
 
     <!-- Sale / Purchase book -->
@@ -269,6 +610,12 @@
           <button id="btnBookGo" class="btn" type="button">Apply</button>
         </div>
         <button id="btnBookAdd" class="btn btn-addsale" type="button">＋ Add Sale</button>
+      </div>
+      <div class="card hidden" id="bookSaleWrap" style="margin-bottom:12px">
+        <span class="stat-label">Total Sales Amount</span>
+        <strong id="bookSaleTotal" style="font-size:20px">—</strong>
+        <span id="bookSaleVs" class="note"></span><br>
+        <span class="note">Received <strong id="bookSaleReceived">—</strong> | Balance <strong id="bookSaleBalance">—</strong></span>
       </div>
       <div class="sum-cards">
         <div class="sum-card paid"><span>Paid</span><strong id="bookPaid">—</strong></div>
@@ -292,6 +639,10 @@
         <h2 id="docsTitle">Estimates</h2>
         <button id="btnDocsAdd" class="btn btn-addsale" type="button">＋ Add</button>
       </div>
+      <div class="sum-cards hidden" id="docsTotals">
+        <div class="sum-card paid"><span>Converted</span><strong id="docsConverted">—</strong></div>
+        <div class="sum-card unpaid"><span>Open</span><strong id="docsOpen">—</strong></div>
+      </div>
       <div class="card table-card">
         <table class="tx-table">
           <thead><tr><th>Date</th><th>Number</th><th>Party</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
@@ -303,13 +654,82 @@
 
     <!-- Cash & Bank -->
     <section id="screen-cashbank" class="screen hidden">
-      <div class="cards">
-        <div class="stat"><span class="stat-label">Total Payments In</span><span class="stat-value pos" id="cbIn">—</span></div>
-        <div class="stat"><span class="stat-label">Total Payments Out</span><span class="stat-value neg" id="cbOut">—</span></div>
-        <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="cbCash">—</span></div>
+      <div class="filter-chips">
+        <button class="fchip active" data-cbtab="accounts" type="button">Bank Accounts</button>
+        <button class="fchip" data-cbtab="cash" type="button">Cash In Hand</button>
+        <button class="fchip" data-cbtab="cheques" type="button">Cheques</button>
+        <button class="fchip" data-cbtab="loans" type="button">Loan Accounts</button>
       </div>
-      <h3>All payments</h3>
-      <div id="cashbankList" class="list"></div>
+      <div id="cbAccounts">
+        <form id="bankForm" class="card form-card">
+          <h2>Add Bank Account</h2>
+          <div class="grid2">
+            <label>Display Name <input id="bankName1" type="text" required placeholder="e.g. Main Account"></label>
+            <label>Opening Balance (Rs) <input id="bankOpening" type="number" step="0.01" value="0"></label>
+            <label>As of Date <input id="bankAsOf" type="date"></label>
+            <label>Account Number <input id="bankAccNo" type="text"></label>
+            <label>IBAN <input id="bankIban" type="text"></label>
+            <label>JazzCash / EasyPaisa (for QR) <input id="bankQr" type="text"></label>
+            <label>Bank Name <input id="bankBankName" type="text"></label>
+            <label>Account Holder Name <input id="bankHolder" type="text"></label>
+          </div>
+          <label class="check-row"><input id="bankPrintDetails" type="checkbox"> <span>Print Bank Details on Invoices</span></label>
+          <label class="check-row"><input id="bankPrintQr" type="checkbox"> <span>Print QR on Invoices</span></label>
+          <button class="btn btn-primary" type="submit">Add Bank Account</button>
+        </form>
+        <div id="bankList" class="list"></div>
+        <div class="card hidden" id="bankTxCard">
+          <h3 id="bankTxTitle">Transactions</h3>
+          <div class="grid2">
+            <label>Amount (Rs) <input id="bankTxAmount" type="number" step="0.01" min="0" value="0"></label>
+            <label>Note <input id="bankTxNote" type="text"></label>
+          </div>
+          <div style="display:flex; gap:8px">
+            <button id="btnBankDeposit" class="btn btn-primary" type="button">Deposit</button>
+            <button id="btnBankWithdraw" class="btn" type="button">Withdraw</button>
+            <button id="btnBankStatement" class="btn" type="button">Bank Statement</button>
+          </div>
+          <div id="bankTxList" class="list" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div id="cbCash" class="hidden">
+        <div class="cards">
+          <div class="stat"><span class="stat-label">Total Payments In</span><span class="stat-value pos" id="cbIn">—</span></div>
+          <div class="stat"><span class="stat-label">Total Payments Out</span><span class="stat-value neg" id="cbOut">—</span></div>
+          <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="cbCashAmt">—</span></div>
+        </div>
+        <h3>All payments</h3>
+        <div id="cashbankList" class="list"></div>
+      </div>
+      <div id="cbCheques" class="hidden">
+        <form id="chequeForm" class="card form-card">
+          <h2>Add Cheque</h2>
+          <div class="grid2">
+            <label>Cheque No. <input id="chqNo" type="text"></label>
+            <label>Bank Name <input id="chqBank" type="text"></label>
+            <label>Amount (Rs) <input id="chqAmount" type="number" step="0.01" min="0" required></label>
+            <label>Party <select id="chqParty"><option value="">— None —</option></select></label>
+            <label>Due Date <input id="chqDue" type="date"></label>
+          </div>
+          <button class="btn btn-primary" type="submit">Add Cheque</button>
+        </form>
+        <div id="chequeList" class="list"></div>
+      </div>
+      <div id="cbLoans" class="hidden">
+        <form id="loanForm" class="card form-card">
+          <h2>Add Loan Account</h2>
+          <div class="grid2">
+            <label>Loan Name <input id="loanName" type="text" required></label>
+            <label>Lender <input id="loanLender" type="text"></label>
+            <label>Loan Amount (Rs) <input id="loanPrincipal" type="number" step="0.01" min="0" required></label>
+            <label>Interest % <input id="loanInterest" type="number" step="0.01" min="0" value="0"></label>
+            <label>Start Date <input id="loanStart" type="date"></label>
+            <label>Note <input id="loanNote" type="text"></label>
+          </div>
+          <button class="btn btn-primary" type="submit">Add Loan Account</button>
+        </form>
+        <div id="loanList" class="list"></div>
+      </div>
     </section>
 
     <!-- Profit & Loss -->
@@ -324,6 +744,7 @@
       <div class="cards">
         <div class="stat"><span class="stat-label">Sales</span><span class="stat-value pos" id="pnlSales">—</span></div>
         <div class="stat"><span class="stat-label">Purchases</span><span class="stat-value" id="pnlPurchases">—</span></div>
+        <div class="stat"><span class="stat-label">Other Income (+)</span><span class="stat-value pos" id="pnlOtherIncome">—</span></div>
         <div class="stat"><span class="stat-label">Expenses</span><span class="stat-value neg" id="pnlExpenses">—</span></div>
         <div class="stat"><span class="stat-label">Profit</span><span class="stat-value" id="pnlProfit">—</span></div>
       </div>
@@ -357,11 +778,303 @@
       </div>
     </section>
 
+    <!-- Reports (generic viewer) -->
+    <section id="screen-reports" class="screen hidden">
+      <div class="book-head">
+        <div class="period-row">
+          <label>From <input id="repFrom" type="date"></label>
+          <label>To <input id="repTo" type="date"></label>
+          <button id="btnRepGo" class="btn" type="button">Apply</button>
+        </div>
+      </div>
+      <div class="filter-chips" id="reportChips"></div>
+      <h2 id="reportTitle">All Transactions</h2>
+      <div id="reportGraphWrap" class="card hidden">
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
+          <span class="stat-label">Period</span>
+          <select id="graphPeriod" style="width:auto; margin:0">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <svg id="reportGraph" width="100%" height="180" viewBox="0 0 640 180" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card table-card">
+        <table class="tx-table">
+          <thead id="reportHead"></thead>
+          <tbody id="reportBody"></tbody>
+        </table>
+        <p id="reportEmpty" class="empty hidden">Nothing to show for this report yet.</p>
+      </div>
+      <p class="note" id="reportTotal"></p>
+    </section>
+
+    <!-- Godowns -->
+    <section id="screen-godowns" class="screen hidden">
+      <div class="book-head">
+        <h2>Manage Godowns</h2>
+      </div>
+      <div id="godownList" class="list" style="margin-bottom:14px"></div>
+      <form id="godownForm" class="card form-card">
+        <h2>Add Godown</h2>
+        <div class="grid2">
+          <label>Godown Name <input id="godownName" type="text" required></label>
+          <label>Godown Type
+            <select id="godownType"><option>Godown</option><option>Retail Store</option><option>Wholesale Store</option><option>Assembly Plant</option><option>Others</option></select>
+          </label>
+        </div>
+        <button class="btn btn-primary" type="submit">Add Godown</button>
+      </form>
+      <div class="card hidden" id="godownStockCard">
+        <h3 id="godownStockTitle">Stock Summary</h3>
+        <div id="godownStockList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- Stock Transfer -->
+    <section id="screen-stocktransfer" class="screen hidden">
+      <form id="transferForm" class="card form-card">
+        <h2>Stock Transfer</h2>
+        <div class="grid2">
+          <label>Item <select id="trItem"></select></label>
+          <label>Quantity <input id="trQty" type="number" step="1" min="1" value="1"></label>
+          <label>From Godown <select id="trFrom"></select></label>
+          <label>To Godown <select id="trTo"></select></label>
+          <label>Note <input id="trNote" type="text"></label>
+        </div>
+        <button class="btn btn-primary" type="submit">Transfer Stock</button>
+      </form>
+      <h3>Stock Transfer Transactions</h3>
+      <div id="transferList" class="list"></div>
+    </section>
+
+    <!-- Online Store -->
+    <section id="screen-store" class="screen hidden">
+      <div class="filter-chips">
+        <button class="fchip active" data-storetab="orders" type="button">ONLINE ORDERS</button>
+        <button class="fchip" data-storetab="items" type="button">Manage Items</button>
+        <button class="fchip" data-storetab="settings" type="button">Store Settings</button>
+      </div>
+      <div id="storeOrdersBox">
+        <div id="storeOrderList" class="list"></div>
+      </div>
+      <div id="storeItemsBox" class="hidden">
+        <div class="card table-card">
+          <table class="tx-table">
+            <thead><tr><th>Item</th><th class="num">Sale Price</th><th class="num">STORE PRICE</th><th class="num">Stock</th><th>In Stock</th><th>Listed</th></tr></thead>
+            <tbody id="storeItemBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <form id="storeSettingsForm" class="card form-card hidden">
+        <h2>Online Store Settings</h2>
+        <label class="check-row"><input id="storeEnabled" type="checkbox"> <span>Open my Online Store</span></label>
+        <label>Store Name <input id="storeName" type="text"></label>
+        <label class="check-row"><input id="storeAccept" type="checkbox"> <span>Accept Online Orders</span></label>
+        <label>Minimum Order Amount (Rs) <input id="storeMinOrder" type="number" step="0.01" min="0" value="0"></label>
+        <label>Delivery Charges (Rs) <input id="storeDelivery" type="number" step="0.01" min="0" value="0"></label>
+        <label class="check-row"><input id="storeDiscounts" type="checkbox"> <span>Item Discounts on Store</span></label>
+        <label class="check-row"><input id="storeLinkStock" type="checkbox"> <span>Link Stock to Online Store</span></label>
+        <p class="note">Your store link: <strong id="storeLink">—</strong></p>
+        <p class="note">Share this link with customers. They order with Cash on Delivery; orders land in ONLINE ORDERS.</p>
+        <button class="btn btn-primary" type="submit">Save store settings</button>
+      </form>
+    </section>
+
+    <!-- Loyalty Points -->
+    <section id="screen-loyalty" class="screen hidden">
+      <form id="loyaltyForm" class="card form-card">
+        <h2>Loyalty Points — Setup</h2>
+        <label class="check-row"><input id="loyEnabled" type="checkbox"> <span>Enable Loyalty Points</span></label>
+        <h3>Points will be given when:</h3>
+        <div class="grid2">
+          <label>Invoice Amount (Rs) for 1 Point <input id="loySpend" type="number" step="0.01" min="0" value="100"></label>
+          <label>Minimum Invoice Amount to Earn (Rs) <input id="loyMinEarn" type="number" step="0.01" min="0" value="0"></label>
+          <label>Points Expiry (days) <input id="loyExpiry" type="number" step="1" min="0" value="365"></label>
+        </div>
+        <h3>Points can be redeemed when:</h3>
+        <div class="grid2">
+          <label>Value of 1 Point (Rs) <input id="loyRedeemValue" type="number" step="0.01" min="0" value="1"></label>
+          <label>Max % of Invoice Payable with Points <input id="loyMaxPct" type="number" step="1" min="0" max="100" value="50"></label>
+          <label>Minimum Invoice Amount to Redeem (Rs) <input id="loyMinRedeem" type="number" step="0.01" min="0" value="0"></label>
+        </div>
+        <button class="btn btn-primary" type="submit">Save Loyalty Setup</button>
+      </form>
+      <div class="card table-card">
+        <h3 style="padding:10px 14px 0">Loyalty Points Dashboard</h3>
+        <table class="tx-table">
+          <thead><tr><th>Party</th><th class="num">Available Points</th><th class="num">Value</th></tr></thead>
+          <tbody id="loyaltyBody"></tbody>
+        </table>
+        <p id="loyaltyEmpty" class="empty hidden">No party has loyalty points yet.</p>
+      </div>
+    </section>
+
+    <!-- Accounting -->
+    <section id="screen-accounting" class="screen hidden">
+      <div class="card hidden" id="accountingOffCard">
+        <h2>Accounting</h2>
+        <p class="note">The Accounting module is off. Turn it on in Settings &gt; ACCOUNTING to use the Chart Of Accounts, Journal Entries, Balance Sheet and Trial Balance.</p>
+        <button class="btn btn-primary" id="btnEnableAccounting" type="button">Enable Accounting</button>
+      </div>
+      <div id="accountingMain">
+        <div class="card">
+          <h2>Chart Of Accounts</h2>
+          <div id="coaList" class="list"></div>
+          <form id="coaForm" style="margin-top:10px">
+            <div class="grid2">
+              <label>Account Name <input id="coaName" type="text" required></label>
+              <label>Group
+                <select id="coaGroup"><option>Assets</option><option>Liabilities</option><option>Capital</option><option>Income</option><option>Expenses</option></select>
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit">Add Account</button>
+          </form>
+        </div>
+        <form id="journalForm" class="card form-card">
+          <h2>Journal Entry</h2>
+          <div class="grid2">
+            <label>Date <input id="jrDate" type="date"></label>
+            <label>Narration <input id="jrNarration" type="text"></label>
+          </div>
+          <div id="journalLines"></div>
+          <button id="btnJournalRow" class="btn btn-link" type="button">+ Add Row</button>
+          <p class="sale-total">Total Debit: <strong id="jrDebitTotal">Rs 0.00</strong> · Total Credit: <strong id="jrCreditTotal">Rs 0.00</strong></p>
+          <button class="btn btn-primary btn-block" id="jrSave" type="submit" disabled>Save Journal Entry</button>
+          <p class="note">Save stays off until Total Debit equals Total Credit.</p>
+        </form>
+        <div class="card">
+          <h3 style="margin-top:0">Journal Entries</h3>
+          <div id="journalList" class="list"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Balance Sheet</h3>
+          <div id="bsBody"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Trial Balance</h3>
+          <div id="tbBody"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sync, Share & Backup (Team & Roles) -->
+    <section id="screen-team" class="screen hidden">
+      <div class="card">
+        <h2>Team &amp; Roles</h2>
+        <div class="table-card" style="overflow-x:auto">
+          <table class="tx-table">
+            <thead><tr><th>FULL NAME</th><th>PHONE / E-MAIL</th><th>STATUS</th><th>ROLE</th><th>ACTIONS</th></tr></thead>
+            <tbody id="teamBody"></tbody>
+          </table>
+          <p id="teamEmpty" class="empty hidden">No team members yet.</p>
+        </div>
+      </div>
+      <form id="teamForm" class="card form-card">
+        <h2>Add User</h2>
+        <div class="grid2">
+          <label>Full Name <input id="teamName" type="text" required></label>
+          <label>Phone / E-mail <input id="teamContact" type="text" required></label>
+          <label>Role
+            <select id="teamRole"></select>
+          </label>
+        </div>
+        <h3>Permissions</h3>
+        <p class="note">VIEW / CREATE / EDIT / SHARE / DELETE per module. The role fills this in; you can adjust any box.</p>
+        <div class="table-card" style="overflow-x:auto">
+          <table class="tx-table" id="permTable">
+            <thead><tr><th>Module</th><th>VIEW</th><th>CREATE</th><th>EDIT</th><th>SHARE</th><th>DELETE</th></tr></thead>
+            <tbody id="permBody"></tbody>
+          </table>
+        </div>
+        <button class="btn btn-primary" type="submit">Add User</button>
+      </form>
+      <div class="card">
+        <h2>Companies Shared with Me</h2>
+        <div id="sharedList" class="list"></div>
+      </div>
+      <div class="card">
+        <h2>Backup</h2>
+        <p class="note">Auto Backup: <strong id="teamAutoBackup">—</strong> · Last backup: <span id="teamLastBackup">—</span></p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button id="btnBackupComputer" class="btn" type="button">Backup To Computer</button>
+          <button id="btnBackupNowTeam" class="btn" type="button">Backup Now</button>
+          <button id="btnBackupSettings" class="btn btn-link" type="button">Backup To Drive — manage in Settings &gt; BACKUPS</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>See User Activity</h2>
+        <div id="activityList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- Utilities -->
+    <section id="screen-utilities" class="screen hidden">
+      <div class="card">
+        <h2>Open Anything</h2>
+        <label>Search parties, items and transactions <input id="utilSearch" type="search" placeholder="Type to search… (Ctrl + F)"></label>
+        <div id="utilSearchResults" class="list"></div>
+      </div>
+      <div class="card">
+        <h2>Recycle Bin</h2>
+        <p class="note">Deleted transactions live here. Restore brings a transaction back exactly as it was; permanent delete removes it for good.</p>
+        <div id="recycleList" class="list"></div>
+      </div>
+      <div class="card">
+        <h2>Verify My Data</h2>
+        <button id="btnVerify" class="btn btn-primary" type="button">Verify My Data</button>
+        <div id="verifyList" class="list" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h2>Export to Excel</h2>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn" data-export="items" type="button">Export Items</button>
+          <button class="btn" data-export="parties" type="button">Export Parties</button>
+          <button class="btn" data-export="transactions" type="button">Export Transactions</button>
+        </div>
+        <p class="note">Files download as CSV, which Excel opens directly. Bulk Import Items and Bulk Import Parties live on the Items and Parties screens.</p>
+        <button id="btnSetupBusiness" class="btn btn-link" type="button">Set Up My Business</button>
+      </div>
+      <div class="card">
+        <h2>Barcode Generator</h2>
+        <div class="grid2">
+          <label>Item <select id="bcItem"></select></label>
+          <label>Barcode value <input id="bcValue" type="text" placeholder="Item code"></label>
+        </div>
+        <label class="check-row"><input class="bc-line" type="checkbox" value="name" checked> <span>Item Name</span></label>
+        <label class="check-row"><input class="bc-line" type="checkbox" value="price" checked> <span>Sale Price</span></label>
+        <label class="check-row"><input class="bc-line" type="checkbox" value="mrp"> <span>MRP</span></label>
+        <label class="check-row"><input class="bc-line" type="checkbox" value="business"> <span>Business Name</span></label>
+        <div style="margin:12px 0"><canvas id="bcCanvas" width="320" height="140" style="background:#fff; border:1px solid var(--line)"></canvas></div>
+        <button id="btnBcPrint" class="btn btn-primary" type="button">Print Label</button>
+      </div>
+    </section>
+
+    <!-- Grow Your Business -->
+    <section id="screen-grow" class="screen hidden">
+      <div class="filter-chips">
+        <button class="fchip active" data-growtab="greetings" type="button">Greetings</button>
+        <button class="fchip" data-growtab="trending" type="button">Trending</button>
+        <button class="fchip" data-growtab="business" type="button">Business</button>
+        <button class="fchip" data-growtab="offers" type="button">Offers</button>
+      </div>
+      <p class="note">Marketing Tools — ready-made posters for your shop. Open one, add your business name and contact, then Download the image or Share it on WhatsApp.</p>
+      <div id="posterGrid" class="poster-grid"></div>
+    </section>
+
     <!-- Settings -->
     <section id="screen-settings" class="screen hidden">
       <div class="settings-rail">
         <button class="set-cat active" data-setcat="general" type="button">GENERAL</button>
         <button class="set-cat" data-setcat="transaction" type="button">TRANSACTION</button>
+        <button class="set-cat" data-setcat="print" type="button">PRINT</button>
+        <button class="set-cat" data-setcat="taxes" type="button">TAXES</button>
+        <button class="set-cat" data-setcat="message" type="button">TRANSACTION MESSAGE</button>
+        <button class="set-cat" data-setcat="party" type="button">PARTY</button>
+        <button class="set-cat" data-setcat="item" type="button">ITEM</button>
+        <button class="set-cat" data-setcat="accounting" type="button">ACCOUNTING</button>
         <button class="set-cat" data-setcat="backups" type="button">BACKUPS</button>
         <button class="set-cat hidden" data-setcat="email" id="setCatEmail" type="button">EMAIL DELIVERY</button>
         <button class="set-cat hidden" data-setcat="accounts" id="setCatAccounts" type="button">CUSTOMER ACCOUNTS</button>
@@ -375,6 +1088,26 @@
         <button class="btn btn-primary" type="submit">Save profile</button>
       </form>
 
+      <div class="card form-card" data-setcard="general">
+        <h2>General settings</h2>
+        <label class="check-row"><input type="checkbox" data-setting="enable_passcode"> <span>Enable Passcode (ask the password every time QBill reopens)</span></label>
+        <label>Amount (upto Decimal Places)
+          <select data-setting="decimal_places"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select>
+        </label>
+        <label class="check-row"><input type="checkbox" data-setting="stop_sale_negative_stock"> <span>Stop Sale on Negative Stock</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="block_new_from_txn"> <span>Block New Items / Parties from Transaction Form</span></label>
+        <h3>More Transactions</h3>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_estimate"> <span>Estimate/Quotation</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_proforma"> <span>Proforma Invoice</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_sale_order"> <span>Sale Order</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_purchase_order"> <span>Purchase Order</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_other_income"> <span>Other Income</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_challan"> <span>Delivery Challan</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="more_tx_goods_return_on_challan"> <span>Goods return on Delivery Challan</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="audit_trail"> <span>Audit Trail (Edit History on transactions)</span></label>
+        <p class="note">Auto Backup: <strong id="generalAutoBackup">ON</strong> — change it in BACKUPS.</p>
+      </div>
+
       <form id="transForm" class="card form-card hidden" data-setcard="transaction">
         <h2>Transaction settings</h2>
         <p class="note">These print on every bill PDF. Leave empty to use the standard wording.</p>
@@ -384,6 +1117,164 @@
         </label>
         <button class="btn btn-primary" type="submit">Save transaction settings</button>
       </form>
+
+      <div class="card form-card hidden" data-setcard="transaction">
+        <h2>Transaction options</h2>
+        <label class="check-row"><input type="checkbox" data-setting="billing_name_of_parties"> <span>Billing Name of Parties (print party addresses on bills)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="show_last_purchase_price"> <span>Show last 5 Purchase Price (hint on the bill form)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="customers_po_details"> <span>Customers P.O. Details</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_free_item_qty"> <span>Free Item Quantity</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_quick_entry"> <span>Quick Entry (Enter key adds the next row)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="do_not_show_invoice_preview"> <span>Do not Show Invoice Preview</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_passcode_edit_delete"> <span>Enable Passcode for transaction Edit / Delete</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="discount_during_payments"> <span>Discount During Payments</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="link_payments_to_invoices"> <span>Link Payments to Invoices</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="due_dates_payment_terms"> <span>Due Dates and Payment Terms</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="show_profit_on_sale"> <span>Show Profit while making Sale Invoice</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="repeat_invoices"> <span>Repeat Invoices</span></label>
+        <h3>Transaction Prefixes</h3>
+        <div class="grid2" id="prefixGrid"></div>
+        <button class="btn btn-primary" id="btnSavePrefixes" type="button">Save prefixes</button>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="transaction">
+        <h2>Terms &amp; Conditions Library</h2>
+        <p class="note">Named terms, picked on the bill form with ADD TERMS AND CONDITIONS and printed on the PDF.</p>
+        <div id="termsList" class="list"></div>
+        <div class="grid2" style="margin-top:10px">
+          <label>Header <input id="termHeader" type="text"></label>
+          <label>Applicable for
+            <select id="termApplies"><option value="sale">Sale Invoice</option><option value="purchase">Purchase Bill</option><option value="estimate">Estimate/Quotation</option><option value="proforma">Proforma Invoice</option><option value="sale_order">Sale Order</option><option value="challan">Delivery Challan</option></select>
+          </label>
+        </div>
+        <label>Description <textarea id="termDesc" rows="2"></textarea></label>
+        <button class="btn btn-primary" id="btnTermAdd" type="button">Add Terms</button>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="print">
+        <h2>Print Settings</h2>
+        <div class="filter-chips">
+          <button class="fchip active" data-printtab="regular" type="button">REGULAR</button>
+          <button class="fchip" data-printtab="thermal" type="button">THERMAL</button>
+        </div>
+        <div id="printRegular">
+          <label>Print Theme
+            <select data-setting="print_theme" id="printThemeSel"></select>
+          </label>
+          <label>Theme Colour</label>
+          <div id="colorSwatches" class="swatches"></div>
+          <label class="check-row"><input type="checkbox" data-setting="print_company_info"> <span>Print Company Info</span></label>
+          <div class="grid2">
+            <label>Paper Size
+              <select data-setting="print_paper_size"><option>A4</option><option>A5</option></select>
+            </label>
+            <label>Orientation
+              <select data-setting="print_orientation"><option>Portrait</option><option>Landscape</option></select>
+            </label>
+            <label>Print Copies
+              <select data-setting="print_copies"><option>Original</option><option>Duplicate</option><option>Original + Duplicate</option></select>
+            </label>
+            <label>Extra space on Top of PDF <input type="number" step="1" min="0" data-setting="print_extra_top_space"></label>
+            <label>Sale Invoice name <input type="text" id="printNameSale" placeholder="SALE INVOICE"></label>
+            <label>Purchase name <input type="text" id="printNamePurchase" placeholder="PURCHASE INVOICE"></label>
+          </div>
+          <button class="btn" id="btnItemTableCustom" type="button">Item Table Customization</button>
+          <h3>Totals &amp; Taxes</h3>
+          <label class="check-row"><input type="checkbox" data-setting="print_total_qty"> <span>Total Item Quantity</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_received_balance"> <span>Received / Balance</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_party_balance"> <span>Current Balance of Party</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_tax_details"> <span>Tax Details</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_you_saved"> <span>You Saved</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_amount_words"> <span>Amount in Words</span></label>
+          <h3>Footer</h3>
+          <label class="check-row"><input type="checkbox" data-setting="print_terms"> <span>Print Terms and Conditions</span></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_signature"> <span>Print Signature</span></label>
+          <label>Signature Text <input type="text" data-setting="signature_text" placeholder="For Your Business"></label>
+          <label class="check-row"><input type="checkbox" data-setting="print_payment_mode"> <span>Print Payment Mode</span></label>
+          <h3>Live Preview</h3>
+          <div id="printPreview" class="print-preview"></div>
+        </div>
+        <div id="printThermal" class="hidden">
+          <div class="grid2">
+            <label>Thermal Paper Size
+              <select data-setting="thermal_size"><option>58mm</option><option>80mm</option><option>100mm</option></select>
+            </label>
+            <label>Copies <input type="number" step="1" min="1" data-setting="thermal_copies"></label>
+          </div>
+          <label class="check-row"><input type="checkbox" data-setting="thermal_auto_cut"> <span>Auto Cut after print</span></label>
+          <p class="note">Thermal bills print from the Invoice Preview screen with Print (Thermal).</p>
+        </div>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="taxes">
+        <h2>Taxes</h2>
+        <label class="check-row"><input type="checkbox" data-setting="tax_enabled"> <span>Enable Tax on transactions (sales tax, Pakistan)</span></label>
+        <label>Default Tax % on new bill lines <input type="number" step="0.01" min="0" id="defaultTaxPct" value="0"></label>
+        <p class="note">Tax is a single Pakistan sales tax — QBill does not split tax into parts. See Reports &gt; Tax Report and Tax Rate Report for totals.</p>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="message">
+        <h2>Transaction Message</h2>
+        <label class="check-row"><input type="checkbox" data-setting="msg_whatsapp_personal"> <span>Send via Personal WhatsApp</span></label>
+        <h3>Message content</h3>
+        <label class="check-row"><input type="checkbox" data-setting="msg_include_balance"> <span>Party Current Balance in the message</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="msg_include_link"> <span>Web invoice link in the message</span></label>
+        <h3>Send automatic message for</h3>
+        <div id="msgAutoGrid"></div>
+        <label>Message Template
+          <textarea id="msgTemplate" rows="3"></textarea>
+        </label>
+        <p class="note">Use [Party Name], [Amount], [Business Name], [Transaction Type] and [Transaction Number] — they are filled in automatically.</p>
+        <label>Footer Message <input type="text" data-setting="msg_footer"></label>
+        <button class="btn btn-primary" id="btnMsgSave" type="button">Save message settings</button>
+        <h3>Message Preview</h3>
+        <div id="msgPreview" class="print-preview"></div>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="party">
+        <h2>Party settings</h2>
+        <label class="check-row"><input type="checkbox" data-setting="party_grouping"> <span>Party Grouping</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="party_shipping_address"> <span>Shipping Address</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="party_manage_status"> <span>Manage Party Status</span></label>
+        <h3>Payment Reminder</h3>
+        <label class="check-row"><input type="checkbox" data-setting="party_reminder_enabled"> <span>Enable Payment Reminder</span></label>
+        <label>Remind before due (days) <input type="number" step="1" min="0" data-setting="party_reminder_days"></label>
+        <label>Reminder Message
+          <textarea data-setting="party_reminder_message" rows="3"></textarea>
+        </label>
+        <p class="note">Use [Party Name], [Amount] and [Business Name]. Reminders are sent from the Parties screen (Payment Reminders, Send Reminders in Bulk).</p>
+        <h3>Additional Party Fields</h3>
+        <div id="partyExtraFields"></div>
+        <label class="check-row"><input type="checkbox" id="partyLoyaltyLink"> <span>Enable Loyalty Point — set it up on the Loyalty Points screen</span></label>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="item">
+        <h2>Item settings</h2>
+        <label class="check-row"><input type="checkbox" data-setting="item_enabled"> <span>Enable Item</span></label>
+        <label>What do you sell?
+          <select data-setting="sell_type"><option value="products">Products</option><option value="services">Services</option><option value="products_services">Products &amp; Services</option></select>
+        </label>
+        <label class="check-row"><input type="checkbox" data-setting="barcode_scan"> <span>Barcode Scan (on the bill form)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="stock_maintenance"> <span>Stock Maintenance</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="manufacturing"> <span>Manufacturing (Mfg Date on batches)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="low_stock_dialog"> <span>Show Low Stock Dialog</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="items_unit"> <span>Items Unit</span></label>
+        <label>Default Unit <input type="text" data-setting="default_unit"></label>
+        <label class="check-row"><input type="checkbox" data-setting="item_category_enabled"> <span>Item Category</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="party_wise_item_rate"> <span>Party Wise Item Rate</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="item_description_enabled"> <span>Item Description</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="item_wise_tax"> <span>Item wise Tax</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="item_wise_discount"> <span>Item wise Discount</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="update_sale_price_from_txn"> <span>Update Sale Price from Transaction</span></label>
+        <h3>Additional Item Fields</h3>
+        <div id="itemExtraFields"></div>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="accounting">
+        <h2>Accounting</h2>
+        <label class="check-row"><input type="checkbox" data-setting="accounting_enabled"> <span>Enable Accounting module (Chart Of Accounts, Journal Entries, Balance Sheet, Trial Balance)</span></label>
+        <p class="note">When on, the Accounting screen opens from the main menu.</p>
+      </div>
 
       <div class="card form-card hidden" data-setcard="backups">
         <h2>Backups</h2>
@@ -420,6 +1311,29 @@
   </div>
 </main>
 </div><!-- /.shell -->
+
+<!-- ============ GENERIC DIALOG (Item Table Customization, posters…) ============ -->
+<div id="dlgModal" class="modal hidden" style="z-index:120">
+  <div class="modal-box card" style="max-width:560px">
+    <div class="book-head">
+      <h2 id="dlgTitle" style="margin:0">Dialog</h2>
+      <button id="dlgClose" class="btn btn-mini" type="button">✕ Close</button>
+    </div>
+    <div id="dlgBody"></div>
+  </div>
+</div>
+
+<!-- ============ OPEN ANYTHING (Ctrl+F) ============ -->
+<div id="searchModal" class="modal hidden" style="z-index:120">
+  <div class="modal-box card" style="max-width:560px">
+    <h2 style="margin-top:0">Open Anything</h2>
+    <label>Search parties, items and transactions
+      <input id="globalSearch" type="search" placeholder="Type to search…">
+    </label>
+    <div id="globalSearchResults" class="list"></div>
+    <button id="searchClose" class="btn btn-link btn-block" type="button">Close</button>
+  </div>
+</div>
 
 <!-- ============ ACTIVATE YOUR ACCOUNT (not approved / not activated yet) ============ -->
 <div id="pendingView" class="hidden">

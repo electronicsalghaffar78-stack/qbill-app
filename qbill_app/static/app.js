@@ -66,11 +66,20 @@ function newClientRef() {
 }
 
 /* -------------------------------------------------------------- money -- */
+var QB = { settings: null, privacy: false };
+function decimalPlaces() {
+  var d = QB.settings && QB.settings.decimal_places;
+  return (d === 0 || d === 1 || d === 2) ? d : 2;
+}
 function fmtRs(paisa) {
   var neg = paisa < 0; paisa = Math.abs(paisa || 0);
+  var dp = decimalPlaces();
   var rupees = Math.floor(paisa / 100), ps = paisa % 100;
   var s = rupees.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return (neg ? "-" : "") + "Rs " + s + "." + (ps < 10 ? "0" : "") + ps;
+  if (dp === 0) return (neg ? "-" : "") + "Rs " + s;
+  var frac = (ps < 10 ? "0" : "") + ps;
+  if (dp === 1) frac = frac.slice(0, 1);
+  return (neg ? "-" : "") + "Rs " + s + "." + frac;
 }
 function rsToPaisa(value) {
   var n = parseFloat(value);
@@ -108,6 +117,7 @@ function handleAuthFailure(status, body) {
   // The owner has not approved this account (or blocked it mid-use):
   // re-read /me and land on the waiting screen.
   if (status === 403 && body && body.code === "pending") { refreshMe(); return true; }
+  if (status === 403 && body && body.code === "forbidden_role") { toast("Your role does not allow this action."); return false; }
   return false;
 }
 
@@ -184,6 +194,26 @@ function apiPut(path, payload) {
       throw new Error(body.error || ("Request failed (" + resp.status + ")"));
     });
   });
+}
+function apiDelete(path) {
+  return fetch(path, { method: "DELETE", headers: authHeaders() }).then(function (resp) {
+    return resp.json().catch(function () { return {}; }).then(function (body) {
+      if (resp.ok) return body;
+      if (handleAuthFailure(resp.status, body)) throw new Error("auth");
+      throw new Error(body.error || ("Request failed (" + resp.status + ")"));
+    });
+  });
+}
+function downloadAuthed(path, filename) {
+  return fetch(path, { headers: authHeaders() })
+    .then(function (resp) { if (!resp.ok) throw new Error("Download failed (" + resp.status + ")"); return resp.blob(); })
+    .then(function (blob) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    });
 }
 
 /* ------------------------------------------------------------ syncing -- */
@@ -266,6 +296,7 @@ function uploadLocalBackups() {
    the shopkeeper does nothing. Once per calendar day. */
 function maybeDailyBackup() {
   if (!token()) return;
+  if (QB.settings && QB.settings.auto_backup === false) return;
   var today = new Date().toISOString().slice(0, 10);
   if (lsGet("qbill_backup_day", "") === today) return;
   if (navigator.onLine) {
@@ -407,6 +438,7 @@ function showApp() {
   $("setCatEmail").classList.toggle("hidden", !(me && me.isOwner));
   $("setCatAccounts").classList.toggle("hidden", !(me && me.isOwner));
   setSettingsCat(settingsCat);
+  loadSettingsDoc();
   showScreen(currentScreen || "dashboard");
   maybeDailyBackup();
   syncNow();
@@ -756,15 +788,22 @@ var DOC_META = {
   sale_order:      { title: "Sale Order",                bookTitle: "Sale Orders",        party: "Customer", cashName: "Cash Sale",     add: "＋ Add Sale Order", settle: "", noPayment: true, returnsDoc: false },
   purchase_order:  { title: "Purchase Order",            bookTitle: "Purchase Orders",    party: "Supplier", cashName: "Cash Purchase", add: "＋ Add Order",     settle: "", noPayment: true,  returnsDoc: false },
   challan:         { title: "Delivery Challan",          bookTitle: "Delivery Challans",  party: "Customer", cashName: "Cash Sale",     add: "＋ Add Challan",   settle: "", noPayment: true,  returnsDoc: false },
+  proforma:        { title: "Proforma Invoice",          bookTitle: "Proforma Invoices",  party: "Customer", cashName: "Cash Sale",     add: "＋ Add Proforma",  settle: "", noPayment: true,  returnsDoc: false },
   sale_return:     { title: "Sale Return / Credit Note", bookTitle: "Sale Returns",       party: "Customer", cashName: "Cash Sale",     add: "＋ Add Return",    settle: "", noPayment: false, returnsDoc: true },
   purchase_return: { title: "Purchase Return / Debit Note", bookTitle: "Purchase Returns", party: "Supplier", cashName: "Cash Purchase", add: "＋ Add Return",  settle: "", noPayment: false, returnsDoc: true },
 };
-var CONVERTIBLE = { estimate: 1, sale_order: 1, challan: 1 };
+var CONVERTIBLE = { estimate: 1, sale_order: 1, challan: 1, proforma: 1 };
 
 var VIEW_TITLES = {
   dashboard: "Home", parties: "Parties", items: "Items", payments: "Payments",
   expenses: "Expenses", settings: "Settings", cashbank: "Cash & Bank",
   pnl: "Profit & Loss", daybook: "Day Book", stock: "Stock Summary",
+  otherincome: "Other Income", reports: "Reports", salesgraph: "Sales Graph",
+  godowns: "Manage Godowns", stocktransfer: "Stock Transfer",
+  store: "Online Store", loyalty: "Loyalty Points", accounting: "Accounting",
+  team: "Sync, Share & Backup", utilities: "Utilities",
+  grow: "Grow Your Business", preview: "Invoice Preview",
+  itemdetail: "Item Detail", ledger: "Ledger",
 };
 
 function setActiveNav() {
@@ -813,6 +852,18 @@ function go(nav) {
     case "daybook": navKey = "daybook"; showScreen("daybook"); break;
     case "stock": navKey = "stock"; showScreen("stock"); break;
     case "settings": navKey = "settings"; showScreen("settings"); break;
+    case "proforma": navKey = "proforma"; docsType = "proforma"; showScreen("docs"); break;
+    case "otherincome": navKey = "otherincome"; showScreen("otherincome"); break;
+    case "reports": navKey = "reports"; openReports("all-transactions"); break;
+    case "salesgraph": navKey = "salesgraph"; openReports("sales-graph"); break;
+    case "godowns": navKey = "godowns"; showScreen("godowns"); break;
+    case "stocktransfer": navKey = "stocktransfer"; showScreen("stocktransfer"); break;
+    case "store": navKey = "store"; showScreen("store"); break;
+    case "loyalty": navKey = "loyalty"; showScreen("loyalty"); break;
+    case "accounting": navKey = "accounting"; showScreen("accounting"); break;
+    case "team": navKey = "team"; showScreen("team"); break;
+    case "utilities": navKey = "utilities"; showScreen("utilities"); break;
+    case "grow": navKey = "grow"; showScreen("grow"); break;
     default: navKey = "dashboard"; showScreen("dashboard");
   }
 }
@@ -839,18 +890,51 @@ function loadScreen(name, silent) {
   else if (name === "pnl") loadPnl();
   else if (name === "daybook") loadDayBook();
   else if (name === "stock") loadStock();
-  else if (name === "settings") { loadProfile(); loadBackups(); if (me && me.isOwner) { loadMailConfig(); loadAccounts(); } }
+  else if (name === "otherincome") loadOtherIncome();
+  else if (name === "godowns") loadGodowns();
+  else if (name === "stocktransfer") loadTransfers();
+  else if (name === "store") loadStore();
+  else if (name === "loyalty") loadLoyalty();
+  else if (name === "accounting") loadAccounting();
+  else if (name === "team") loadTeam();
+  else if (name === "utilities") loadUtilities();
+  else if (name === "grow") loadGrow();
+  else if (name === "settings") { loadProfile(); loadSettingsDoc(); loadBackups(); if (me && me.isOwner) { loadMailConfig(); loadAccounts(); } }
 }
 
 /* ---------------------------------------------------------- dashboard -- */
+var dashData = null;
 function loadDashboard() {
   apiGet("/api/dashboard", "dashboard").then(function (r) {
     var d = r.body.dashboard;
+    dashData = d;
     $("dToday").textContent = fmtRs(d.todaySalesPaisa);
     $("dMonth").textContent = fmtRs(d.monthSalesPaisa);
     $("dReceivable").textContent = fmtRs(d.totalReceivablePaisa);
     $("dCash").textContent = fmtRs(d.cashInHandPaisa);
+    $("dBank").textContent = fmtRs(d.bankBalancePaisa || 0);
     $("dStock").textContent = fmtRs(d.stockValuePaisa);
+    var pct = d.salesVsLastMonthPct;
+    var badge = $("dVsLast");
+    if (pct == null) { badge.textContent = "—"; }
+    else {
+      badge.textContent = (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs last month";
+      badge.style.background = pct >= 0 ? "#e6f4ea" : "#fdecec";
+      badge.style.color = pct >= 0 ? "#137333" : "#b3261e";
+    }
+    $("dTopParty").textContent = d.topReceivableParty
+      ? d.topReceivableParty.name + " · " + fmtRs(d.topReceivableParty.balancePaisa)
+      : "—";
+    var low = d.lowStockCount || 0;
+    $("dLowRow").classList.toggle("hidden", low === 0);
+    if (low) $("dLowStock").textContent = low + (low === 1 ? " item" : " items");
+    var exp = d.expiringItems || [];
+    $("dExpiringList").innerHTML = exp.length ? exp.slice(0, 8).map(function (e) {
+      var right = '<div class="amt">' + e.expDate + "</div>";
+      return '<div class="row">' + rowHtml(e.itemName, "Batch " + (e.batchNo || "—") + " · " + e.qty + " left", right, "") + "</div>";
+    }).join("") : '<p class="empty">No stock is expiring soon.</p>';
+    renderSaleGraph();
+    applyWidgets();
   }).catch(function () {});
   apiGet("/api/pnl", "pnl").then(function (r) {
     $("dProfit").textContent = fmtRs(r.body.pnl.profitPaisa);
@@ -860,11 +944,6 @@ function loadDashboard() {
     var pay = 0;
     (r.body.parties || []).forEach(function (p) { if (p.balancePaisa < 0) pay += -p.balancePaisa; });
     $("dPayable").textContent = fmtRs(pay);
-  }).catch(function () {});
-  apiGet("/api/items", "items").then(function (r) {
-    var low = (r.body.items || []).filter(function (i) { return i.stockQty <= 0; }).length;
-    $("dLowRow").classList.toggle("hidden", low === 0);
-    if (low) $("dLowStock").textContent = low + (low === 1 ? " item" : " items");
   }).catch(function () {});
   apiGet("/api/invoices", "invoices").then(function (r) {
     var open = function (t) {
@@ -877,39 +956,253 @@ function loadDashboard() {
   }).catch(function () {});
 }
 
+/* Total Sale line graph — aggregates the daily series by period. */
+function graphBuckets() {
+  var series = (dashData && dashData.salesSeries) || [];
+  var period = $("saleGraphPeriod").value;
+  if (period === "daily") return series.map(function (p) { return { label: p.date, amount: p.amountPaisa }; });
+  var fmtKey;
+  if (period === "weekly") {
+    fmtKey = function (dateStr) {
+      var d = new Date(dateStr + "T00:00:00");
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return d.toISOString().slice(0, 10);
+    };
+  } else if (period === "monthly") fmtKey = function (s) { return s.slice(0, 7); };
+  else fmtKey = function (s) { return s.slice(0, 4); };
+  var map = {}, order = [];
+  series.forEach(function (p) {
+    var k = fmtKey(p.date);
+    if (!(k in map)) { map[k] = 0; order.push(k); }
+    map[k] += p.amountPaisa;
+  });
+  return order.map(function (k) { return { label: k, amount: map[k] }; });
+}
+function renderSaleGraph() {
+  var svg = $("saleGraph"), tip = $("saleGraphTip");
+  if (!svg || !dashData) return;
+  var pts = graphBuckets();
+  var pct = dashData.salesVsLastMonthPct;
+  $("saleGraphPct").textContent = pct == null ? "" :
+    (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs last month";
+  $("saleGraphNote").textContent = "Last month total: " +
+    fmtRs(dashData.lastMonthSalesPaisa || 0);
+  if (!pts.length) { svg.innerHTML = ""; return; }
+  var W = 640, H = 180, padL = 8, padR = 8, padT = 14, padB = 22;
+  var max = Math.max.apply(null, pts.map(function (p) { return p.amount; }).concat([1]));
+  var step = pts.length > 1 ? (W - padL - padR) / (pts.length - 1) : 0;
+  var coords = pts.map(function (p, i) {
+    return {
+      x: padL + step * i,
+      y: padT + (H - padT - padB) * (1 - p.amount / max),
+      label: p.label, amount: p.amount,
+    };
+  });
+  var line = coords.map(function (c, i) {
+    return (i === 0 ? "M" : "L") + c.x.toFixed(1) + "," + c.y.toFixed(1);
+  }).join(" ");
+  var area = line + " L" + coords[coords.length - 1].x.toFixed(1) + "," + (H - padB) +
+    " L" + coords[0].x.toFixed(1) + "," + (H - padB) + " Z";
+  var html = '<path d="' + area + '" fill="#f26522" opacity="0.12"/>' +
+    '<path d="' + line + '" fill="none" stroke="#f26522" stroke-width="2.5" stroke-linejoin="round"/>';
+  coords.forEach(function (c, i) {
+    html += '<circle class="gdot" data-i="' + i + '" cx="' + c.x.toFixed(1) + '" cy="' + c.y.toFixed(1) +
+      '" r="4" fill="#fff" stroke="#f26522" stroke-width="2"/>';
+  });
+  if (coords.length) {
+    var f = coords[0], l = coords[coords.length - 1];
+    html += '<text x="' + f.x + '" y="' + (H - 6) + '" font-size="10" fill="#667085">' + esc(f.label) + "</text>";
+    html += '<text x="' + l.x + '" y="' + (H - 6) + '" font-size="10" fill="#667085" text-anchor="end">' + esc(l.label) + "</text>";
+  }
+  svg.innerHTML = html;
+  svg.querySelectorAll(".gdot").forEach(function (dot) {
+    dot.addEventListener("mouseenter", function () {
+      var c = coords[+dot.getAttribute("data-i")];
+      tip.classList.remove("hidden");
+      tip.textContent = c.label + " · " + fmtRs(c.amount);
+      tip.style.left = (c.x / W * 100) + "%";
+      tip.style.top = (c.y / H * 100 - 16) + "%";
+    });
+    dot.addEventListener("mouseleave", function () { tip.classList.add("hidden"); });
+  });
+}
+function applyWidgets() {
+  var w = (QB.settings && QB.settings.widgets) || { cash_in_hand: true, bank_balance: true, low_stock: true, expiring_stock: true };
+  document.querySelectorAll("[data-widget]").forEach(function (cb) {
+    cb.checked = !!w[cb.getAttribute("data-widget")];
+  });
+  $("widgetBankRow").classList.toggle("hidden", !w.bank_balance);
+  $("widgetCashCard").classList.toggle("hidden", !w.cash_in_hand);
+  $("dLowRow").classList.toggle("hidden", !w.low_stock || !(dashData && dashData.lowStockCount));
+  $("dExpiringCard").classList.toggle("hidden", !w.expiring_stock);
+}
+
 /* ------------------------------------------------------------ parties -- */
 function rowHtml(main, sub, amt, cls) {
   return '<div><div class="main">' + esc(main) + '</div>' +
     (sub ? '<div class="sub">' + esc(sub) + "</div>" : "") + "</div>" +
     (amt != null ? '<div class="amt ' + (cls || "") + '">' + amt + "</div>" : "");
 }
+var editingPartyId = null;
+var partyExtrasDefsCache = [];
+function partyGroupsList(parties) {
+  var seen = {}, out = [];
+  (parties || []).forEach(function (p) {
+    if (p.groupName && !seen[p.groupName]) { seen[p.groupName] = 1; out.push(p.groupName); }
+  });
+  return out;
+}
+function renderPartyFormExtras() {
+  var s = QB.settings || {};
+  partyExtrasDefsCache = (s.party_extra_fields || []).filter(function (f) { return f.enabled; });
+  $("partyExtras").innerHTML = partyExtrasDefsCache.map(function (f, i) {
+    return '<label>' + esc(f.label || ("Field " + (i + 1))) +
+      ' <input type="text" data-party-extra="' + i + '"></label>';
+  }).join("");
+}
 function loadParties() {
   apiGet("/api/parties", "parties").then(function (r) {
+    var s = QB.settings || {};
+    renderPartyFormExtras();
+    var parties = r.body.parties || [];
+    var groups = partyGroupsList(parties);
+    $("partyGroupChips").innerHTML = s.party_grouping === false ? "" :
+      groups.map(function (g) {
+        return '<span class="rep-chip">' + esc(g) + "</span>";
+      }).join("");
+    var gs = $("partyGroup");
+    gs.innerHTML = '<option value="">— No group —</option>' + groups.map(function (g) {
+      return '<option>' + esc(g) + "</option>";
+    }).join("");
+    var dues = parties.filter(function (p) { return p.balancePaisa > 0; });
+    $("reminderCard").classList.toggle("hidden", !(s.party_reminder_enabled && dues.length));
+    $("reminderList").innerHTML = dues.slice(0, 10).map(function (p) {
+      return '<div class="row"><div><div class="main">' + esc(p.name) + '</div><div class="sub">Owes ' +
+        fmtRs(p.balancePaisa) + '</div></div><button class="btn btn-mini" data-remind="' + p.id + '">Remind</button></div>';
+    }).join("");
+    $("reminderList").querySelectorAll("[data-remind]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var p = parties.filter(function (x) { return String(x.id) === b.getAttribute("data-remind"); })[0];
+        if (p) sendReminder(p);
+      });
+    });
     var q = searchText();
-    var list = (r.body.parties || []).filter(function (p) {
+    var list = parties.filter(function (p) {
       return !q || p.name.toLowerCase().indexOf(q) >= 0;
     });
     $("partyList").innerHTML = list.length ? "" : '<p class="empty">No parties yet.</p>';
     list.forEach(function (p) {
-      var btn = document.createElement("button");
-      btn.className = "row"; btn.type = "button";
-      btn.innerHTML = rowHtml(p.name, p.phone || "", fmtRs(p.balancePaisa),
-        p.balancePaisa > 0 ? "neg" : "");
-      btn.addEventListener("click", function () { openLedger(p); });
-      $("partyList").appendChild(btn);
+      var wrap = document.createElement("div");
+      wrap.className = "row";
+      var sub = [p.phone || "", p.groupName || "", p.status && p.status !== "Active" ? p.status : ""]
+        .filter(Boolean).join(" · ");
+      wrap.innerHTML = rowHtml(p.name, sub, fmtRs(p.balancePaisa), p.balancePaisa > 0 ? "neg" : "");
+      var actions = document.createElement("div");
+      actions.className = "row-actions";
+      var led = document.createElement("button");
+      led.className = "btn btn-mini"; led.type = "button"; led.textContent = "Ledger";
+      led.addEventListener("click", function () { openLedger(p); });
+      actions.appendChild(led);
+      var ed = document.createElement("button");
+      ed.className = "btn btn-mini"; ed.type = "button"; ed.textContent = "Edit";
+      ed.addEventListener("click", function () { startEditParty(p); });
+      actions.appendChild(ed);
+      wrap.appendChild(actions);
+      $("partyList").appendChild(wrap);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+function sendReminder(p) {
+  var s = QB.settings || {};
+  var tmpl = s.party_reminder_message ||
+    "Assalam-o-Alaikum [Party Name], a gentle reminder: [Amount] is due at [Business Name]. Please pay at your earliest convenience. Thank you.";
+  var msg = tmpl.split("[Party Name]").join(p.name)
+    .split("[Amount]").join(fmtRs(p.balancePaisa))
+    .split("[Business Name]").join((me && me.business && me.business.name) || "QBill");
+  var phone = (p.phone || "").replace(/\D/g, "");
+  if (phone && phone.charAt(0) === "0") phone = "92" + phone.slice(1);
+  window.open("https://wa.me/" + phone + "?text=" + encodeURIComponent(msg), "_blank");
+}
+$("btnSendRemindersBulk").addEventListener("click", function () {
+  var parties = ((cacheGet("parties") || {}).parties) || [];
+  var dues = parties.filter(function (p) { return p.balancePaisa > 0 && p.phone; });
+  if (!dues.length) { setMsg("appMsg", "No party with a due balance and a phone number.", true); return; }
+  if (!confirm("Open WhatsApp for " + dues.length + " parties, one by one?")) return;
+  dues.slice(0, 5).forEach(function (p, i) {
+    setTimeout(function () { sendReminder(p); }, i * 900);
+  });
+  setMsg("appMsg", "Reminders opened for the first " + Math.min(dues.length, 5) +
+    " parties (browsers block opening many tabs at once).");
+});
+function startEditParty(p) {
+  editingPartyId = p.id;
+  $("partyFormTitle").textContent = "Edit party";
+  $("partySubmitBtn").textContent = "Save changes";
+  $("partyCancelEdit").classList.remove("hidden");
+  $("partyName").value = p.name || "";
+  $("partyPhone").value = p.phone || "";
+  $("partyEmail").value = p.email || "";
+  $("partyOpening").value = ((p.openingBalancePaisa || 0) / 100).toFixed(2);
+  $("partyStatus").value = p.status || "Active";
+  $("partyLoyalty").value = p.loyaltyPoints || 0;
+  $("partyBilling").value = p.billingAddress || "";
+  $("partyShipping").value = p.shippingAddress || "";
+  if (p.groupName) {
+    var gs = $("partyGroup");
+    if (![].some.call(gs.options, function (o) { return o.value === p.groupName; })) {
+      var o = document.createElement("option"); o.value = p.groupName; o.textContent = p.groupName;
+      gs.appendChild(o);
+    }
+    gs.value = p.groupName;
+  }
+  document.querySelectorAll("[data-party-extra]").forEach(function (inp) {
+    var def = partyExtrasDefsCache[+inp.getAttribute("data-party-extra")];
+    if (def) inp.value = (p.extras || {})[def.label] || "";
+  });
+  $("partyName").focus();
+}
+$("partyCancelEdit").addEventListener("click", function () {
+  editingPartyId = null;
+  $("partyForm").reset(); $("partyOpening").value = 0;
+  $("partyFormTitle").textContent = "Add party";
+  $("partySubmitBtn").textContent = "Add party";
+  $("partyCancelEdit").classList.add("hidden");
+});
 $("partyForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
-  apiCreate("party", {
+  var extras = {};
+  document.querySelectorAll("[data-party-extra]").forEach(function (inp) {
+    var def = partyExtrasDefsCache[+inp.getAttribute("data-party-extra")];
+    if (def && inp.value.trim()) extras[def.label] = inp.value.trim();
+  });
+  var payload = {
     name: $("partyName").value.trim(), phone: $("partyPhone").value.trim(),
-    opening_balance_paisa: rsToPaisa($("partyOpening").value)
-  }).then(function (r) {
+    email: $("partyEmail").value.trim(),
+    opening_balance_paisa: rsToPaisa($("partyOpening").value),
+    group_name: ($("partyGroupNew").value.trim() || $("partyGroup").value || "").trim(),
+    status: $("partyStatus").value,
+    billing_address: $("partyBilling").value.trim(),
+    shipping_address: $("partyShipping").value.trim(),
+    loyalty_points: parseInt($("partyLoyalty").value || "0", 10) || 0,
+    extras: extras
+  };
+  var done = function (msg) {
+    editingPartyId = null;
     $("partyForm").reset(); $("partyOpening").value = 0;
-    setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Party added.");
+    $("partyFormTitle").textContent = "Add party";
+    $("partySubmitBtn").textContent = "Add party";
+    $("partyCancelEdit").classList.add("hidden");
+    setMsg("appMsg", msg);
     loadParties();
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  };
+  if (editingPartyId) {
+    apiPut("/api/parties/" + editingPartyId, payload).then(function () { done("Party updated."); })
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  } else {
+    apiCreate("party", payload).then(function (r) {
+      done(r.queued ? "Saved on this device — will sync when online." : "Party added.");
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
 });
 
 /* ------------------------------------------------------------- ledger -- */
@@ -936,35 +1229,230 @@ function openLedger(party) {
 $("btnLedgerBack").addEventListener("click", function () { showScreen("parties"); });
 
 /* -------------------------------------------------------------- items -- */
+/* -------------------------------------------------------------- items -- */
+var itemsTab = "products";
+var editingItemId = null;
+function itemCategories() {
+  try { return JSON.parse(localStorage.getItem("qbill_item_categories") || "[]"); } catch (e) { return []; }
+}
+function setItemCategories(list) { localStorage.setItem("qbill_item_categories", JSON.stringify(list)); }
+function itemUnits() {
+  try {
+    var u = JSON.parse(localStorage.getItem("qbill_item_units") || "null");
+    if (u) return u;
+  } catch (e) {}
+  return [{ name: "Pcs", secondary: "", conversion: 0 }, { name: "Box", secondary: "", conversion: 0 },
+          { name: "Kg", secondary: "", conversion: 0 }, { name: "Litre", secondary: "", conversion: 0 },
+          { name: "Dozen", secondary: "Pcs", conversion: 12 }];
+}
+function setItemUnits(list) { localStorage.setItem("qbill_item_units", JSON.stringify(list)); }
+function refreshItemUnitSelects() {
+  var units = itemUnits();
+  ["itemUnit", "itemSecondaryUnit"].forEach(function (id) {
+    var sel = $(id);
+    var keep = sel.value;
+    sel.innerHTML = units.map(function (u) { return "<option>" + esc(u.name) + "</option>"; }).join("");
+    if (keep) sel.value = keep;
+  });
+}
+function refreshItemCategorySelect() {
+  var items = ((cacheGet("items") || {}).items) || [];
+  var cats = itemCategories();
+  items.forEach(function (i) {
+    if (i.category && cats.indexOf(i.category) < 0) cats.push(i.category);
+  });
+  var sel = $("itemCategory");
+  var keep = sel.value;
+  sel.innerHTML = '<option value="">— None —</option>' + cats.map(function (c) {
+    return "<option>" + esc(c) + "</option>";
+  }).join("");
+  if (keep) sel.value = keep;
+}
+function renderCategoryPanel() {
+  var items = ((cacheGet("items") || {}).items) || [];
+  var cats = itemCategories();
+  items.forEach(function (i) {
+    if (i.category && cats.indexOf(i.category) < 0) cats.push(i.category);
+  });
+  $("categoryList").innerHTML = cats.length ? cats.map(function (c) {
+    var n = items.filter(function (i) { return i.category === c; }).length;
+    return '<div class="row"><div><div class="main">' + esc(c) + '</div><div class="sub">' + n +
+      ' items</div></div></div>';
+  }).join("") : '<p class="empty">No categories yet.</p>';
+}
+function renderUnitPanel() {
+  $("unitList").innerHTML = itemUnits().map(function (u) {
+    return '<div class="row"><div><div class="main">' + esc(u.name) + '</div><div class="sub">' +
+      (u.secondary ? ("1 " + esc(u.name) + " = " + u.conversion + " " + esc(u.secondary)) : "Base unit") +
+      "</div></div></div>";
+  }).join("");
+}
 function loadItems() {
+  refreshItemUnitSelects();
   apiGet("/api/items", "items").then(function (r) {
+    refreshItemCategorySelect();
     var q = searchText();
-    var list = (r.body.items || []).filter(function (i) {
+    var all = (r.body.items || []);
+    var list = all.filter(function (i) {
+      if (itemsTab === "services" && i.itemType !== "service") return false;
+      if (itemsTab === "products" && i.itemType === "service") return false;
       return !q || i.name.toLowerCase().indexOf(q) >= 0;
     });
     $("itemList").innerHTML = list.length ? "" : '<p class="empty">No items yet.</p>';
+    $("itemList").classList.toggle("hidden", itemsTab === "category" || itemsTab === "units");
+    $("itemsCategory").classList.toggle("hidden", itemsTab !== "category");
+    $("itemsUnits").classList.toggle("hidden", itemsTab !== "units");
     list.forEach(function (i) {
       var div = document.createElement("div");
       div.className = "row";
+      var low = (i.minStock || 0) > 0 ? i.stockQty < i.minStock : i.stockQty <= 0;
       div.innerHTML = rowHtml(i.name,
-        "Sale " + fmtRs(i.salePricePaisa) + " · Purchase " + fmtRs(i.purchasePricePaisa),
-        "Stock: " + i.stockQty);
+        "Sale " + fmtRs(i.salePricePaisa) + " · Purchase " + fmtRs(i.purchasePricePaisa) +
+        (i.category ? " · " + i.category : "") + (i.itemCode ? " · " + i.itemCode : ""),
+        "Stock: " + i.stockQty + (low ? " ⚠ low" : ""));
+      var actions = document.createElement("div");
+      actions.className = "row-actions";
+      var det = document.createElement("button");
+      det.className = "btn btn-mini"; det.type = "button"; det.textContent = "Detail";
+      det.addEventListener("click", function () { openItemDetail(i); });
+      actions.appendChild(det);
+      var ed = document.createElement("button");
+      ed.className = "btn btn-mini"; ed.type = "button"; ed.textContent = "Edit";
+      ed.addEventListener("click", function () { startEditItem(i); });
+      actions.appendChild(ed);
+      div.appendChild(actions);
       $("itemList").appendChild(div);
     });
+    renderCategoryPanel();
+    renderUnitPanel();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+document.querySelectorAll("[data-itemtab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    itemsTab = b.getAttribute("data-itemtab");
+    document.querySelectorAll("[data-itemtab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    loadItems();
+  });
+});
+$("btnCatAdd").addEventListener("click", function () {
+  var v = $("catNew").value.trim();
+  if (!v) return;
+  var cats = itemCategories();
+  if (cats.indexOf(v) < 0) cats.push(v);
+  setItemCategories(cats);
+  $("catNew").value = "";
+  refreshItemCategorySelect(); renderCategoryPanel();
+});
+$("btnUnitAdd").addEventListener("click", function () {
+  var v = $("unitNew").value.trim();
+  if (!v) return;
+  var units = itemUnits();
+  units.push({ name: v, secondary: $("unitNewSecondary").value.trim(),
+               conversion: parseFloat($("unitNewConv").value || "0") || 0 });
+  setItemUnits(units);
+  $("unitNew").value = ""; $("unitNewSecondary").value = ""; $("unitNewConv").value = "";
+  refreshItemUnitSelects(); renderUnitPanel();
+});
+$("btnAssignCode").addEventListener("click", function () {
+  $("itemCode").value = "ITM-" + Math.floor(1000 + Math.random() * 9000);
+});
+$("btnAddBatchRow").addEventListener("click", function () {
+  var row = document.createElement("div");
+  row.className = "grid2";
+  row.innerHTML = '<input class="bt-no" placeholder="Batch No.">' +
+    '<input class="bt-qty" type="number" step="1" min="0" placeholder="Qty">' +
+    '<input class="bt-exp" placeholder="Exp (mm/yy)">' +
+    '<input class="bt-mfg" placeholder="Mfg (mm/yy)">';
+  $("batchRows").appendChild(row);
+});
+function startEditItem(i) {
+  editingItemId = i.id;
+  $("itemFormTitle").textContent = "Edit item";
+  $("itemSubmitBtn").textContent = "Save changes";
+  $("itemCancelEdit").classList.remove("hidden");
+  $("itemType").value = i.itemType || "product";
+  $("itemName").value = i.name || "";
+  $("itemCode").value = i.itemCode || "";
+  $("itemSale").value = ((i.salePricePaisa || 0) / 100).toFixed(2);
+  $("itemPurchase").value = ((i.purchasePricePaisa || 0) / 100).toFixed(2);
+  $("itemWholesale").value = ((i.wholesalePricePaisa || 0) / 100).toFixed(2);
+  $("itemMrp").value = ((i.mrpPaisa || 0) / 100).toFixed(2);
+  $("itemTaxPct").value = (i.taxBp || 0) / 100;
+  $("itemDiscountPct").value = (i.discountBp || 0) / 100;
+  $("itemStock").value = i.stockQty || 0;
+  $("itemMinStock").value = i.minStock || 0;
+  $("itemLocation").value = i.location || "";
+  $("itemDescription").value = i.description || "";
+  if (i.category) $("itemCategory").value = i.category;
+  if (i.unit) $("itemUnit").value = i.unit;
+  if (i.secondaryUnit) $("itemSecondaryUnit").value = i.secondaryUnit;
+  $("itemConversion").value = i.conversion || 0;
+  $("itemName").focus();
+}
+$("itemCancelEdit").addEventListener("click", function () {
+  editingItemId = null;
+  $("itemForm").reset();
+  $("itemFormTitle").textContent = "Add item";
+  $("itemSubmitBtn").textContent = "Add item";
+  $("itemCancelEdit").classList.add("hidden");
+});
 $("itemForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
-  apiCreate("item", {
+  var batches = [];
+  var batchSum = 0;
+  document.querySelectorAll("#batchRows > div").forEach(function (row) {
+    var no = row.querySelector(".bt-no").value.trim();
+    var qty = parseInt(row.querySelector(".bt-qty").value || "0", 10) || 0;
+    if (no && qty > 0) {
+      batches.push({ batch_no: no, qty: qty,
+        exp_date: row.querySelector(".bt-exp").value.trim(),
+        mfg_date: row.querySelector(".bt-mfg").value.trim() });
+      batchSum += qty;
+    }
+  });
+  var stockQty = parseInt($("itemStock").value || "0", 10) || 0;
+  if (!editingItemId && batches.length && batchSum > 0) stockQty = batchSum;
+  var payload = {
     name: $("itemName").value.trim(),
+    item_type: $("itemType").value,
+    item_code: $("itemCode").value.trim(),
+    category: ($("itemCategoryNew").value.trim() || $("itemCategory").value || "").trim(),
     sale_price_paisa: rsToPaisa($("itemSale").value),
     purchase_price_paisa: rsToPaisa($("itemPurchase").value),
-    stock_qty: parseInt($("itemStock").value || "0", 10)
-  }).then(function (r) {
+    wholesale_price_paisa: rsToPaisa($("itemWholesale").value),
+    mrp_paisa: rsToPaisa($("itemMrp").value),
+    tax_bp: Math.round((parseFloat($("itemTaxPct").value || "0") || 0) * 100),
+    discount_bp: Math.round((parseFloat($("itemDiscountPct").value || "0") || 0) * 100),
+    stock_qty: stockQty,
+    min_stock: parseInt($("itemMinStock").value || "0", 10) || 0,
+    location: $("itemLocation").value.trim(),
+    description: $("itemDescription").value.trim(),
+    unit: $("itemUnit").value,
+    secondary_unit: $("itemSecondaryUnit").value,
+    conversion: parseFloat($("itemConversion").value || "0") || 0,
+    batches: batches
+  };
+  var done = function (msg) {
+    editingItemId = null;
     $("itemForm").reset();
-    setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Item added.");
+    $("batchRows").innerHTML = "";
+    $("itemFormTitle").textContent = "Add item";
+    $("itemSubmitBtn").textContent = "Add item";
+    $("itemCancelEdit").classList.add("hidden");
+    setMsg("appMsg", msg);
     loadItems();
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  };
+  if (editingItemId) {
+    delete payload.batches;
+    apiPut("/api/items/" + editingItemId, payload).then(function () { done("Item updated."); })
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  } else {
+    apiCreate("item", payload).then(function (r) {
+      done(r.queued ? "Saved on this device — will sync when online." : "Item added.");
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
 });
 
 /* ------------------------------------------------- document form ----- */
@@ -996,7 +1484,19 @@ function fillPartySelects() {
       });
       sel.value = keep;
     });
+    ["allocParty", "expParty", "incParty", "chqParty"].forEach(function (id) {
+      var sel = $(id); if (!sel) return;
+      var keep = sel.value;
+      sel.innerHTML = id === "allocParty" ? '<option value="">— Choose party —</option>' : '<option value="">— None —</option>';
+      parties.forEach(function (p) {
+        var o = document.createElement("option");
+        o.value = p.id; o.textContent = p.name;
+        sel.appendChild(o);
+      });
+      sel.value = keep;
+    });
     updateDocPartyInfo();
+    updateLoyaltyInfo();
   }).catch(function () {});
 }
 function updateDocPartyInfo() {
@@ -1031,16 +1531,35 @@ $("btnDocPartySave").addEventListener("click", function () {
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
 
-function addSaleLine(item) {
+var editingInvoiceId = null;
+var lastSavedInvoice = null;
+
+function itemById(id) {
+  return (((cacheGet("items") || {}).items) || []).filter(function (i) { return i.id === id; })[0] || null;
+}
+
+function addSaleLine(itemId, preset) {
+  var s = QB.settings || {};
   var wrap = document.createElement("div");
   wrap.className = "sale-line";
-  wrap.innerHTML =
+  var html =
     '<label>Item<select class="sl-item"></select></label>' +
     '<label>Qty<input class="sl-qty" type="number" step="1" min="1" value="1"></label>' +
+    '<label class="sl-free-wrap">Free<input class="sl-free" type="number" step="1" min="0" value="0"></label>' +
     '<span class="sl-unit">—</span>' +
-    '<label>Rate (Rs)<input class="sl-rate" type="number" step="0.01" min="0" value="0"></label>' +
+    '<label>Price/Unit<input class="sl-rate" type="number" step="0.01" min="0" value="0"></label>' +
+    '<label class="sl-disc-wrap">Disc %<input class="sl-disc" type="number" step="0.01" min="0" value="0"></label>' +
+    '<label class="sl-tax-wrap">Tax %<input class="sl-tax" type="number" step="0.01" min="0" value="' +
+      ((s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : 0) + '"></label>' +
     '<span class="sl-amt">Rs 0.00</span>' +
-    '<button class="rm" type="button" title="Remove line">×</button>';
+    '<button class="rm" type="button" title="Remove line">×</button>' +
+    '<div class="sl-sub">' +
+      '<input class="sl-desc" placeholder="Description">' +
+      '<input class="sl-batch" placeholder="Batch No.">' +
+      '<input class="sl-serial" placeholder="Serial No./IMEI">' +
+      '<input class="sl-exp" placeholder="Exp (mm/yy)">' +
+    "</div>";
+  wrap.innerHTML = html;
   var sel = wrap.querySelector(".sl-item");
   var customs = document.createElement("option");
   customs.value = ""; customs.textContent = "— Custom line —";
@@ -1050,41 +1569,100 @@ function addSaleLine(item) {
     o.value = i.id; o.textContent = i.name; o.setAttribute("data-rate", i.salePricePaisa);
     sel.appendChild(o);
   });
-  var desc = document.createElement("input");
-  desc.className = "sl-desc"; desc.placeholder = "Description (for custom line)";
-  desc.style.gridColumn = "1 / -1";
-  wrap.appendChild(desc);
-  sel.addEventListener("change", function () {
+  wrap.querySelector(".sl-free-wrap").classList.toggle("hidden", !s.txn_free_item_qty);
+  wrap.querySelector(".sl-disc-wrap").classList.toggle("hidden", s.item_wise_discount === false);
+  wrap.querySelector(".sl-tax-wrap").classList.toggle("hidden", !(s.tax_enabled && s.item_wise_tax !== false));
+  function fillFromItem() {
     var o = sel.options[sel.selectedIndex];
+    var it = itemById(parseInt(sel.value, 10) || 0);
     if (o && o.getAttribute("data-rate")) wrap.querySelector(".sl-rate").value = (o.getAttribute("data-rate") / 100).toFixed(2);
+    wrap.querySelector(".sl-unit").textContent = it && it.unit ? it.unit : (s.default_unit || "Pcs");
+    if (it) {
+      if (it.discountBp) wrap.querySelector(".sl-disc").value = it.discountBp / 100;
+      if (it.taxBp != null && s.tax_enabled) wrap.querySelector(".sl-tax").value = it.taxBp / 100;
+      if (it.description && s.item_description_enabled) wrap.querySelector(".sl-desc").value = it.description;
+      apiGet("/api/items/" + it.id + "/batches", null).then(function (r) {
+        var bs = (r.body.batches || []).filter(function (b) { return b.qty > 0; });
+        if (bs.length) {
+          bs.sort(function (a, b) { return (a.expDate || "99/99") < (b.expDate || "99/99") ? -1 : 1; });
+          wrap.querySelector(".sl-batch").value = bs[0].batchNo || "";
+          wrap.querySelector(".sl-exp").value = bs[0].expDate || "";
+        }
+      }).catch(function () {});
+      var pid = $("saleParty").value;
+      if (s.party_wise_item_rate && pid) {
+        apiGet("/api/parties/" + pid + "/item-rate/" + it.id, null).then(function (r) {
+          if (r.body.ratePaisa != null) wrap.querySelector(".sl-rate").value = (r.body.ratePaisa / 100).toFixed(2);
+          calcSaleTotal();
+        }).catch(function () {});
+      }
+    }
     calcSaleTotal();
-  });
+  }
+  sel.addEventListener("change", fillFromItem);
   wrap.querySelector(".rm").addEventListener("click", function () { wrap.remove(); calcSaleTotal(); });
-  wrap.querySelector(".sl-qty").addEventListener("input", calcSaleTotal);
-  wrap.querySelector(".sl-rate").addEventListener("input", calcSaleTotal);
-  if (item) { sel.value = item; sel.dispatchEvent(new Event("change")); }
+  ["sl-qty", "sl-free", "sl-rate", "sl-disc", "sl-tax"].forEach(function (cn) {
+    wrap.querySelector("." + cn).addEventListener("input", calcSaleTotal);
+  });
+  wrap.querySelector(".sl-rate").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && QB.settings && QB.settings.txn_quick_entry) {
+      ev.preventDefault(); addSaleLine();
+    }
+  });
+  if (preset) {
+    if (preset.qty != null) wrap.querySelector(".sl-qty").value = preset.qty;
+    if (preset.freeQty != null) wrap.querySelector(".sl-free").value = preset.freeQty;
+    if (preset.ratePaisa != null) wrap.querySelector(".sl-rate").value = (preset.ratePaisa / 100).toFixed(2);
+    if (preset.discountPaisa && preset.qty && preset.ratePaisa) {
+      var gross = preset.qty * preset.ratePaisa;
+      wrap.querySelector(".sl-disc").value = gross ? (preset.discountPaisa / gross * 100).toFixed(2) : 0;
+    }
+    if (preset.taxPaisa && preset.qty && preset.ratePaisa) {
+      var net2 = preset.qty * preset.ratePaisa - (preset.discountPaisa || 0);
+      wrap.querySelector(".sl-tax").value = net2 ? (preset.taxPaisa / net2 * 100).toFixed(2) : 0;
+    }
+    if (preset.description) wrap.querySelector(".sl-desc").value = preset.description;
+    if (preset.batchNo) wrap.querySelector(".sl-batch").value = preset.batchNo;
+    if (preset.serialNo) wrap.querySelector(".sl-serial").value = preset.serialNo;
+    if (preset.expDate) wrap.querySelector(".sl-exp").value = preset.expDate;
+  }
+  if (itemId) { sel.value = itemId; fillFromItem(); }
   $("saleLines").appendChild(wrap);
+  calcSaleTotal();
+  return wrap;
 }
 function saleLinesData() {
   var lines = [];
   document.querySelectorAll(".sale-line").forEach(function (w) {
     var itemId = w.querySelector(".sl-item").value;
+    var qty = parseInt(w.querySelector(".sl-qty").value || "0", 10);
+    var rate = rsToPaisa(w.querySelector(".sl-rate").value);
+    var gross = qty * rate;
+    var disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
+    var tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
     var line = {
-      qty: parseInt(w.querySelector(".sl-qty").value || "0", 10),
-      rate_paisa: rsToPaisa(w.querySelector(".sl-rate").value)
+      qty: qty,
+      free_qty: parseInt(w.querySelector(".sl-free").value || "0", 10),
+      rate_paisa: rate,
+      discount_paisa: disc,
+      tax_paisa: tax
     };
     if (itemId) line.item_id = parseInt(itemId, 10);
-    var d = w.querySelector(".sl-desc").value.trim();
-    if (d) line.description = d;
+    var d = w.querySelector(".sl-desc").value.trim(); if (d) line.description = d;
+    var b = w.querySelector(".sl-batch").value.trim(); if (b) line.batch_no = b;
+    var sn = w.querySelector(".sl-serial").value.trim(); if (sn) line.serial_no = sn;
+    var ex = w.querySelector(".sl-exp").value.trim(); if (ex) line.exp_date = ex;
     if (line.qty > 0) lines.push(line);
   });
   return lines;
 }
 function docTotals() {
-  var sub = 0;
-  saleLinesData().forEach(function (l) { sub += l.qty * l.rate_paisa; });
-  var disc = rsToPaisa($("saleDiscount").value);
-  var tax = rsToPaisa($("saleTax").value);
+  var sub = 0, disc = 0, tax = 0;
+  saleLinesData().forEach(function (l) {
+    sub += l.qty * l.rate_paisa;
+    disc += l.discount_paisa || 0;
+    tax += l.tax_paisa || 0;
+  });
   var total = Math.max(sub - disc + tax, 0);
   var rounded = Math.round(total / 100) * 100;
   return { sub: sub, disc: disc, tax: tax, total: total, rounded: rounded };
@@ -1093,11 +1671,30 @@ function calcSaleTotal() {
   document.querySelectorAll(".sale-line").forEach(function (w) {
     var q = parseInt(w.querySelector(".sl-qty").value || "0", 10);
     var r = rsToPaisa(w.querySelector(".sl-rate").value);
-    w.querySelector(".sl-amt").textContent = fmtRs(q * r);
+    var gross = q * r;
+    var disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
+    var tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
+    w.querySelector(".sl-amt").textContent = fmtRs(gross - disc + tax);
   });
   var t = docTotals();
   var shown = $("docRoundOff").checked ? t.rounded : t.total;
+  var loyUse = parseInt($("docLoyaltyUse").value || "0", 10) || 0;
+  if (docType === "sale" && QB.settings && QB.settings.loyalty && QB.settings.loyalty.enabled && loyUse > 0) {
+    shown = Math.max(shown - loyUse * Math.round((QB.settings.loyalty.redeem_value_paisa || 100)), 0);
+  }
   $("saleTotal").textContent = fmtRs(shown);
+  if (docType === "sale" && QB.settings && QB.settings.show_profit_on_sale) {
+    var cost = 0;
+    document.querySelectorAll(".sale-line").forEach(function (w) {
+      var it = itemById(parseInt(w.querySelector(".sl-item").value, 10) || 0);
+      if (it) cost += (parseInt(w.querySelector(".sl-qty").value || "0", 10) || 0) * (it.purchasePricePaisa || 0);
+    });
+    $("docProfitHint").classList.remove("hidden");
+    $("docProfitHint").textContent = "Profit on this bill (approx): " + fmtRs(t.total - cost);
+  } else {
+    $("docProfitHint").classList.add("hidden");
+  }
+  updateLoyaltyInfo();
   if (docCashMode) $("salePaid").value = (shown / 100).toFixed(2);
 }
 function applyDocType() {
@@ -1107,31 +1704,40 @@ function applyDocType() {
   $("docPaidLabel").textContent = meta.returnsDoc ? "Refund (Rs)" : "Paid now (Rs)";
   $("docToggleWrap").classList.toggle("hidden", meta.noPayment);
   $("docPaidWrap").classList.toggle("hidden", meta.noPayment);
-  $("docSaveBtn").textContent = "Save " + meta.title;
+  $("docSaveBtn").textContent = editingInvoiceId ? "Save changes" : "Save " + meta.title;
   $("docDate").textContent = new Date().toISOString().slice(0, 10);
-  $("docNumber").textContent = "Auto";
+  $("docNumber").textContent = editingInvoiceId ? "Editing" : "Auto";
   docCashMode = false;
   $("docCashToggle").classList.remove("on");
   $("docCashToggle").setAttribute("aria-checked", "false");
   $("salePaid").removeAttribute("readonly");
+  var s = QB.settings || {};
+  $("docBarcodeRow").classList.toggle("hidden", !s.barcode_scan);
+  $("docDueWrap").classList.toggle("hidden", !s.due_dates_payment_terms);
+  $("docTermsWrap").classList.toggle("hidden", !s.due_dates_payment_terms);
+  $("docPoWrap").classList.toggle("hidden", !s.customers_po_details);
+  $("docRepeatWrap").classList.toggle("hidden", !s.repeat_invoices);
+  $("docLoyaltyBlock").classList.toggle("hidden", !(docType === "sale" && s.loyalty && s.loyalty.enabled));
+  $("docShippingWrap").classList.toggle("hidden", s.party_shipping_address === false);
+  $("btnDocAddParty").classList.toggle("hidden", !!s.block_new_from_txn);
   fillPartySelects();
+  loadTermsPicker();
   calcSaleTotal();
 }
 function openDocForm(type) {
   docType = DOC_META[type] ? type : "sale";
+  editingInvoiceId = null;
   navKey = type === "sale" ? "salebook" : type === "purchase" ? "purchasebook" : navKey;
   showScreen("sale");
 }
 function loadSaleForm() {
   applyDocType();
   apiGet("/api/items", "items").then(function () {
-    if (!$("saleLines").children.length) addSaleLine();
+    if (!editingInvoiceId && !$("saleLines").children.length) addSaleLine();
     calcSaleTotal();
   }).catch(function () { if (!$("saleLines").children.length) addSaleLine(); });
 }
 $("btnAddLine").addEventListener("click", function () { addSaleLine(); });
-$("saleDiscount").addEventListener("input", calcSaleTotal);
-$("saleTax").addEventListener("input", calcSaleTotal);
 $("docRoundOff").addEventListener("change", calcSaleTotal);
 $("docCashToggle").addEventListener("click", function () {
   docCashMode = !docCashMode;
@@ -1141,6 +1747,18 @@ $("docCashToggle").addEventListener("click", function () {
   calcSaleTotal();
 });
 var lastInvoiceId = null;
+function updateLoyaltyInfo() {
+  var info = $("docLoyaltyInfo");
+  if (!info) return;
+  var pid = $("saleParty").value;
+  var parties = ((cacheGet("parties") || {}).parties) || [];
+  var party = parties.filter(function (p) { return String(p.id) === String(pid); })[0];
+  var pts = party ? (party.loyaltyPoints || 0) : 0;
+  info.textContent = party ? ("Available points: " + pts) : "Pick a party to use points.";
+  $("docLoyaltyUse").max = pts;
+}
+$("docLoyaltyUse").addEventListener("input", calcSaleTotal);
+$("saleParty").addEventListener("change", updateLoyaltyInfo);
 $("saleForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var lines = saleLinesData();
@@ -1152,56 +1770,100 @@ $("saleForm").addEventListener("submit", function (ev) {
     var delta = t.rounded - t.total;
     if (delta >= 0) tax += delta; else disc += -delta;
   }
+  var loyUse = 0;
+  if (docType === "sale" && QB.settings && QB.settings.loyalty && QB.settings.loyalty.enabled) {
+    loyUse = parseInt($("docLoyaltyUse").value || "0", 10) || 0;
+  }
   var payload = {
     type: docType,
     party_id: $("saleParty").value ? parseInt($("saleParty").value, 10) : null,
     discount_paisa: disc,
     tax_paisa: tax,
     paid_paisa: meta.noPayment ? 0 : rsToPaisa($("salePaid").value),
-    lines: lines
+    loyalty_points_used: loyUse,
+    lines: lines,
+    due_date: $("docDueDate").value || null,
+    payment_terms: $("docPayTerms").value || null,
+    billing_address: $("docBilling").value.trim(),
+    shipping_address: $("docShipping").value.trim(),
+    po_number: $("docPoNumber").value.trim(),
+    transport_name: $("docTransport").value.trim(),
+    vehicle_no: $("docVehicle").value.trim(),
+    delivery_date: $("docDeliveryDate").value || null,
+    delivery_location: $("docDeliveryLoc").value.trim(),
+    description: $("docDescription").value.trim(),
+    terms_id: docTermsSelected || null,
+    repeat_freq: $("docRepeat").value || null,
+    attachment_name: $("docAttachment").value ? $("docAttachment").value.split("\\").pop() : ""
   };
-  apiCreate("invoice", payload).then(function (r) {
-    $("saleDone").classList.remove("hidden");
-    if (r.queued) {
-      lastInvoiceId = null;
-      $("saleDoneText").textContent = meta.title + " saved on this device — it will sync when you are online. PDF will be available after sync.";
-      $("btnSalePdf").classList.add("hidden");
+  var wasEditing = editingInvoiceId;
+  function finishSave(inv, queuedFlag) {
+    lastInvoiceId = inv ? inv.id : null;
+    lastSavedInvoice = inv;
+    resetDocForm();
+    if (queuedFlag) {
+      setMsg("appMsg", meta.title + " saved on this device — it will sync when you are online. PDF will be available after sync.");
+      go("dashboard");
+      return;
+    }
+    if (payload.repeat_freq && !wasEditing) {
+      showRepeatDialog(inv, payload);
+    }
+    openPreview(inv);
+  }
+  function handleResult(r) {
+    if (r.queued) { finishSave(null, true); return; }
+    var inv = r.body.invoice;
+    var lows = r.body.lowStock || [];
+    if (lows.length && QB.settings && QB.settings.low_stock_dialog !== false && !wasEditing) {
+      showLowStockDialog(lows, function () { finishSave(inv, false); });
     } else {
-      lastInvoiceId = r.body.invoice.id;
-      $("saleDoneText").textContent = meta.title + " " + r.body.invoice.invoiceNo + " saved. Total " +
-        fmtRs(r.body.invoice.totalPaisa) + " · Balance " + fmtRs(r.body.invoice.balancePaisa) + ".";
-      $("btnSalePdf").classList.remove("hidden");
+      finishSave(inv, false);
     }
     loadDashboard();
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
+  if (wasEditing) {
+    apiPut("/api/invoices/" + wasEditing, payload).then(handleResult)
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  } else {
+    apiCreate("invoice", payload).then(handleResult)
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
 });
-$("btnSaleNew").addEventListener("click", function () {
-  $("saleDone").classList.add("hidden");
+function resetDocForm() {
+  editingInvoiceId = null;
+  docTermsSelected = null;
   $("saleLines").innerHTML = ""; addSaleLine();
-  $("saleDiscount").value = 0; $("saleTax").value = 0; $("salePaid").value = 0;
+  $("salePaid").value = 0;
   $("docRoundOff").checked = false;
+  ["docBilling", "docShipping", "docPoNumber", "docTransport", "docVehicle",
+   "docDeliveryLoc", "docDescription", "docLoyaltyUse"].forEach(function (id) { $(id).value = ""; });
+  $("docDueDate").value = ""; $("docDeliveryDate").value = "";
+  $("docRepeat").value = "";
   applyDocType();
+}
+$("btnSaleNew").addEventListener("click", function () {
+  openDocForm(docType);
 });
 $("btnSaleBook").addEventListener("click", function () {
   if (docType === "sale") go("salebook");
   else if (docType === "purchase") go("purchasebook");
   else go({ estimate: "estimates", sale_order: "saleorders", purchase_order: "purchaseorders",
-            challan: "challans", sale_return: "salereturns", purchase_return: "purchasereturns" }[docType] || "dashboard");
+            challan: "challans", sale_return: "salereturns", purchase_return: "purchasereturns",
+            proforma: "proforma" }[docType] || "dashboard");
 });
-function downloadInvoicePdf(id) {
-  fetch("/api/invoices/" + id + "/pdf", { headers: authHeaders() })
+function downloadInvoicePdf(id, thermal) {
+  var path = "/api/invoices/" + id + "/pdf" + (thermal ? "?format=thermal" : "");
+  fetch(path, { headers: authHeaders() })
     .then(function (resp) { if (!resp.ok) throw new Error("PDF failed (" + resp.status + ")"); return resp.blob(); })
     .then(function (blob) {
       var a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "qbill-invoice.pdf";
+      a.download = thermal ? "qbill-bill-thermal.pdf" : "qbill-invoice.pdf";
       a.click();
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
-$("btnSalePdf").addEventListener("click", function () {
-  if (lastInvoiceId) downloadInvoicePdf(lastInvoiceId);
-});
 
 /* --------------------------------------------------- books & lists --- */
 var bookFrom = "", bookTo = "";
@@ -1233,6 +1895,19 @@ function loadBook() {
     $("bookPaid").textContent = fmtRs(paidSum);
     $("bookUnpaid").textContent = fmtRs(unpaidSum);
     $("bookTotal").textContent = fmtRs(paidSum + unpaidSum);
+    if (bookKind === "sale") {
+      $("bookSaleWrap").classList.remove("hidden");
+      $("bookSaleTotal").textContent = fmtRs(paidSum + unpaidSum);
+      $("bookSaleReceived").textContent = fmtRs(paidSum);
+      $("bookSaleBalance").textContent = fmtRs(unpaidSum);
+      apiGet("/api/dashboard", "dashboard").then(function (dr) {
+        var pct = dr.body.dashboard.salesVsLastMonthPct;
+        $("bookSaleVs").textContent = pct == null ? "" :
+          (pct >= 0 ? "▲ " : "▼ ") + Math.abs(pct) + "% vs last month";
+      }).catch(function () {});
+    } else {
+      $("bookSaleWrap").classList.add("hidden");
+    }
     var body = $("bookBody");
     body.innerHTML = "";
     $("bookEmpty").classList.toggle("hidden", list.length > 0);
@@ -1263,6 +1938,7 @@ function loadBook() {
         });
         td.appendChild(settle);
       }
+      appendDocRowActions(td, inv, meta, "book");
       tr.appendChild(td);
       body.appendChild(tr);
     });
@@ -1290,6 +1966,11 @@ function loadDocs() {
     var body = $("docsBody");
     body.innerHTML = "";
     $("docsEmpty").classList.toggle("hidden", list.length > 0);
+    var convSum = 0, openSum = 0;
+    list.forEach(function (i) { if (i.convertedToId) convSum += i.totalPaisa; else openSum += i.totalPaisa; });
+    $("docsTotals").classList.toggle("hidden", !CONVERTIBLE[docsType]);
+    $("docsConverted").textContent = fmtRs(convSum);
+    $("docsOpen").textContent = fmtRs(openSum);
     list.forEach(function (inv) {
       var tr = document.createElement("tr");
       tr.innerHTML =
@@ -1318,12 +1999,136 @@ function loadDocs() {
         });
         td.appendChild(conv);
       }
+      appendDocRowActions(td, inv, meta, "docs");
       tr.appendChild(td);
       body.appendChild(tr);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
 $("btnDocsAdd").addEventListener("click", function () { openDocForm(docsType); });
+
+/* Shared per-transaction actions: Edit / History / WhatsApp / Delete. */
+function appendDocRowActions(td, inv, meta, where) {
+  var passcodeGate = QB.settings && QB.settings.txn_passcode_edit_delete;
+  function passcodeCheck(next) {
+    if (!passcodeGate) { next(); return; }
+    var pw = prompt("Enter your QBill password to edit or delete this transaction:");
+    if (pw == null) return;
+    apiPost("/api/auth/verify-password", { password: pw }).then(next)
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
+  var edit = document.createElement("button");
+  edit.className = "btn btn-mini"; edit.type = "button"; edit.textContent = "Edit";
+  edit.addEventListener("click", function () { passcodeCheck(function () { startEditInvoice(inv); }); });
+  td.appendChild(edit);
+  var hist = document.createElement("button");
+  hist.className = "btn btn-mini"; hist.type = "button"; hist.textContent = "History";
+  hist.addEventListener("click", function () { showInvoiceHistory(inv); });
+  td.appendChild(hist);
+  var wa = document.createElement("button");
+  wa.className = "btn btn-mini"; wa.type = "button"; wa.textContent = "WhatsApp";
+  wa.addEventListener("click", function () { shareInvoiceWhatsApp(inv); });
+  td.appendChild(wa);
+  var del = document.createElement("button");
+  del.className = "btn btn-mini"; del.type = "button"; del.textContent = "Delete";
+  del.addEventListener("click", function () {
+    passcodeCheck(function () {
+      if (!confirm("Delete " + meta.title + " " + inv.invoiceNo + "? It moves to Utilities > Recycle Bin and its stock effect is reversed.")) return;
+      apiDelete("/api/invoices/" + inv.id).then(function () {
+        setMsg("appMsg", meta.title + " " + inv.invoiceNo + " moved to the Recycle Bin.");
+        if (where === "book") loadBook(); else loadDocs();
+        loadDashboard();
+      }).catch(function (e) { setMsg("appMsg", e.message, true); });
+    });
+  });
+  td.appendChild(del);
+}
+function startEditInvoice(inv) {
+  apiGet("/api/items", "items").then(function () {
+    return apiGet("/api/invoices/" + inv.id, null);
+  }).then(function (r) {
+    var full = r.body.invoice;
+    docType = full.type;
+    editingInvoiceId = full.id;
+    showScreen("sale");
+    $("saleParty").value = full.partyId || "";
+    $("saleLines").innerHTML = "";
+    (full.lines || []).forEach(function (l) { addSaleLine(l.itemId, l); });
+    if (!(full.lines || []).length) addSaleLine();
+    $("salePaid").value = ((full.paidPaisa || 0) / 100).toFixed(2);
+    $("docBilling").value = full.billingAddress || "";
+    $("docShipping").value = full.shippingAddress || "";
+    $("docDueDate").value = full.dueDate || "";
+    $("docPayTerms").value = full.paymentTerms || "";
+    $("docPoNumber").value = full.poNumber || "";
+    $("docTransport").value = full.transportName || "";
+    $("docVehicle").value = full.vehicleNo || "";
+    $("docDeliveryDate").value = full.deliveryDate || "";
+    $("docDeliveryLoc").value = full.deliveryLocation || "";
+    $("docDescription").value = full.description || "";
+    $("docNumber").textContent = full.invoiceNo;
+    updateDocPartyInfo();
+    calcSaleTotal();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+function showInvoiceHistory(inv) {
+  apiGet("/api/invoices/" + inv.id + "/history", null).then(function (r) {
+    var rows = (r.body.history || []).map(function (h) {
+      return '<div class="row">' + rowHtml(h.action + " — " + (h.actor || ""), h.createdAt, null, "") + "</div>";
+    }).join("");
+    openDialog("Edit History — " + inv.invoiceNo,
+      rows || '<p class="empty">No history recorded for this transaction.</p>');
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+function shareInvoiceWhatsApp(inv) {
+  var parties = ((cacheGet("parties") || {}).parties) || [];
+  var party = parties.filter(function (p) { return p.id === inv.partyId; })[0];
+  var phone = party && party.phone ? party.phone.replace(/\D/g, "") : "";
+  if (phone && phone.charAt(0) === "0") phone = "92" + phone.slice(1);
+  var s = QB.settings || {};
+  var tmpl = s.msg_template || "Hello [Party Name], your [Transaction Type] [Transaction Number] of [Amount] is ready. [Business Name]";
+  var msg = tmpl
+    .split("[Party Name]").join(party ? party.name : "Customer")
+    .split("[Transaction Type]").join(DOC_META[inv.type].title)
+    .split("[Transaction Number]").join(inv.invoiceNo)
+    .split("[Amount]").join(fmtRs(inv.totalPaisa))
+    .split("[Business Name]").join((me && me.business && me.business.name) || "QBill");
+  if (s.msg_include_balance && party) msg += "\nCurrent balance: " + fmtRs(party.balancePaisa || 0);
+  if (s.msg_include_link) msg += "\n" + location.origin + "/api/invoices/" + inv.id + "/pdf";
+  if (s.msg_footer) msg += "\n" + s.msg_footer;
+  window.open("https://wa.me/" + phone + "?text=" + encodeURIComponent(msg), "_blank");
+}
+function showLowStockDialog(lows, done) {
+  var list = lows.map(function (l) {
+    return "<li><strong>" + esc(l.name) + "</strong> — stock " + l.stockQty +
+      " is below the minimum to maintain (" + l.minStock + ").</li>";
+  }).join("");
+  openDialog("Low Stock", "<p>Some items are below their Min Stock To Maintain:</p><ul>" + list +
+    "</ul><p>The bill is saved. Keep an eye on these items and reorder soon.</p>" +
+    '<button class="btn btn-primary btn-block" id="dlgLowOk" type="button">OK</button>');
+  $("dlgLowOk").addEventListener("click", function () { closeDialog(); done(); });
+}
+function showRepeatDialog(inv, payload) {
+  var freqLabel = { daily: "every day", weekly: "every week", monthly: "every month", yearly: "every year" }[payload.repeat_freq] || "";
+  openDialog("Repeat Invoice",
+    "<p><strong>" + esc(inv.invoiceNo) + "</strong> is set to repeat <strong>" + freqLabel + "</strong>.</p>" +
+    "<p>Create the next 3 copies now?</p>" +
+    '<div style="display:flex; gap:8px"><button class="btn btn-primary" id="repYes" type="button">Create 3 copies</button>' +
+    '<button class="btn" id="repNo" type="button">Not now</button></div>');
+  $("repNo").addEventListener("click", closeDialog);
+  $("repYes").addEventListener("click", function () {
+    var chain = Promise.resolve();
+    for (var k = 0; k < 3; k++) {
+      chain = chain.then(function () {
+        return apiPost("/api/invoices/" + inv.id + "/convert", {}).then(function () {});
+      });
+    }
+    chain.then(function () {
+      closeDialog();
+      setMsg("appMsg", "Repeat copies created (see the book). Note: copies carry today's date.");
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+}
 
 /* ------------------------------------------------- cash & bank, P&L -- */
 function loadCashBank() {
@@ -1346,7 +2151,7 @@ function loadCashBank() {
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
   apiGet("/api/dashboard", "dashboard").then(function (r) {
-    $("cbCash").textContent = fmtRs(r.body.dashboard.cashInHandPaisa);
+    $("cbCashAmt").textContent = fmtRs(r.body.dashboard.cashInHandPaisa);
   }).catch(function () {});
 }
 function loadPnl() {
@@ -1357,6 +2162,7 @@ function loadPnl() {
     var p = r.body.pnl;
     $("pnlSales").textContent = fmtRs(p.salesPaisa);
     $("pnlPurchases").textContent = fmtRs(p.purchasesPaisa);
+    $("pnlOtherIncome").textContent = fmtRs(p.otherIncomePaisa || 0);
     $("pnlExpenses").textContent = fmtRs(p.expensesPaisa);
     $("pnlProfit").textContent = fmtRs(p.profitPaisa);
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -1449,32 +2255,85 @@ function loadPayments() {
     list.forEach(function (p) {
       var div = document.createElement("div");
       div.className = "row";
+      var metaBits = [p.mode || "", p.chequeNo ? "Chq " + p.chequeNo : "", p.referenceNo || ""]
+        .filter(Boolean).join(" · ");
       div.innerHTML = rowHtml(
         (p.direction === "in" ? "Received" : "Paid") + (p.partyId ? " · " + (parties[p.partyId] || "") : ""),
-        (p.createdAt || "").slice(0, 10), fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
+        (p.createdAt || "").slice(0, 10) + (metaBits ? " · " + metaBits : ""),
+        fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
       $("paymentList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  var s = QB.settings || {};
+  $("payDiscountWrap").classList.toggle("hidden", !s.discount_during_payments);
+  $("allocateCard").classList.toggle("hidden", !s.link_payments_to_invoices);
+  apiGet("/api/bank-accounts", null).then(function (r) {
+    var sel = $("payBank");
+    sel.innerHTML = '<option value="">— None —</option>' + (r.body.accounts || []).map(function (a) {
+      return '<option value="' + a.id + '">' + esc(a.displayName) + "</option>";
+    }).join("");
+  }).catch(function () {});
 }
+function syncPayModeFields() {
+  var mode = $("payMode").value;
+  $("payBankWrap").classList.toggle("hidden", !(mode === "bank" || mode === "jazzcash" || mode === "easypaisa"));
+  $("payChequeWrap").classList.toggle("hidden", mode !== "cheque");
+}
+$("payMode").addEventListener("change", syncPayModeFields);
 $("paymentForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var payload = {
     party_id: $("payParty").value ? parseInt($("payParty").value, 10) : null,
     direction: $("payDirection").value,
-    amount_paisa: rsToPaisa($("payAmount").value)
+    amount_paisa: rsToPaisa($("payAmount").value),
+    mode: $("payMode").value,
+    bank_account_id: $("payBank").value ? parseInt($("payBank").value, 10) : null,
+    cheque_no: $("payCheque").value.trim(),
+    reference_no: $("payReference").value.trim(),
+    discount_paisa: rsToPaisa($("payDiscount").value)
   };
   if (payInvoiceId) payload.invoice_id = payInvoiceId;
   apiCreate("payment", payload).then(function (r) {
     $("paymentForm").reset();
+    $("payDiscount").value = 0;
+    syncPayModeFields();
     payInvoiceId = null;
     $("paySettleNote").classList.add("hidden");
     setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Payment saved.");
     loadPayments();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAllocate").addEventListener("click", function () {
+  var pid = $("allocParty").value;
+  var amt = rsToPaisa($("allocAmount").value);
+  if (!pid || amt <= 0) { setMsg("appMsg", "Pick a party and an amount to allocate.", true); return; }
+  apiPost("/api/payments/allocate", {
+    party_id: parseInt(pid, 10), amount_paisa: amt, direction: $("allocDirection").value
+  }).then(function (body) {
+    var parts = (body.allocations || []).map(function (a) {
+      return a.invoiceNo + ": " + fmtRs(a.amountPaisa);
+    }).join(" · ");
+    $("allocResult").textContent = "Allocated — " + parts +
+      (body.unallocatedPaisa > 0 ? " · Leftover unallocated: " + fmtRs(body.unallocatedPaisa) : "");
+    loadPayments();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
 
 /* ----------------------------------------------------------- expenses -- */
 function loadExpenses() {
+  fillPartySelects();
+  apiGet("/api/expense-categories", null).then(function (r) {
+    $("expCategory").innerHTML = '<option value="">— None —</option>' + (r.body.categories || []).map(function (c) {
+      var ctype = c.type || c.categoryType || "Indirect Expense";
+      return '<option value="' + esc(c.name) + '" data-type="' + esc(ctype) + '">' +
+        esc(c.name) + " (" + esc(ctype) + ")</option>";
+    }).join("");
+  }).catch(function () {});
+  apiGet("/api/expense-items", null).then(function (r) {
+    $("expItem").innerHTML = '<option value="">— None —</option>' + (r.body.items || []).map(function (i) {
+      return "<option>" + esc(i.name) + "</option>";
+    }).join("");
+  }).catch(function () {});
   apiGet("/api/expenses", "expenses").then(function (r) {
     var q = searchText();
     var list = (r.body.expenses || []).filter(function (e) {
@@ -1484,20 +2343,37 @@ function loadExpenses() {
     list.forEach(function (e) {
       var div = document.createElement("div");
       div.className = "row";
-      div.innerHTML = rowHtml(e.title, (e.category ? e.category + " · " : "") + (e.createdAt || "").slice(0, 10),
-        fmtRs(e.amountPaisa), "neg");
+      var sub = (e.category ? e.category + " (" + (e.categoryType || "Indirect Expense") + ") · " : "") +
+        (e.expenseItem ? e.expenseItem + " · " : "") + (e.createdAt || "").slice(0, 10);
+      var amt = fmtRs(e.amountPaisa) +
+        (e.balancePaisa > 0 ? " · Unpaid " + fmtRs(e.balancePaisa) : " · Paid");
+      div.innerHTML = rowHtml(e.title, sub, amt, "neg");
       $("expenseList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+$("expCategory").addEventListener("change", function () {
+  var o = $("expCategory").options[$("expCategory").selectedIndex];
+  if (o && o.getAttribute("data-type")) $("expCategoryType").value = o.getAttribute("data-type");
+});
+$("expTaxOn").addEventListener("change", function () {
+  $("expTaxWrap").classList.toggle("hidden", !$("expTaxOn").checked);
+});
 $("expenseForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
+  var paidVal = $("expPaid").value;
   apiCreate("expense", {
     title: $("expTitle").value.trim(),
-    category: $("expCategory").value.trim(),
-    amount_paisa: rsToPaisa($("expAmount").value)
+    category: ($("expCategoryNew").value.trim() || $("expCategory").value || "").trim(),
+    category_type: $("expCategoryType").value,
+    expense_item: ($("expItemNew").value.trim() || $("expItem").value || "").trim(),
+    party_id: $("expParty").value ? parseInt($("expParty").value, 10) : null,
+    amount_paisa: rsToPaisa($("expAmount").value),
+    tax_paisa: $("expTaxOn").checked ? rsToPaisa($("expTax").value) : 0,
+    paid_paisa: paidVal === "" ? null : rsToPaisa(paidVal)
   }).then(function (r) {
     $("expenseForm").reset();
+    $("expTaxWrap").classList.add("hidden");
     setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Expense saved.");
     loadExpenses();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -1562,6 +2438,319 @@ $("transForm").addEventListener("submit", function (ev) {
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
 
+/* ------------------------------------------- app settings document --- */
+/* One JSON settings doc per business (server: /api/settings). Inputs
+   carry data-setting="<key>"; changes save immediately. */
+var PRINT_THEMES = ["Advance Voucher Theme", "Advanced Theme", "Bill of Supply Theme",
+  "GST Theme 1", "GST Theme 2", "GST Theme 3", "Modern Theme", "Stylish Theme",
+  "Tally Theme", "Thermal Print", "GST Theme (With Barcode)", "Double Divine Theme"];
+var PRINT_COLORS = ["#f26522", "#e53935", "#1e88e5", "#43a047", "#8e24aa", "#00acc1",
+  "#fb8c00", "#5e35b1", "#3949ab", "#00897b", "#c0ca33", "#6d4c41", "#546e7a", "#d81b60"];
+var DOC_TYPE_LABELS = { sale: "Sale", purchase: "Purchase", estimate: "Estimate",
+  proforma: "Proforma", sale_order: "Sale Order", purchase_order: "Purchase Order",
+  challan: "Delivery Challan", sale_return: "Sale Return", purchase_return: "Purchase Return" };
+
+function openDialog(title, html) {
+  $("dlgTitle").textContent = title;
+  $("dlgBody").innerHTML = html;
+  $("dlgModal").classList.remove("hidden");
+}
+function closeDialog() { $("dlgModal").classList.add("hidden"); }
+$("dlgClose").addEventListener("click", closeDialog);
+
+function loadSettingsDoc() {
+  return apiGet("/api/settings", null).then(function (r) {
+    QB.settings = r.body.settings || {};
+    applySettingsChrome();
+    renderSettingsInputs();
+    return QB.settings;
+  }).catch(function () { return null; });
+}
+function saveSettings(patch) {
+  return apiPut("/api/settings", { settings: patch }).then(function (body) {
+    QB.settings = body.settings || QB.settings;
+    applySettingsChrome();
+    return QB.settings;
+  });
+}
+function applySettingsChrome() {
+  var s = QB.settings || {};
+  var storeOn = s.store && s.store.enabled;
+  $("navStore").classList.toggle("hidden", !storeOn);
+  $("navAccounting").classList.toggle("hidden", !s.accounting_enabled);
+  $("navOtherIncome").classList.toggle("hidden", s.more_tx_other_income === false);
+  document.querySelectorAll(".mega-item").forEach(function (b) {
+    var act = b.getAttribute("data-act") || "";
+    var type = act.indexOf("doc:") === 0 ? act.slice(4) : "";
+    var gate = { estimate: "more_tx_estimate", proforma: "more_tx_proforma",
+      sale_order: "more_tx_sale_order", purchase_order: "more_tx_purchase_order",
+      challan: "more_tx_challan", otherincome: "more_tx_other_income" }[act === "otherincome" ? "otherincome" : type];
+    if (gate) b.disabled = s[gate] === false;
+  });
+  var inMemberMode = me && me.activeBusinessId &&
+    !(me.businesses || []).some(function (b) { return b.id === me.activeBusinessId; });
+  if (inMemberMode && me.activeRole) {
+    $("memberBanner").classList.remove("hidden");
+    $("memberRoleName").textContent = me.activeRole;
+    $("memberBizName").textContent = (me.business && me.business.name) || "a shared business";
+  } else {
+    $("memberBanner").classList.add("hidden");
+  }
+  var ab = $("generalAutoBackup");
+  if (ab) ab.textContent = s.auto_backup === false ? "OFF" : "ON";
+}
+$("btnSwitchOwn").addEventListener("click", function () {
+  apiPost("/api/team/switch", { business_id: null }).then(function () { refreshMe(); })
+    .catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function renderSettingsInputs() {
+  var s = QB.settings || {};
+  document.querySelectorAll("[data-setting]").forEach(function (inp) {
+    var key = inp.getAttribute("data-setting");
+    var val = s[key];
+    if (inp.type === "checkbox") inp.checked = !!val;
+    else if (val !== undefined && val !== null) inp.value = val;
+  });
+  var prefixes = s.prefixes || {};
+  $("prefixGrid").innerHTML = Object.keys(DOC_TYPE_LABELS).map(function (t) {
+    return '<label>' + DOC_TYPE_LABELS[t] + ' prefix <input type="text" data-prefix="' + t +
+      '" value="' + esc(prefixes[t] || "") + '"></label>';
+  }).join("");
+  var ts = $("printThemeSel");
+  ts.innerHTML = PRINT_THEMES.map(function (t) { return "<option>" + esc(t) + "</option>"; }).join("");
+  if (s.print_theme) ts.value = s.print_theme;
+  $("colorSwatches").innerHTML = PRINT_COLORS.map(function (c) {
+    return '<button type="button" class="swatch' + (s.print_color === c ? " active" : "") +
+      '" data-color="' + c + '" style="background:' + c + '" title="' + c + '"></button>';
+  }).join("");
+  $("colorSwatches").querySelectorAll(".swatch").forEach(function (b) {
+    b.addEventListener("click", function () {
+      saveSettings({ print_color: b.getAttribute("data-color") }).then(function () {
+        renderSettingsInputs(); renderPrintPreview();
+      });
+    });
+  });
+  $("printNameSale").value = (s.print_names || {}).sale || "";
+  $("printNamePurchase").value = (s.print_names || {}).purchase || "";
+  $("defaultTaxPct").value = (s.default_tax_bp || 0) / 100;
+  var auto = s.msg_auto || {};
+  $("msgAutoGrid").innerHTML = Object.keys(DOC_TYPE_LABELS).map(function (t) {
+    return '<label class="check-row"><input type="checkbox" data-msgauto="' + t + '"' +
+      (auto[t] ? " checked" : "") + "> <span>" + DOC_TYPE_LABELS[t] + "</span></label>";
+  }).join("");
+  $("msgTemplate").value = s.msg_template || "";
+  renderMsgPreview();
+  $("partyExtraFields").innerHTML = (s.party_extra_fields || []).map(function (f, i) {
+    return '<div class="grid2"><label class="check-row"><input type="checkbox" data-pef-on="' + i + '"' +
+      (f.enabled ? " checked" : "") + '> <span>Additional Field ' + (i + 1) + '</span></label>' +
+      '<label>Label <input type="text" data-pef-label="' + i + '" value="' + esc(f.label || "") + '"></label>' +
+      '<label class="check-row"><input type="checkbox" data-pef-print="' + i + '"' +
+      (f.show_in_print ? " checked" : "") + "> <span>Show In Print</span></label></div>";
+  }).join("");
+  $("itemExtraFields").innerHTML = (s.item_extra_fields || []).map(function (f, i) {
+    return '<div class="grid2"><label class="check-row"><input type="checkbox" data-ief-on="' + i + '"' +
+      (f.enabled ? " checked" : "") + '> <span>' + esc(f.key) + '</span></label>' +
+      '<label>Label <input type="text" data-ief-label="' + i + '" value="' + esc(f.label || "") + '"></label></div>';
+  }).join("");
+  $("partyLoyaltyLink").checked = !!(s.loyalty && s.loyalty.enabled);
+  renderPrintPreview();
+  loadTermsList();
+}
+document.querySelectorAll("[data-setting]").forEach(function (inp) {
+  inp.addEventListener("change", function () {
+    var key = inp.getAttribute("data-setting");
+    var patch = {};
+    if (inp.type === "checkbox") patch[key] = inp.checked;
+    else if (inp.type === "number") patch[key] = parseFloat(inp.value || "0") || 0;
+    else patch[key] = inp.value;
+    saveSettings(patch).then(function () {
+      setMsg("appMsg", "Setting saved.");
+      if (key === "print_theme") renderPrintPreview();
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+});
+$("btnSavePrefixes").addEventListener("click", function () {
+  var prefixes = {};
+  document.querySelectorAll("[data-prefix]").forEach(function (inp) {
+    prefixes[inp.getAttribute("data-prefix")] = inp.value.trim();
+  });
+  var names = {};
+  if ($("printNameSale").value.trim()) names.sale = $("printNameSale").value.trim();
+  if ($("printNamePurchase").value.trim()) names.purchase = $("printNamePurchase").value.trim();
+  saveSettings({ prefixes: prefixes, print_names: names }).then(function () {
+    setMsg("appMsg", "Prefixes saved.");
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("defaultTaxPct").addEventListener("change", function () {
+  saveSettings({ default_tax_bp: Math.round((parseFloat($("defaultTaxPct").value || "0") || 0) * 100) })
+    .then(function () { setMsg("appMsg", "Default tax saved."); })
+    .catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("btnMsgSave").addEventListener("click", function () {
+  var auto = {};
+  document.querySelectorAll("[data-msgauto]").forEach(function (cb) {
+    auto[cb.getAttribute("data-msgauto")] = cb.checked;
+  });
+  saveSettings({ msg_auto: auto, msg_template: $("msgTemplate").value }).then(function () {
+    setMsg("appMsg", "Message settings saved.");
+    renderMsgPreview();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function renderMsgPreview() {
+  var s = QB.settings || {};
+  var tmpl = $("msgTemplate").value || s.msg_template || "";
+  var txt = tmpl.split("[Party Name]").join("Ahmed Traders")
+    .split("[Transaction Type]").join("Sale Invoice")
+    .split("[Transaction Number]").join("S-1001")
+    .split("[Amount]").join(fmtRs(1250000))
+    .split("[Business Name]").join("Your Business");
+  if (s.msg_include_balance) txt += "\nCurrent balance: " + fmtRs(250000);
+  if (s.msg_include_link) txt += "\n" + location.origin + "/api/invoices/1/pdf";
+  if (s.msg_footer) txt += "\n" + s.msg_footer;
+  $("msgPreview").textContent = txt;
+}
+$("msgTemplate").addEventListener("input", renderMsgPreview);
+$("partyLoyaltyLink").addEventListener("change", function () {
+  if ($("partyLoyaltyLink").checked) go("loyalty");
+});
+document.querySelectorAll("[data-printtab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    document.querySelectorAll("[data-printtab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    $("printRegular").classList.toggle("hidden", b.getAttribute("data-printtab") !== "regular");
+    $("printThermal").classList.toggle("hidden", b.getAttribute("data-printtab") !== "thermal");
+  });
+});
+function renderPrintPreview() {
+  var s = QB.settings || {};
+  var color = s.print_color || "#f26522";
+  var name = ((s.print_names || {}).sale) || "SALE INVOICE";
+  var cols = s.print_item_columns || {};
+  var head = "<tr><th>Item</th>" + (cols.qty ? "<th>Qty</th>" : "") +
+    (cols.free_qty ? "<th>Free</th>" : "") + "<th>Price</th>" +
+    (cols.discount ? "<th>Disc</th>" : "") + (cols.tax ? "<th>Tax</th>" : "") + "<th>Amount</th></tr>";
+  var rows = "<tr><td>Sample Item</td>" + (cols.qty ? "<td>2</td>" : "") +
+    (cols.free_qty ? "<td>1</td>" : "") + "<td>" + fmtRs(50000) + "</td>" +
+    (cols.discount ? "<td>" + fmtRs(5000) + "</td>" : "") +
+    (cols.tax ? "<td>" + fmtRs(0) + "</td>" : "") + "<td>" + fmtRs(95000) + "</td></tr>";
+  var html = '<div style="border-top:6px solid ' + color + '; padding-top:8px">' +
+    (s.print_company_info !== false ? "<strong>Your Business</strong><br>" : "") +
+    '<div style="text-align:center; font-weight:800; color:' + color + '">' + esc(name) + "</div>" +
+    "<table>" + head + rows + "</table>" +
+    '<div style="text-align:right">Total: <strong>' + fmtRs(95000) + "</strong></div>" +
+    (s.print_amount_words ? "<div>Rupees Ninety Five Only</div>" : "") +
+    (s.print_terms ? "<div>Terms &amp; Conditions apply.</div>" : "") +
+    (s.print_signature ? "<div style='text-align:right'>" + esc(s.signature_text || "For Your Business") + "</div>" : "") +
+    '<div class="sub">Theme: ' + esc(s.print_theme || "Tally Theme") + " · " +
+    esc(s.print_paper_size || "A4") + " · " + esc(s.print_orientation || "Portrait") + "</div></div>";
+  $("printPreview").innerHTML = html;
+}
+$("btnItemTableCustom").addEventListener("click", function () {
+  var s = QB.settings || {};
+  var cols = s.print_item_columns || {};
+  var labels = { qty: "Quantity", free_qty: "Free Quantity",
+    batch: "Batch No.", exp: "Expiry Date", mfg: "Mfg Date", serial: "Serial No./IMEI",
+    mrp: "MRP", discount: "Discount", tax: "Tax" };
+  var html = "<p>Choose the columns printed in the bill's item table.</p>" +
+    Object.keys(labels).map(function (k) {
+      return '<label class="check-row"><input type="checkbox" data-col="' + k + '"' +
+        (cols[k] ? " checked" : "") + "> <span>" + labels[k] + "</span></label>";
+    }).join("") +
+    '<button class="btn btn-primary btn-block" id="btnColsSave" type="button">Save columns</button>';
+  openDialog("Item Table Customization", html);
+  $("btnColsSave").addEventListener("click", function () {
+    var out = {};
+    document.querySelectorAll("[data-col]").forEach(function (cb) {
+      out[cb.getAttribute("data-col")] = cb.checked;
+    });
+    saveSettings({ print_item_columns: out }).then(function () {
+      closeDialog(); renderPrintPreview();
+      setMsg("appMsg", "Item table columns saved.");
+    });
+  });
+});
+document.addEventListener("change", function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute) return;
+  var s = QB.settings || {};
+  function savePartyExtras() {
+    var list = (s.party_extra_fields || []).map(function (f, i) {
+      var on = document.querySelector('[data-pef-on="' + i + '"]');
+      var lab = document.querySelector('[data-pef-label="' + i + '"]');
+      var pr = document.querySelector('[data-pef-print="' + i + '"]');
+      return { label: lab ? lab.value : f.label, enabled: on ? on.checked : f.enabled,
+               show_in_print: pr ? pr.checked : f.show_in_print };
+    });
+    saveSettings({ party_extra_fields: list });
+  }
+  function saveItemExtras() {
+    var list = (s.item_extra_fields || []).map(function (f, i) {
+      var on = document.querySelector('[data-ief-on="' + i + '"]');
+      var lab = document.querySelector('[data-ief-label="' + i + '"]');
+      return { key: f.key, label: lab ? lab.value : f.label, enabled: on ? on.checked : f.enabled };
+    });
+    saveSettings({ item_extra_fields: list });
+  }
+  if (t.hasAttribute("data-pef-on") || t.hasAttribute("data-pef-label") || t.hasAttribute("data-pef-print")) savePartyExtras();
+  if (t.hasAttribute("data-ief-on") || t.hasAttribute("data-ief-label")) saveItemExtras();
+});
+/* Terms & Conditions library */
+function loadTermsList() {
+  var box = $("termsList");
+  if (!box) return;
+  apiGet("/api/terms", null).then(function (r) {
+    box.innerHTML = (r.body.terms || []).map(function (t) {
+      return '<div class="row"><div><div class="main">' + esc(t.header) + '</div><div class="sub">' +
+        esc((t.applies || []).map(function (a) { return DOC_TYPE_LABELS[a] || a; }).join(", ")) +
+        " — " + esc(t.description) + '</div></div>' +
+        '<button class="btn btn-mini" data-term-del="' + t.id + '">Delete</button></div>';
+    }).join("") || '<p class="empty">No terms yet.</p>';
+    box.querySelectorAll("[data-term-del]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        apiDelete("/api/terms/" + b.getAttribute("data-term-del")).then(loadTermsList)
+          .catch(function (e) { setMsg("appMsg", e.message, true); });
+      });
+    });
+  }).catch(function () {});
+}
+var docTermsSelected = null;
+function loadTermsPicker() {
+  var box = $("docTermsPicker");
+  if (!box) return;
+  apiGet("/api/terms", null).then(function (r) {
+    var list = (r.body.terms || []).filter(function (t) {
+      return (t.applies || []).indexOf(docType) >= 0;
+    });
+    if (!list.length) {
+      box.innerHTML = '<p class="empty">Standard terms will print. Add named terms in Settings &gt; TRANSACTION.</p>';
+      return;
+    }
+    box.innerHTML = "";
+    list.forEach(function (t) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "row" + (docTermsSelected === t.id ? " active-row" : "");
+      b.innerHTML = rowHtml(t.header, t.description, docTermsSelected === t.id ? "✓ Selected" : "Tap to use", "");
+      b.addEventListener("click", function () {
+        docTermsSelected = docTermsSelected === t.id ? null : t.id;
+        loadTermsPicker();
+      });
+      box.appendChild(b);
+    });
+  }).catch(function () {});
+}
+$("btnTermAdd").addEventListener("click", function () {
+  var header = $("termHeader").value.trim();
+  if (!header) { setMsg("appMsg", "Give the terms a header.", true); return; }
+  apiPost("/api/terms", { header: header, description: $("termDesc").value.trim(),
+    applies: [$("termApplies").value] }).then(function () {
+      $("termHeader").value = ""; $("termDesc").value = "";
+      setMsg("appMsg", "Terms added to the library.");
+      loadTermsList(); loadTermsPicker();
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
 function loadBackups() {
   var locals = localBackups();
   apiGet("/api/backups", "backups").then(function (r) {
@@ -1594,6 +2783,13 @@ function renderBackups(serverList, locals) {
       }).catch(function (e) { setMsg("appMsg", e.message, true); });
     });
     div.appendChild(btn);
+    var dl = document.createElement("button");
+    dl.className = "btn"; dl.type = "button"; dl.textContent = "Backup To Computer";
+    dl.addEventListener("click", function () {
+      downloadAuthed("/api/backups/" + b.id + "/download", "qbill-backup.json")
+        .catch(function (e) { setMsg("appMsg", e.message, true); });
+    });
+    div.appendChild(dl);
     box.appendChild(div);
   });
   if (!locals.length && !serverList.length) box.innerHTML = '<p class="empty">No backups yet.</p>';
@@ -1709,6 +2905,7 @@ function megaAction(act) {
   if (act.indexOf("doc:") === 0) openDocForm(act.slice(4));
   else if (act === "payin") go("paymentin");
   else if (act === "payout") go("paymentout");
+  else if (act === "otherincome") go("otherincome");
   else if (act === "expenses") go("expenses");
 }
 document.querySelectorAll(".mega-item").forEach(function (b) {
@@ -1718,6 +2915,7 @@ var SHORTCUTS = {
   s: "doc:sale", i: "payin", r: "doc:sale_return", f: "doc:sale_order",
   m: "doc:estimate", d: "doc:challan", p: "doc:purchase", o: "payout",
   l: "doc:purchase_return", g: "doc:purchase_order", e: "expenses",
+  n: "doc:proforma", y: "otherincome",
 };
 document.addEventListener("keydown", function (ev) {
   if (ev.ctrlKey && ev.key === "Enter") {
@@ -1740,7 +2938,7 @@ $("searchTx").addEventListener("input", function () {
   else if (currentScreen === "expenses") loadExpenses();
 });
 $("searchTx").addEventListener("keydown", function (ev) {
-  if (ev.key === "Enter" && currentScreen === "dashboard") { ev.preventDefault(); go("salebook"); }
+  if (ev.key === "Enter" && currentScreen === "dashboard") { ev.preventDefault(); openAnything(); }
 });
 
 /* -------------------------------------------------------------- boot --- */
@@ -1748,7 +2946,9 @@ $("searchTx").addEventListener("keydown", function (ev) {
    session (best effort, keepalive) so reopening this tab asks for the
    password again. Remembered and code sign-ins stay open on the device. */
 window.addEventListener("pagehide", function () {
-  if (!token() || !lsGet("qbill_token_temp", false)) return;
+  var passcodeOn = QB.settings && QB.settings.enable_passcode;
+  if (!token()) return;
+  if (!lsGet("qbill_token_temp", false) && !passcodeOn) return;
   try {
     fetch("/api/auth/lock", {
       method: "POST", headers: authHeaders(), body: "{}", keepalive: true
@@ -1765,3 +2965,1404 @@ if ("serviceWorker" in navigator) {
 }
 updateSyncPill();
 if (token()) refreshMe(); else showAuth();
+
+/* ============================================================ vyapar2 ==
+   Dashboard extras, Reports, Stock (godowns/batches), Online Store,
+   Loyalty, Accounting, Team & Roles, Utilities, Grow Your Business,
+   Invoice Preview, Open Anything, Other Income, Cash & Bank tabs. */
+
+/* ------------------------------------------------------- dashboard --- */
+$("saleGraphPeriod").addEventListener("change", renderSaleGraph);
+$("btnPrivacy").addEventListener("click", function () {
+  QB.privacy = !QB.privacy;
+  document.body.classList.toggle("privacy-on", QB.privacy);
+  $("btnPrivacy").textContent = QB.privacy ? "👁 Show amounts" : "👁 Hide amounts";
+});
+document.querySelectorAll("[data-widget]").forEach(function (cb) {
+  cb.addEventListener("change", function () {
+    var w = (QB.settings && QB.settings.widgets) || {};
+    w[cb.getAttribute("data-widget")] = cb.checked;
+    saveSettings({ widgets: w }).then(applyWidgets)
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+});
+$("expiringRange").addEventListener("change", function () {
+  // The server returns the ~30-day window; the range re-slices client-side
+  // by expiry month distance for 7 / 30 / 90 day views.
+  var days = parseInt($("expiringRange").value, 10) || 30;
+  var exp = (dashData && dashData.expiringItems) || [];
+  var now = new Date();
+  var filtered = exp.filter(function (e) {
+    if (!e.expDate) return true;
+    var parts = e.expDate.split("/");
+    if (parts.length !== 2) return true;
+    var expDate = new Date(2000 + parseInt(parts[1], 10), parseInt(parts[0], 10), 0);
+    return (expDate - now) <= days * 86400000;
+  });
+  $("dExpiringList").innerHTML = filtered.length ? filtered.slice(0, 8).map(function (e) {
+    return '<div class="row">' + rowHtml(e.itemName, "Batch " + (e.batchNo || "—") + " · " + e.qty + " left",
+      '<div class="amt">' + e.expDate + "</div>", "") + "</div>";
+  }).join("") : '<p class="empty">No stock is expiring in this range.</p>';
+});
+document.querySelectorAll("[data-report-link]").forEach(function (b) {
+  b.addEventListener("click", function () { openReports(b.getAttribute("data-report-link")); });
+});
+$("docBarcode").addEventListener("keydown", function (ev) {
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  var code = $("docBarcode").value.trim().toLowerCase();
+  if (!code) return;
+  var items = ((cacheGet("items") || {}).items) || [];
+  var found = items.filter(function (i) {
+    return (i.itemCode || "").toLowerCase() === code || i.name.toLowerCase() === code;
+  })[0];
+  if (found) {
+    addSaleLine(found.id);
+    $("docBarcode").value = "";
+  } else {
+    setMsg("appMsg", "No item found for code " + code + ".", true);
+  }
+});
+
+/* --------------------------------------------------------- reports --- */
+var REPORT_DEFS = [
+  { key: "all-transactions", title: "All Transactions", path: "/api/reports/all-transactions", source: "entries",
+    cols: [["date", "Date"], ["kind", "Type"], ["ref", "Number"], ["party", "Party"],
+           ["amountPaisa", "Amount", "money"], ["paidPaisa", "Paid", "money"], ["balancePaisa", "Balance", "money"]] },
+  { key: "bill-wise-profit", title: "Bill Wise Profit", path: "/api/reports/bill-wise-profit",
+    cols: [["date", "Date"], ["invoiceNo", "Number"], ["party", "Party"], ["salePaisa", "Sale", "money"],
+           ["costPaisa", "Cost", "money"], ["profitPaisa", "Profit", "money"]] },
+  { key: "cash-flow", title: "Cash Flow", path: "/api/reports/cash-flow",
+    cols: [["date", "Date"], ["inPaisa", "In", "money"], ["outPaisa", "Out", "money"],
+           ["netPaisa", "Net", "money"], ["balancePaisa", "Balance", "money"]] },
+  { key: "party-pnl", title: "Party wise P&L", path: "/api/reports/party-pnl",
+    cols: [["party", "Party"], ["salesPaisa", "Sales", "money"], ["returnsPaisa", "Returns", "money"],
+           ["costPaisa", "Cost", "money"], ["profitPaisa", "Profit", "money"], ["balancePaisa", "Balance", "money"]] },
+  { key: "all-parties", title: "All Parties", path: "/api/reports/all-parties", source: "parties",
+    cols: [["name", "Party"], ["phone", "Phone"], ["groupName", "Group"], ["status", "Status"],
+           ["balancePaisa", "Balance", "money"], ["loyaltyPoints", "Loyalty Points"]] },
+  { key: "party-report-by-item", title: "Party Report By Item", path: "/api/reports/party-report-by-item",
+    cols: [["party", "Party"], ["item", "Item"], ["qty", "Qty"], ["amountPaisa", "Amount", "money"]] },
+  { key: "sale-purchase-by-party", title: "Sale Purchase By Party", path: "/api/reports/sale-purchase-by-party",
+    cols: [["party", "Party"], ["salePaisa", "Sales", "money"], ["purchasePaisa", "Purchases", "money"]] },
+  { key: "item-report-by-party", title: "Item Report By Party", path: "/api/reports/item-report-by-party",
+    cols: [["item", "Item"], ["party", "Party"], ["qty", "Qty"], ["amountPaisa", "Amount", "money"]] },
+  { key: "item-wise-pnl", title: "Item Wise P&L", path: "/api/reports/item-wise-pnl",
+    cols: [["item", "Item"], ["soldQty", "Qty Sold"], ["revenuePaisa", "Sales", "money"],
+           ["costPaisa", "Cost", "money"], ["profitPaisa", "Profit", "money"], ["stockQty", "Stock"]] },
+  { key: "item-detail", title: "Item Detail", path: "/api/reports/item-detail",
+    cols: [["date", "Date"], ["kind", "Kind"], ["ref", "Detail"], ["qty", "Qty"],
+           ["amountPaisa", "Amount", "money"], ["status", "STATUS"]] },
+  { key: "item-wise-discount", title: "Item Wise Discount", path: "/api/reports/item-wise-discount",
+    cols: [["item", "Item"], ["qty", "Qty"], ["discountPaisa", "Discount Given", "money"]] },
+  { key: "discount-report", title: "Discount Report", path: "/api/reports/discount-report", totalKey: "totalDiscountPaisa",
+    cols: [["date", "Date"], ["invoiceNo", "Number"], ["type", "Type"], ["party", "Party"],
+           ["discountPaisa", "Discount", "money"]] },
+  { key: "tax-report", title: "Tax Report", path: "/api/reports/tax-report", totalKey: "totalTaxPaisa",
+    cols: [["type", "Type"], ["documents", "Bills"], ["taxablePaisa", "Taxable Amount", "money"], ["taxPaisa", "Tax", "money"]] },
+  { key: "tax-rate-report", title: "Tax Rate Report", path: "/api/reports/tax-rate-report",
+    cols: [["taxRatePct", "Tax %"], ["taxablePaisa", "Taxable Amount", "money"], ["taxPaisa", "Tax", "money"]] },
+  { key: "low-stock", title: "Low Stock Summary", path: "/api/reports/low-stock",
+    cols: [["item", "Item"], ["stockQty", "Stock"], ["minStock", "Min Stock To Maintain"]] },
+  { key: "item-batch", title: "Item Batch Report", path: "/api/reports/item-batch",
+    cols: [["item", "Item"], ["batchNo", "Batch No."], ["qty", "Qty"], ["expDate", "Expiry"], ["mfgDate", "Mfg"]] },
+  { key: "stock-detail", title: "Stock Detail", path: "/api/reports/stock-detail",
+    cols: [["item", "Item"], ["godown", "Godown"], ["qty", "Qty"], ["valuePaisa", "Value", "money"]] },
+  { key: "expense", title: "Expense Report", path: "/api/reports/expense", totalKey: "totalPaisa",
+    cols: [["createdAt", "Date"], ["title", "Title"], ["category", "Category"], ["categoryType", "Type"],
+           ["expenseItem", "Expense Item"], ["amountPaisa", "Amount", "money"],
+           ["paidPaisa", "Paid", "money"], ["balancePaisa", "Balance", "money"]] },
+  { key: "expense-category", title: "Expense Category Report", path: "/api/reports/expense-category",
+    cols: [["name", "Category"], ["type", "Type"], ["count", "Count"], ["amountPaisa", "Total", "money"]] },
+  { key: "expense-item", title: "Expense Item Report", path: "/api/reports/expense-item",
+    cols: [["name", "Expense Item"], ["count", "Count"], ["amountPaisa", "Total", "money"]] },
+  { key: "other-income-report", title: "Other Income Report", path: "/api/reports/other-income", totalKey: "totalPaisa",
+    cols: [["name", "Category"], ["count", "Entries"], ["amountPaisa", "Amount", "money"]] },
+  { key: "store-report", title: "Store Reports", path: "/api/reports/store",
+    cols: [["status", "Status"], ["orders", "Orders"], ["amountPaisa", "Amount", "money"]] },
+  { key: "bank-statement", title: "Bank Statement", path: "/api/reports/bank-statement",
+    cols: [["date", "Date"], ["note", "Note"], ["depositPaisa", "Deposit", "money"],
+           ["withdrawPaisa", "Withdraw", "money"], ["balancePaisa", "Balance", "money"]] },
+  { key: "sales-graph", title: "Sales Graph", path: "/api/reports/sales-graph", source: "points",
+    cols: [["label", "Period"], ["amountPaisa", "Sales", "money"]] },
+];
+var currentReport = "all-transactions";
+function reportDef(key) {
+  return REPORT_DEFS.filter(function (d) { return d.key === key; })[0] || REPORT_DEFS[0];
+}
+function openReports(key) {
+  currentReport = key || currentReport || "all-transactions";
+  navKey = currentReport === "sales-graph" ? "salesgraph" : "reports";
+  showScreen("reports");
+  renderReportChips();
+  loadReport();
+}
+function renderReportChips() {
+  $("reportChips").innerHTML = REPORT_DEFS.map(function (d) {
+    return '<button class="fchip' + (d.key === currentReport ? " active" : "") +
+      '" data-report="' + d.key + '" type="button">' + esc(d.title) + "</button>";
+  }).join("");
+  $("reportChips").querySelectorAll("[data-report]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      currentReport = b.getAttribute("data-report");
+      renderReportChips();
+      loadReport();
+    });
+  });
+}
+function loadReport() {
+  var def = reportDef(currentReport);
+  $("reportTitle").textContent = def.title;
+  var f = $("repFrom").value, t = $("repTo").value;
+  var url = def.path;
+  var qs = [];
+  if (f) qs.push("from=" + f);
+  if (t) qs.push("to=" + t);
+  if (def.key === "sales-graph") qs.push("period=" + $("graphPeriod").value);
+  if (def.key === "bank-statement" && selectedBankId) qs.push("bank_id=" + selectedBankId);
+  if (qs.length) url += "?" + qs.join("&");
+  apiGet(url, null).then(function (r) {
+    var rows = def.source ? (r.body[def.source] || []) : (r.body.rows || []);
+    rows = rows.map(function (row) {
+      var copy = {};
+      Object.keys(row).forEach(function (k) { copy[k] = row[k]; });
+      if (copy.date && copy.date.length > 10) copy.date = copy.date.slice(0, 10);
+      if (copy.createdAt && copy.createdAt.length > 10) copy.createdAt = copy.createdAt.slice(0, 10);
+      return copy;
+    });
+    $("reportHead").innerHTML = "<tr>" + def.cols.map(function (c) {
+      return "<th" + (c[2] === "money" ? ' class="num"' : "") + ">" + esc(c[1]) + "</th>";
+    }).join("") + "</tr>";
+    $("reportBody").innerHTML = rows.map(function (row) {
+      return "<tr>" + def.cols.map(function (c) {
+        var v = row[c[0]];
+        if (c[2] === "money") return '<td class="num">' + fmtRs(v || 0) + "</td>";
+        return "<td>" + esc(v == null ? "" : v) + "</td>";
+      }).join("") + "</tr>";
+    }).join("");
+    $("reportEmpty").classList.toggle("hidden", rows.length > 0);
+    var total = def.totalKey ? r.body[def.totalKey] : r.body.totalPaisa;
+    $("reportTotal").textContent = total != null ? ("Total: " + fmtRs(total)) : "";
+    if (def.key === "sales-graph") {
+      $("reportGraphWrap").classList.remove("hidden");
+      drawReportGraph(rows);
+    } else {
+      $("reportGraphWrap").classList.add("hidden");
+    }
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+function drawReportGraph(rows) {
+  var svg = $("reportGraph");
+  if (!rows.length) { svg.innerHTML = ""; return; }
+  var W = 640, H = 180, padL = 8, padR = 8, padT = 14, padB = 22;
+  var max = Math.max.apply(null, rows.map(function (r) { return r.amountPaisa; }).concat([1]));
+  var step = rows.length > 1 ? (W - padL - padR) / (rows.length - 1) : 0;
+  var coords = rows.map(function (r, i) {
+    return { x: padL + step * i, y: padT + (H - padT - padB) * (1 - r.amountPaisa / max), label: r.label };
+  });
+  var line = coords.map(function (c, i) { return (i === 0 ? "M" : "L") + c.x.toFixed(1) + "," + c.y.toFixed(1); }).join(" ");
+  svg.innerHTML = '<path d="' + line + '" fill="none" stroke="#f26522" stroke-width="2.5" stroke-linejoin="round"/>' +
+    coords.map(function (c) {
+      return '<circle cx="' + c.x.toFixed(1) + '" cy="' + c.y.toFixed(1) + '" r="4" fill="#fff" stroke="#f26522" stroke-width="2"/>';
+    }).join("");
+}
+$("btnRepGo").addEventListener("click", loadReport);
+$("graphPeriod").addEventListener("change", loadReport);
+
+/* ------------------------------------------------- stock: godowns ---- */
+function loadGodowns() {
+  apiGet("/api/godowns", null).then(function (r) {
+    var list = r.body.godowns || [];
+    $("godownList").innerHTML = list.map(function (g) {
+      return '<div class="row"><div><div class="main">' + esc(g.name) +
+        (g.isMain ? " (Main)" : "") + '</div><div class="sub">' + esc(g.type || "Godown") +
+        " · " + g.totalQty + ' units in stock</div></div>' +
+        '<button class="btn btn-mini" data-godown-stock="' + g.id + '">Stock Summary</button></div>';
+    }).join("") || '<p class="empty">No godowns yet.</p>';
+    $("godownList").querySelectorAll("[data-godown-stock]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var gid = b.getAttribute("data-godown-stock");
+        var g = list.filter(function (x) { return String(x.id) === gid; })[0];
+        apiGet("/api/godowns/" + gid + "/stock", null).then(function (sr) {
+          $("godownStockCard").classList.remove("hidden");
+          $("godownStockTitle").textContent = "Stock Summary — " + (g ? g.name : "");
+          $("godownStockList").innerHTML = (sr.body.items || []).map(function (srow) {
+            return '<div class="row">' + rowHtml(srow.name, "", "Qty: " + srow.qty) + "</div>";
+          }).join("") || '<p class="empty">No stock in this godown.</p>';
+        });
+      });
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("godownForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/godowns", { name: $("godownName").value.trim(), type: $("godownType").value })
+    .then(function () {
+      $("godownForm").reset();
+      setMsg("appMsg", "Godown added.");
+      loadGodowns();
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function loadTransfers() {
+  Promise.all([apiGet("/api/godowns", null), apiGet("/api/items", "items"), apiGet("/api/stock-transfers", null)])
+    .then(function (res) {
+      var godowns = res[0].body.godowns || [];
+      var items = res[1].body.items || [];
+      var opts = godowns.map(function (g) { return '<option value="' + g.id + '">' + esc(g.name) + "</option>"; }).join("");
+      $("trFrom").innerHTML = opts;
+      $("trTo").innerHTML = opts;
+      $("trItem").innerHTML = items.map(function (i) {
+        return '<option value="' + i.id + '">' + esc(i.name) + "</option>";
+      }).join("");
+      var list = (res[2].body.transfers || []).slice().reverse();
+      $("transferList").innerHTML = list.map(function (t) {
+        return '<div class="row">' + rowHtml(t.itemName + " × " + t.qty,
+          (t.fromGodown || "") + " → " + (t.toGodown || "") + " · " + (t.createdAt || "").slice(0, 10) +
+          (t.note ? " · " + t.note : ""), null, "") + "</div>";
+      }).join("") || '<p class="empty">No transfers yet.</p>';
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("transferForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/stock-transfers", {
+    item_id: parseInt($("trItem").value, 10),
+    qty: parseInt($("trQty").value || "0", 10),
+    from_godown_id: parseInt($("trFrom").value, 10),
+    to_godown_id: parseInt($("trTo").value, 10),
+    note: $("trNote").value.trim()
+  }).then(function () {
+    setMsg("appMsg", "Stock transferred.");
+    loadTransfers();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* --------------------------------------------------- item detail ----- */
+var detailItem = null;
+function openItemDetail(item) {
+  detailItem = item;
+  document.querySelectorAll(".screen").forEach(function (s) { s.classList.add("hidden"); });
+  $("screen-itemdetail").classList.remove("hidden");
+  currentScreen = "itemdetail";
+  $("viewTitle").textContent = "Item Detail — " + item.name;
+  $("itemDetailTitle").textContent = item.name;
+  $("itemDetailSub").textContent =
+    "Sale " + fmtRs(item.salePricePaisa) + " · Purchase " + fmtRs(item.purchasePricePaisa) +
+    " · Stock " + item.stockQty + (item.itemCode ? " · Code " + item.itemCode : "") +
+    (item.location ? " · " + item.location : "");
+  loadItemBatches();
+  apiGet("/api/reports/item-detail?item_id=" + item.id, null).then(function (r) {
+    $("itemTxBody").innerHTML = (r.body.rows || []).map(function (row) {
+      return "<tr><td>" + esc((row.date || "").slice(0, 10)) + "</td><td>" + esc(row.kind || "") + "</td><td>" +
+        esc(row.ref || row.batchNo || "") + "</td><td>" + row.qty + "</td><td>" + esc(row.status || "") + "</td></tr>";
+    }).join("");
+    $("itemTxEmpty").classList.toggle("hidden", (r.body.rows || []).length > 0);
+  }).catch(function () {});
+}
+function loadItemBatches() {
+  if (!detailItem) return;
+  apiGet("/api/items/" + detailItem.id + "/batches", null).then(function (r) {
+    $("batchList").innerHTML = (r.body.batches || []).map(function (b) {
+      return '<div class="row">' + rowHtml("Batch " + (b.batchNo || "—"),
+        "Exp " + (b.expDate || "—") + (b.mfgDate ? " · Mfg " + b.mfgDate : ""), "Qty: " + b.qty) + "</div>";
+    }).join("") || '<p class="empty">No batches for this item.</p>';
+  }).catch(function () {});
+}
+$("btnItemBack").addEventListener("click", function () { showScreen("items"); });
+$("btnBatchAdd").addEventListener("click", function () {
+  if (!detailItem) return;
+  var qty = parseInt($("batchQty").value || "0", 10);
+  if (!$("batchNo").value.trim() || qty <= 0) { setMsg("appMsg", "Batch number and quantity are needed.", true); return; }
+  apiPost("/api/items/" + detailItem.id + "/batches", {
+    batch_no: $("batchNo").value.trim(), qty: qty,
+    exp_date: $("batchExp").value.trim(), mfg_date: $("batchMfg").value.trim()
+  }).then(function () {
+    $("batchNo").value = ""; $("batchQty").value = ""; $("batchExp").value = ""; $("batchMfg").value = "";
+    setMsg("appMsg", "Batch stock added.");
+    loadItemBatches();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ------------------------------------------------- items bulk tools -- */
+$("lnkItemTemplate").setAttribute("href", "/api/utilities/import-template?kind=items");
+$("lnkPartyTemplate").setAttribute("href", "/api/utilities/import-template?kind=parties");
+var importRowsCache = null;
+$("btnBulkImport").addEventListener("click", function () {
+  $("bulkImportBox").classList.toggle("hidden");
+});
+$("btnBulkUpdate").addEventListener("click", function () {
+  $("bulkUpdateBox").classList.toggle("hidden");
+  apiGet("/api/items", "items").then(renderBulkUpdateGrid);
+});
+$("btnBulkSheet").addEventListener("click", function () {
+  $("bulkSheetBox").classList.toggle("hidden");
+});
+$("importFile").addEventListener("change", function () {
+  var file = $("importFile").files[0];
+  if (!file) { setMsg("appMsg", "Choose a CSV file first.", true); return; }
+  var reader = new FileReader();
+  reader.onload = function () {
+    var lines = String(reader.result || "").split(/\r?\n/).filter(function (l) { return l.trim(); });
+    if (lines.length < 2) { setMsg("appMsg", "The file has no data rows.", true); return; }
+    var headers = lines[0].split(",").map(function (h) { return h.trim(); });
+    var rows = lines.slice(1).map(function (line) {
+      var cells = line.split(",");
+      var obj = {};
+      headers.forEach(function (h, i) { obj[h] = (cells[i] || "").trim(); });
+      return obj;
+    });
+    apiPost("/api/utilities/import/validate", { kind: $("importKind").value, rows: rows })
+      .then(function (body) {
+        importRowsCache = body;
+        renderImportResult();
+      }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  };
+  reader.readAsText(file);
+});
+var importTab = "valid";
+document.querySelectorAll("[data-importtab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    importTab = b.getAttribute("data-importtab");
+    document.querySelectorAll("[data-importtab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    renderImportResult();
+  });
+});
+function renderImportResult() {
+  if (!importRowsCache) return;
+  var valid = importRowsCache.valid || [], errors = importRowsCache.errors || [];
+  $("importValidCount").textContent = valid.length;
+  $("importErrorCount").textContent = errors.length;
+  if (importTab === "valid") {
+    $("importResult").innerHTML = valid.slice(0, 50).map(function (d, i) {
+      return '<div class="row">' + rowHtml("Row " + (i + 2) + " — " + (d.name || "Row"),
+        "Ready to import", null, "") + "</div>";
+    }).join("") || '<p class="empty">Nothing here.</p>';
+  } else {
+    $("importResult").innerHTML = errors.slice(0, 50).map(function (r) {
+      return '<div class="row">' + rowHtml("Row " + r.row, r.message || "Error", null, "") + "</div>";
+    }).join("") || '<p class="empty">Nothing here.</p>';
+  }
+  $("btnImportGo").textContent = "Import " + valid.length + " Valid " +
+    ($("importKind").value === "items" ? "Items" : "Parties");
+  $("btnImportGo").disabled = !valid.length;
+}
+$("btnImportGo").addEventListener("click", function () {
+  if (!importRowsCache || !(importRowsCache.valid || []).length) return;
+  var batch = "imp" + Date.now();
+  apiPost("/api/utilities/import/confirm", {
+    kind: $("importKind").value, batch: batch,
+    rows: importRowsCache.valid
+  }).then(function (body) {
+    setMsg("appMsg", "Imported " + body.imported + " rows.");
+    importRowsCache = null;
+    $("importResult").innerHTML = "";
+    loadItems(); loadParties();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function renderBulkUpdateGrid() {
+  var items = ((cacheGet("items") || {}).items) || [];
+  $("bulkUpdateBody").innerHTML = items.map(function (i) {
+    return "<tr><td>" + esc(i.name) + '</td>' +
+      '<td><input data-bu-sale="' + i.id + '" type="number" step="0.01" value="' + (i.salePricePaisa / 100).toFixed(2) + '"></td>' +
+      '<td><input data-bu-purchase="' + i.id + '" type="number" step="0.01" value="' + (i.purchasePricePaisa / 100).toFixed(2) + '"></td>' +
+      '<td><input data-bu-stock="' + i.id + '" type="number" step="1" value="' + i.stockQty + '"></td></tr>';
+  }).join("");
+}
+$("btnBulkUpdateSave").addEventListener("click", function () {
+  var updates = [];
+  document.querySelectorAll("[data-bu-sale]").forEach(function (inp) {
+    var id = inp.getAttribute("data-bu-sale");
+    updates.push({
+      id: parseInt(id, 10),
+      sale_price_paisa: rsToPaisa(inp.value),
+      purchase_price_paisa: rsToPaisa(document.querySelector('[data-bu-purchase="' + id + '"]').value),
+      stock_qty: parseInt(document.querySelector('[data-bu-stock="' + id + '"]').value || "0", 10)
+    });
+  });
+  if (!updates.length) { setMsg("appMsg", "Load the grid first.", true); return; }
+  apiPost("/api/items/bulk-update", { updates: updates }).then(function (body) {
+    setMsg("appMsg", "Updated " + body.updated + " items.");
+    loadItems();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("btnBulkSheetRow").addEventListener("click", function () {
+  var row = document.createElement("div");
+  row.className = "grid2";
+  row.innerHTML = '<input class="bs-name" placeholder="Item name">' +
+    '<input class="bs-sale" type="number" step="0.01" placeholder="Sale price (Rs)">' +
+    '<input class="bs-purchase" type="number" step="0.01" placeholder="Purchase price (Rs)">' +
+    '<input class="bs-stock" type="number" step="1" placeholder="Opening stock">';
+  $("bulkSheetRows").appendChild(row);
+});
+$("btnBulkSheetSave").addEventListener("click", function () {
+  var rows = [];
+  document.querySelectorAll("#bulkSheetRows > div").forEach(function (row) {
+    var name = row.querySelector(".bs-name").value.trim();
+    if (!name) return;
+    rows.push({ name: name, sale_price_paisa: rsToPaisa(row.querySelector(".bs-sale").value),
+      purchase_price_paisa: rsToPaisa(row.querySelector(".bs-purchase").value),
+      stock_qty: parseInt(row.querySelector(".bs-stock").value || "0", 10) || 0 });
+  });
+  if (!rows.length) { setMsg("appMsg", "Add at least one item row.", true); return; }
+  var chain = Promise.resolve(), made = 0;
+  rows.forEach(function (r) {
+    chain = chain.then(function () {
+      return apiCreate("item", r).then(function () { made += 1; });
+    });
+  });
+  chain.then(function () {
+    $("bulkSheetRows").innerHTML = "";
+    setMsg("appMsg", made + " items added.");
+    loadItems();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ---------------------------------------------------- other income --- */
+function loadOtherIncome() {
+  fillPartySelects();
+  apiGet("/api/income-categories", null).then(function (r) {
+    $("incCategory").innerHTML = '<option value="">— None —</option>' + (r.body.categories || []).map(function (c) {
+      return "<option>" + esc(c.name) + "</option>";
+    }).join("");
+  }).catch(function () {});
+  apiGet("/api/other-income", null).then(function (r) {
+    var list = (r.body.incomes || []).slice().reverse();
+    $("incomeList").innerHTML = list.length ? "" : '<p class="empty">No other income yet.</p>';
+    list.forEach(function (inc) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = rowHtml(inc.title,
+        (inc.category ? inc.category + " · " : "") + (inc.createdAt || "").slice(0, 10),
+        fmtRs(inc.amountPaisa), "pos");
+      $("incomeList").appendChild(div);
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("incomeForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/other-income", {
+    title: $("incTitle").value.trim(),
+    category: ($("incCategoryNew").value.trim() || $("incCategory").value || "").trim(),
+    party_id: $("incParty").value ? parseInt($("incParty").value, 10) : null,
+    amount_paisa: rsToPaisa($("incAmount").value),
+    note: $("incNote").value.trim()
+  }).then(function () {
+    $("incomeForm").reset();
+    setMsg("appMsg", "Other income saved.");
+    loadOtherIncome();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ------------------------------------------- cash & bank: sub-tabs --- */
+var selectedBankId = null;
+document.querySelectorAll("[data-cbtab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    document.querySelectorAll("[data-cbtab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    var tab = b.getAttribute("data-cbtab");
+    $("cbAccounts").classList.toggle("hidden", tab !== "accounts");
+    $("cbCash").classList.toggle("hidden", tab !== "cash");
+    $("cbCheques").classList.toggle("hidden", tab !== "cheques");
+    $("cbLoans").classList.toggle("hidden", tab !== "loans");
+    if (tab === "accounts") loadBankAccounts();
+    if (tab === "cash") loadCashBank();
+    if (tab === "cheques") loadCheques();
+    if (tab === "loans") loadLoans();
+  });
+});
+function loadBankAccounts() {
+  apiGet("/api/bank-accounts", null).then(function (r) {
+    var list = r.body.accounts || [];
+    $("bankList").innerHTML = list.length ? "" : '<p class="empty">No bank accounts yet.</p>';
+    list.forEach(function (a) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = rowHtml(a.displayName,
+        (a.bankName || "") + (a.accountNumber ? " · " + a.accountNumber : "") +
+        (a.printQr ? " · QR on invoices" : "") + (a.printDetails ? " · Details on invoices" : ""),
+        fmtRs(a.balancePaisa));
+      var btn = document.createElement("button");
+      btn.className = "btn btn-mini"; btn.type = "button"; btn.textContent = "Transactions";
+      btn.addEventListener("click", function () {
+        selectedBankId = a.id;
+        $("bankTxCard").classList.remove("hidden");
+        $("bankTxTitle").textContent = "Transactions — " + a.displayName + " · Balance " + fmtRs(a.balancePaisa);
+        loadBankTransactions();
+      });
+      div.appendChild(btn);
+      $("bankList").appendChild(div);
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+function loadBankTransactions() {
+  if (!selectedBankId) return;
+  apiGet("/api/bank-accounts/" + selectedBankId + "/transactions", null).then(function (r) {
+    $("bankTxList").innerHTML = (r.body.transactions || []).slice().reverse().map(function (t) {
+      return '<div class="row">' + rowHtml(t.kind === "deposit" ? "Deposit" : "Withdraw",
+        (t.createdAt || "").slice(0, 10) + (t.note ? " · " + t.note : ""),
+        fmtRs(t.amountPaisa), t.kind === "deposit" ? "pos" : "neg") + "</div>";
+    }).join("") || '<p class="empty">No transactions yet.</p>';
+  }).catch(function () {});
+}
+$("bankForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/bank-accounts", {
+    display_name: $("bankName1").value.trim(),
+    opening_balance_paisa: rsToPaisa($("bankOpening").value),
+    as_of_date: $("bankAsOf").value || null,
+    account_number: $("bankAccNo").value.trim(),
+    iban: $("bankIban").value.trim(),
+    qr_handle: $("bankQr").value.trim(),
+    bank_name: $("bankBankName").value.trim(),
+    holder_name: $("bankHolder").value.trim(),
+    print_details: $("bankPrintDetails").checked,
+    print_qr: $("bankPrintQr").checked
+  }).then(function () {
+    $("bankForm").reset();
+    setMsg("appMsg", "Bank account added.");
+    loadBankAccounts();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function bankTransact(kind) {
+  if (!selectedBankId) { setMsg("appMsg", "Open an account's Transactions first.", true); return; }
+  var amt = rsToPaisa($("bankTxAmount").value);
+  if (amt <= 0) { setMsg("appMsg", "Enter an amount.", true); return; }
+  apiPost("/api/bank-accounts/" + selectedBankId + "/transact", {
+    kind: kind, amount_paisa: amt, note: $("bankTxNote").value.trim()
+  }).then(function () {
+    $("bankTxAmount").value = 0; $("bankTxNote").value = "";
+    setMsg("appMsg", kind === "deposit" ? "Deposited." : "Withdrawn.");
+    loadBankAccounts(); loadBankTransactions();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("btnBankDeposit").addEventListener("click", function () { bankTransact("deposit"); });
+$("btnBankWithdraw").addEventListener("click", function () { bankTransact("withdraw"); });
+$("btnBankStatement").addEventListener("click", function () {
+  if (!selectedBankId) return;
+  openReports("bank-statement");
+});
+function loadCheques() {
+  fillPartySelects();
+  apiGet("/api/cheques", null).then(function (r) {
+    var list = (r.body.cheques || []).slice().reverse();
+    $("chequeList").innerHTML = list.length ? "" : '<p class="empty">No cheques yet.</p>';
+    list.forEach(function (c) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = rowHtml("Cheque " + (c.chequeNo || "—"),
+        (c.bankName || "") + " · " + c.status + (c.dueDate ? " · Due " + c.dueDate : ""),
+        fmtRs(c.amountPaisa));
+      if (c.status === "pending") {
+        ["cleared", "bounced"].forEach(function (st) {
+          var b = document.createElement("button");
+          b.className = "btn btn-mini"; b.type = "button";
+          b.textContent = st === "cleared" ? "Mark Cleared" : "Mark Bounced";
+          b.addEventListener("click", function () {
+            apiPut("/api/cheques/" + c.id, { status: st }).then(loadCheques)
+              .catch(function (e) { setMsg("appMsg", e.message, true); });
+          });
+          div.appendChild(b);
+        });
+      }
+      $("chequeList").appendChild(div);
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("chequeForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/cheques", {
+    cheque_no: $("chqNo").value.trim(), bank_name: $("chqBank").value.trim(),
+    amount_paisa: rsToPaisa($("chqAmount").value),
+    party_id: $("chqParty").value ? parseInt($("chqParty").value, 10) : null,
+    due_date: $("chqDue").value || null
+  }).then(function () {
+    $("chequeForm").reset();
+    setMsg("appMsg", "Cheque added.");
+    loadCheques();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+function loadLoans() {
+  apiGet("/api/loans", null).then(function (r) {
+    var list = r.body.loans || [];
+    $("loanList").innerHTML = list.length ? "" : '<p class="empty">No loan accounts yet.</p>';
+    list.forEach(function (l) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = rowHtml(l.name,
+        (l.lender ? l.lender + " · " : "") + "Paid " + fmtRs(l.paidPaisa) +
+        " of " + fmtRs(l.principalPaisa + Math.round(l.principalPaisa * (l.interestBp || 0) / 10000)),
+        "Balance " + fmtRs(l.balancePaisa), "neg");
+      var btn = document.createElement("button");
+      btn.className = "btn btn-mini"; btn.type = "button"; btn.textContent = "Pay Instalment";
+      btn.addEventListener("click", function () {
+        var v = prompt("Instalment amount (Rs):");
+        if (!v) return;
+        apiPost("/api/loans/" + l.id + "/pay", { amount_paisa: rsToPaisa(v) }).then(function () {
+          setMsg("appMsg", "Instalment recorded.");
+          loadLoans();
+        }).catch(function (e) { setMsg("appMsg", e.message, true); });
+      });
+      div.appendChild(btn);
+      $("loanList").appendChild(div);
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("loanForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/loans", {
+    name: $("loanName").value.trim(), lender: $("loanLender").value.trim(),
+    principal_paisa: rsToPaisa($("loanPrincipal").value),
+    interest_bp: Math.round((parseFloat($("loanInterest").value || "0") || 0) * 100),
+    start_date: $("loanStart").value || null, note: $("loanNote").value.trim()
+  }).then(function () {
+    $("loanForm").reset();
+    setMsg("appMsg", "Loan account added.");
+    loadLoans();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ------------------------------------------------------ online store - */
+var storeTab = "orders";
+document.querySelectorAll("[data-storetab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    storeTab = b.getAttribute("data-storetab");
+    document.querySelectorAll("[data-storetab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    $("storeOrdersBox").classList.toggle("hidden", storeTab !== "orders");
+    $("storeItemsBox").classList.toggle("hidden", storeTab !== "items");
+    $("storeSettingsForm").classList.toggle("hidden", storeTab !== "settings");
+    loadStore();
+  });
+});
+function loadStore() {
+  apiGet("/api/store/settings", null).then(function (r) {
+    var s = r.body.store || {};
+    if (QB.settings) QB.settings.store = s;
+    $("storeEnabled").checked = !!s.enabled;
+    $("storeName").value = s.name || "";
+    $("storeAccept").checked = s.accept_orders !== false;
+    $("storeMinOrder").value = ((s.min_order_paisa || 0) / 100).toFixed(2);
+    $("storeDelivery").value = ((s.delivery_charges_paisa || 0) / 100).toFixed(2);
+    $("storeDiscounts").checked = !!s.item_discounts;
+    $("storeLinkStock").checked = s.link_stock !== false;
+    $("storeLink").textContent = r.body.businessId
+      ? (location.origin + "/store/" + r.body.businessId) : "—";
+  }).catch(function () {});
+  if (storeTab === "orders") {
+    apiGet("/api/store/orders", null).then(function (r) {
+      var list = (r.body.orders || []).slice().reverse();
+      $("storeOrderList").innerHTML = list.length ? "" : '<p class="empty">No online orders yet.</p>';
+      list.forEach(function (o) {
+        var div = document.createElement("div");
+        div.className = "row";
+        div.innerHTML = rowHtml(o.customerName + " · " + o.phone,
+          (o.createdAt || "").slice(0, 10) + " · " + o.status +
+          (o.address ? " · " + o.address : "") +
+          (o.lines || []).map(function (l) { return " · " + l.itemName + " ×" + l.qty; }).join(""),
+          fmtRs(o.totalPaisa));
+        var acts = document.createElement("div");
+        acts.className = "row-actions";
+        if (o.status === "pending") {
+          var conv = document.createElement("button");
+          conv.className = "btn btn-mini btn-primary"; conv.type = "button"; conv.textContent = "Convert to Sale";
+          conv.addEventListener("click", function () {
+            apiPost("/api/store/orders/" + o.id + "/convert", {}).then(function (body) {
+              setMsg("appMsg", "Order converted to a Sale Invoice (see the Sale book).");
+              loadStore();
+            }).catch(function (e) { setMsg("appMsg", e.message, true); });
+          });
+          acts.appendChild(conv);
+          var del = document.createElement("button");
+          del.className = "btn btn-mini"; del.type = "button"; del.textContent = "Deliver Order";
+          del.addEventListener("click", function () {
+            apiPost("/api/store/orders/" + o.id + "/status", { status: "delivered" }).then(loadStore)
+              .catch(function (e) { setMsg("appMsg", e.message, true); });
+          });
+          acts.appendChild(del);
+        }
+        if (o.status === "delivered") {
+          var re = document.createElement("button");
+          re.className = "btn btn-mini"; re.type = "button"; re.textContent = "Reopen";
+          re.addEventListener("click", function () {
+            apiPost("/api/store/orders/" + o.id + "/status", { status: "pending" }).then(loadStore)
+              .catch(function (e) { setMsg("appMsg", e.message, true); });
+          });
+          acts.appendChild(re);
+        }
+        div.appendChild(acts);
+        $("storeOrderList").appendChild(div);
+      });
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
+  if (storeTab === "items") {
+    apiGet("/api/store/items", null).then(function (r) {
+      $("storeItemBody").innerHTML = (r.body.items || []).map(function (i) {
+        return "<tr><td>" + esc(i.name) + '</td><td class="num">' + fmtRs(i.salePricePaisa) + "</td>" +
+          '<td><input data-store-price="' + i.itemId + '" type="number" step="0.01" value="' +
+          ((i.storePricePaisa != null ? i.storePricePaisa : i.salePricePaisa) / 100).toFixed(2) + '"></td>' +
+          '<td class="num">' + i.stockQty + "</td>" +
+          '<td><input type="checkbox" data-store-stock="' + i.itemId + '"' + (i.inStock ? " checked" : "") + "></td>" +
+          '<td><input type="checkbox" data-store-listed="' + i.itemId + '"' + (i.listed ? " checked" : "") + "></td></tr>";
+      }).join("");
+      $("storeItemBody").querySelectorAll("input").forEach(function (inp) {
+        inp.addEventListener("change", saveStoreItemRow);
+      });
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  }
+}
+function saveStoreItemRow(ev) {
+  var tr = ev.target.closest("tr");
+  var priceInp = tr.querySelector("[data-store-price]");
+  var id = priceInp.getAttribute("data-store-price");
+  apiPut("/api/store/items/" + id, {
+    store_price_paisa: rsToPaisa(priceInp.value),
+    in_stock: tr.querySelector("[data-store-stock]").checked,
+    listed: tr.querySelector("[data-store-listed]").checked
+  }).then(function () { setMsg("appMsg", "Store item saved."); })
+    .catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("storeSettingsForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var store = {
+    enabled: $("storeEnabled").checked,
+    name: $("storeName").value.trim(),
+    accept_orders: $("storeAccept").checked,
+    min_order_paisa: rsToPaisa($("storeMinOrder").value),
+    delivery_charges_paisa: rsToPaisa($("storeDelivery").value),
+    item_discounts: $("storeDiscounts").checked,
+    link_stock: $("storeLinkStock").checked
+  };
+  apiPut("/api/store/settings", { store: store }).then(function (body) {
+    if (QB.settings) QB.settings.store = body.store || store;
+    applySettingsChrome();
+    setMsg("appMsg", "Store settings saved.");
+    loadStore();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ---------------------------------------------------------- loyalty -- */
+function loadLoyalty() {
+  var loy = (QB.settings || {}).loyalty || {};
+  $("loyEnabled").checked = !!loy.enabled;
+  $("loySpend").value = ((loy.spend_per_point_paisa || 10000) / 100).toFixed(2);
+  $("loyMinEarn").value = ((loy.min_invoice_earn_paisa || 0) / 100).toFixed(2);
+  $("loyExpiry").value = loy.expiry_days != null ? loy.expiry_days : 365;
+  $("loyRedeemValue").value = ((loy.redeem_value_paisa || 100) / 100).toFixed(2);
+  $("loyMaxPct").value = loy.max_redeem_pct != null ? loy.max_redeem_pct : 50;
+  $("loyMinRedeem").value = ((loy.min_invoice_redeem_paisa || 0) / 100).toFixed(2);
+  apiGet("/api/parties", "parties").then(function (r) {
+    var list = (r.body.parties || []).filter(function (p) { return (p.loyaltyPoints || 0) > 0; });
+    $("loyaltyBody").innerHTML = list.map(function (p) {
+      var val = p.loyaltyPoints * (loy.redeem_value_paisa || 100);
+      return "<tr><td>" + esc(p.name) + '</td><td class="num">' + p.loyaltyPoints +
+        '</td><td class="num">' + fmtRs(val) + "</td></tr>";
+    }).join("");
+    $("loyaltyEmpty").classList.toggle("hidden", list.length > 0);
+  }).catch(function () {});
+}
+$("loyaltyForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  saveSettings({ loyalty: {
+    enabled: $("loyEnabled").checked,
+    spend_per_point_paisa: rsToPaisa($("loySpend").value),
+    min_invoice_earn_paisa: rsToPaisa($("loyMinEarn").value),
+    expiry_days: parseInt($("loyExpiry").value || "0", 10) || 0,
+    redeem_value_paisa: rsToPaisa($("loyRedeemValue").value),
+    max_redeem_pct: parseInt($("loyMaxPct").value || "0", 10) || 0,
+    min_invoice_redeem_paisa: rsToPaisa($("loyMinRedeem").value)
+  } }).then(function () {
+    setMsg("appMsg", "Loyalty setup saved.");
+    loadLoyalty();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* ------------------------------------------------------- accounting -- */
+var coaCache = [];
+function loadAccounting() {
+  var on = QB.settings && QB.settings.accounting_enabled;
+  $("accountingOffCard").classList.toggle("hidden", !!on);
+  $("accountingMain").classList.toggle("hidden", !on);
+  if (!on) return;
+  apiGet("/api/accounts", null).then(function (r) {
+    coaCache = r.body.accounts || [];
+    var groups = {};
+    coaCache.forEach(function (a) { (groups[a.group] = groups[a.group] || []).push(a); });
+    $("coaList").innerHTML = Object.keys(groups).map(function (g) {
+      return '<div class="sub" style="font-weight:700; margin-top:8px">' + esc(g) + "</div>" +
+        groups[g].map(function (a) {
+          var bal = a.systemBalancePaisa != null ? a.systemBalancePaisa :
+            (a.journalDebitPaisa || 0) - (a.journalCreditPaisa || 0);
+          return '<div class="row">' + rowHtml(a.name, "", fmtRs(bal)) + "</div>";
+        }).join("");
+    }).join("") || '<p class="empty">No accounts yet.</p>';
+    renderJournalLineSelects();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  apiGet("/api/journal", null).then(function (r) {
+    $("journalList").innerHTML = (r.body.entries || []).slice().reverse().map(function (j) {
+      return '<div class="row">' + rowHtml(j.narration || "Journal Entry",
+        (j.date || "") + " · " + (j.lines || []).length + " lines", fmtRs(j.totalPaisa || 0)) + "</div>";
+    }).join("") || '<p class="empty">No journal entries yet.</p>';
+  }).catch(function () {});
+  apiGet("/api/reports/balance-sheet", null).then(function (r) {
+    function side(title, rows, total) {
+      return "<h4>" + title + "</h4>" + (rows || []).map(function (x) {
+        return '<div class="row">' + rowHtml(x.name, "", fmtRs(x.amountPaisa || 0)) + "</div>";
+      }).join("") + '<div class="row"><strong>Total</strong><strong>' + fmtRs(total || 0) + "</strong></div>";
+    }
+    $("bsBody").innerHTML = side("Assets", r.body.assets, r.body.totalAssetsPaisa) +
+      side("Liabilities", r.body.liabilities, r.body.totalLiabilitiesPaisa) +
+      '<div class="row">' + rowHtml("Capital (balancing figure)", "", fmtRs(r.body.capitalPaisa || 0)) + "</div>" +
+      '<div class="row">' + rowHtml("Profit", "", fmtRs(r.body.profitPaisa || 0)) + "</div>" +
+      '<div class="row"><strong>Total Liabilities + Capital</strong><strong>' +
+      fmtRs(r.body.totalLiabilitiesCapitalPaisa || 0) + "</strong></div>";
+  }).catch(function () {});
+  apiGet("/api/reports/trial-balance", null).then(function (r) {
+    var tb = r.body || {};
+    $("tbBody").innerHTML = '<table class="tx-table"><thead><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>' +
+      (tb.rows || []).map(function (x) {
+        return "<tr><td>" + esc(x.account) + '</td><td class="num">' + fmtRs(x.debitPaisa || 0) +
+          '</td><td class="num">' + fmtRs(x.creditPaisa || 0) + "</td></tr>";
+      }).join("") + '</tbody></table><p class="note">Total Debit ' + fmtRs(tb.totalDebitPaisa || 0) +
+      " · Total Credit " + fmtRs(tb.totalCreditPaisa || 0) + "</p>";
+  }).catch(function () {});
+}
+$("btnEnableAccounting").addEventListener("click", function () {
+  saveSettings({ accounting_enabled: true }).then(loadAccounting);
+});
+function renderJournalLineSelects() {
+  document.querySelectorAll(".jr-account").forEach(function (sel) {
+    var keep = sel.value;
+    sel.innerHTML = coaCache.map(function (a) {
+      return '<option value="' + a.id + '">' + esc(a.name) + "</option>";
+    }).join("");
+    if (keep) sel.value = keep;
+  });
+}
+function addJournalRow() {
+  var row = document.createElement("div");
+  row.className = "grid2 jr-row";
+  row.innerHTML = '<label>Account <select class="jr-account"></select></label>' +
+    '<label>Debit (Rs) <input class="jr-debit" type="number" step="0.01" min="0" value="0"></label>' +
+    '<label>Credit (Rs) <input class="jr-credit" type="number" step="0.01" min="0" value="0"></label>';
+  $("journalLines").appendChild(row);
+  row.querySelectorAll("input").forEach(function (inp) {
+    inp.addEventListener("input", journalTotals);
+  });
+  renderJournalLineSelects();
+  journalTotals();
+}
+function journalTotals() {
+  var d = 0, c = 0;
+  document.querySelectorAll(".jr-row").forEach(function (row) {
+    d += rsToPaisa(row.querySelector(".jr-debit").value);
+    c += rsToPaisa(row.querySelector(".jr-credit").value);
+  });
+  $("jrDebitTotal").textContent = fmtRs(d);
+  $("jrCreditTotal").textContent = fmtRs(c);
+  $("jrSave").disabled = !(d > 0 && d === c);
+  return { d: d, c: c };
+}
+$("btnJournalRow").addEventListener("click", addJournalRow);
+$("coaForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPost("/api/accounts", { name: $("coaName").value.trim(), group_name: $("coaGroup").value })
+    .then(function () {
+      $("coaForm").reset();
+      setMsg("appMsg", "Account added.");
+      loadAccounting();
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("journalForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var lines = [];
+  document.querySelectorAll(".jr-row").forEach(function (row) {
+    lines.push({
+      account_id: parseInt(row.querySelector(".jr-account").value, 10),
+      debit_paisa: rsToPaisa(row.querySelector(".jr-debit").value),
+      credit_paisa: rsToPaisa(row.querySelector(".jr-credit").value)
+    });
+  });
+  apiPost("/api/journal", {
+    entry_date: $("jrDate").value || null,
+    narration: $("jrNarration").value.trim(),
+    lines: lines
+  }).then(function () {
+    $("journalLines").innerHTML = "";
+    addJournalRow(); addJournalRow();
+    $("jrNarration").value = "";
+    setMsg("appMsg", "Journal entry saved.");
+    loadAccounting();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+
+/* --------------------------------------------------- team & roles ---- */
+var teamRoles = [];
+var teamPresets = {};
+var PERM_MODULES = [];
+function loadTeam() {
+  apiGet("/api/team/roles", null).then(function (r) {
+    teamRoles = r.body.roles || [];
+    teamPresets = r.body.presets || {};
+    PERM_MODULES = r.body.modules || [];
+    var sel = $("teamRole");
+    sel.innerHTML = teamRoles.map(function (x) { return "<option>" + esc(x) + "</option>"; }).join("");
+    applyRolePreset();
+  }).catch(function () {});
+  apiGet("/api/team", null).then(function (r) {
+    var list = r.body.members || [];
+    $("teamBody").innerHTML = list.map(function (m) {
+      return "<tr><td>" + esc(m.name) + "</td><td>" + esc(m.contact) + "</td><td>" +
+        esc(m.status) + "</td><td>" + esc(m.role) + "</td>" +
+        '<td><button class="btn btn-mini" data-team-del="' + m.id + '">Remove</button></td></tr>';
+    }).join("");
+    $("teamEmpty").classList.toggle("hidden", list.length > 0);
+    $("teamBody").querySelectorAll("[data-team-del]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (!confirm("Remove this team member?")) return;
+        apiDelete("/api/team/" + b.getAttribute("data-team-del")).then(loadTeam)
+          .catch(function (e) { setMsg("appMsg", e.message, true); });
+      });
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  // shared with me
+  var mine = (me && me.memberOf) || [];
+  $("sharedList").innerHTML = mine.length ? "" : '<p class="empty">No business has been shared with you.</p>';
+  mine.forEach(function (mb) {
+    var div = document.createElement("div");
+    div.className = "row";
+    div.innerHTML = rowHtml(mb.businessName, "Role: " + mb.role, null, "");
+    var btn = document.createElement("button");
+    btn.className = "btn btn-mini btn-primary"; btn.type = "button"; btn.textContent = "Open";
+    btn.addEventListener("click", function () {
+      apiPost("/api/team/switch", { business_id: mb.businessId }).then(function () { refreshMe(); })
+        .catch(function (e) { setMsg("appMsg", e.message, true); });
+    });
+    div.appendChild(btn);
+    $("sharedList").appendChild(div);
+  });
+  var s = QB.settings || {};
+  $("teamAutoBackup").textContent = s.auto_backup === false ? "OFF" : "ON";
+  apiGet("/api/team/activity", null).then(function (r) {
+    $("activityList").innerHTML = (r.body.activity || []).slice(0, 20).map(function (a) {
+      return '<div class="row">' + rowHtml(a.email, (a.createdAt || "") + " · " + (a.ip || ""), null, "") + "</div>";
+    }).join("") || '<p class="empty">No sign-in activity recorded.</p>';
+  }).catch(function () {});
+  apiGet("/api/backups", "backups").then(function (r) {
+    var list = r.body.backups || [];
+    $("teamLastBackup").textContent = list.length ? (list[list.length - 1].createdAt || "").slice(0, 10) : "—";
+  }).catch(function () {});
+}
+function applyRolePreset() {
+  var perms = teamPresets[$("teamRole").value] || {};
+  $("permBody").innerHTML = PERM_MODULES.map(function (mod) {
+    var p = perms[mod] || {};
+    return "<tr><td>" + esc(mod) + "</td>" + ["view", "create", "edit", "share", "delete"].map(function (a) {
+      return '<td><input type="checkbox" data-perm-mod="' + esc(mod) + '" data-perm-act="' + a + '"' +
+        (p[a] ? " checked" : "") + "></td>";
+    }).join("") + "</tr>";
+  }).join("");
+}
+$("teamRole").addEventListener("change", applyRolePreset);
+$("teamForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var perms = {};
+  document.querySelectorAll("[data-perm-mod]").forEach(function (cb) {
+    var mod = cb.getAttribute("data-perm-mod");
+    perms[mod] = perms[mod] || {};
+    perms[mod][cb.getAttribute("data-perm-act")] = cb.checked;
+  });
+  apiPost("/api/team", {
+    name: $("teamName").value.trim(),
+    contact: $("teamContact").value.trim(),
+    role: $("teamRole").value,
+    perms: perms
+  }).then(function () {
+    $("teamForm").reset();
+    setMsg("appMsg", "Team member added. They sign in with this email and open your business from Sync, Share & Backup.");
+    loadTeam();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("btnBackupComputer").addEventListener("click", function () {
+  apiGet("/api/backups", "backups").then(function (r) {
+    var list = r.body.backups || [];
+    if (!list.length) { setMsg("appMsg", "No backup yet — use Backup Now first.", true); return; }
+    downloadAuthed("/api/backups/" + list[list.length - 1].id + "/download", "qbill-backup.json")
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+});
+$("btnBackupNowTeam").addEventListener("click", function () {
+  apiPost("/api/backups/run", {}).then(function () {
+    setMsg("appMsg", "Backup created.");
+    loadTeam();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+$("btnBackupSettings").addEventListener("click", function () {
+  go("settings");
+  setSettingsCat("backups");
+});
+
+/* ------------------------------------------------------- utilities --- */
+function loadUtilities() {
+  renderRecycleBin();
+  var items = ((cacheGet("items") || {}).items) || [];
+  $("bcItem").innerHTML = items.map(function (i) {
+    return '<option value="' + i.id + '">' + esc(i.name) + "</option>";
+  }).join("");
+  drawBarcode();
+}
+function renderRecycleBin() {
+  apiGet("/api/recycle-bin", null).then(function (r) {
+    var list = (r.body.invoices || []).slice().reverse();
+    $("recycleList").innerHTML = list.length ? "" : '<p class="empty">The Recycle Bin is empty.</p>';
+    list.forEach(function (inv) {
+      var div = document.createElement("div");
+      div.className = "row";
+      div.innerHTML = rowHtml(inv.invoiceNo + " · " + (DOC_META[inv.type] || {}).title,
+        "Deleted " + (inv.deletedAt || "").slice(0, 10), fmtRs(inv.totalPaisa));
+      var acts = document.createElement("div");
+      acts.className = "row-actions";
+      var restore = document.createElement("button");
+      restore.className = "btn btn-mini btn-primary"; restore.type = "button"; restore.textContent = "Restore";
+      restore.addEventListener("click", function () {
+        apiPost("/api/recycle-bin/" + inv.id + "/restore", {}).then(function () {
+          setMsg("appMsg", "Transaction restored.");
+          renderRecycleBin(); loadDashboard();
+        }).catch(function (e) { setMsg("appMsg", e.message, true); });
+      });
+      acts.appendChild(restore);
+      var perm = document.createElement("button");
+      perm.className = "btn btn-mini"; perm.type = "button"; perm.textContent = "Delete Forever";
+      perm.addEventListener("click", function () {
+        if (!confirm("Permanently delete " + inv.invoiceNo + "? This cannot be undone.")) return;
+        apiDelete("/api/recycle-bin/" + inv.id).then(renderRecycleBin)
+          .catch(function (e) { setMsg("appMsg", e.message, true); });
+      });
+      acts.appendChild(perm);
+      div.appendChild(acts);
+      $("recycleList").appendChild(div);
+    });
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("btnVerify").addEventListener("click", function () {
+  apiGet("/api/utilities/verify", null).then(function (r) {
+    $("verifyList").innerHTML = (r.body.checks || []).map(function (c) {
+      return '<div class="row">' + rowHtml((c.ok ? "✓ " : "✗ ") + c.name, c.detail || "",
+        null, c.ok ? "pos" : "neg") + "</div>";
+    }).join("");
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+document.querySelectorAll("[data-export]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var kind = b.getAttribute("data-export");
+    downloadAuthed("/api/utilities/export/" + kind, "qbill-" + kind + ".csv")
+      .catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+});
+$("btnSetupBusiness").addEventListener("click", function () { go("settings"); });
+function runSearchInto(input, box) {
+  var q = input.value.trim();
+  if (q.length < 2) { box.innerHTML = ""; return; }
+  apiGet("/api/search?q=" + encodeURIComponent(q), null).then(function (r) {
+    box.innerHTML = (r.body.results || []).map(function (x) {
+      return '<button class="row" type="button" data-search-kind="' + x.kind + '" data-search-id="' + x.id + '">' +
+        rowHtml(x.label, x.kind + (x.sub ? " · " + x.sub : ""), x.amountPaisa != null ? fmtRs(x.amountPaisa) : null, "") +
+        "</button>";
+    }).join("") || '<p class="empty">No matches.</p>';
+    box.querySelectorAll("[data-search-kind]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        $("searchModal").classList.add("hidden");
+        var kind = b.getAttribute("data-search-kind");
+        if (kind === "party") loadParties(), showScreen("parties");
+        else if (kind === "item") showScreen("items");
+        else showScreen("book");
+      });
+    });
+  }).catch(function () {});
+}
+$("utilSearch").addEventListener("input", function () { runSearchInto($("utilSearch"), $("utilSearchResults")); });
+/* Open Anything overlay (Ctrl+F) */
+function openAnything() {
+  $("searchModal").classList.remove("hidden");
+  $("globalSearch").value = "";
+  $("globalSearchResults").innerHTML = "";
+  setTimeout(function () { $("globalSearch").focus(); }, 30);
+}
+$("globalSearch").addEventListener("input", function () {
+  runSearchInto($("globalSearch"), $("globalSearchResults"));
+});
+$("searchClose").addEventListener("click", function () { $("searchModal").classList.add("hidden"); });
+document.addEventListener("keydown", function (ev) {
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === "f" || ev.key === "F") && me && currentScreen) {
+    var tag = (ev.target && ev.target.tagName) || "";
+    if (tag !== "TEXTAREA") { ev.preventDefault(); openAnything(); }
+  }
+  if (ev.key === "Escape") { $("searchModal").classList.add("hidden"); closeDialog(); }
+});
+/* Barcode Generator — simple Code39-style bars from the value's digits. */
+function drawBarcode() {
+  var canvas = $("bcCanvas");
+  if (!canvas) return;
+  var item = itemById(parseInt($("bcItem").value, 10) || 0);
+  var value = $("bcValue").value.trim() || (item && item.itemCode) || "0000";
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#000";
+  var lines = [];
+  document.querySelectorAll(".bc-line").forEach(function (cb) { if (cb.checked) lines.push(cb.value); });
+  var y = 8;
+  ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
+  if (item && lines.indexOf("name") >= 0) { ctx.fillText(item.name.slice(0, 34), 160, y + 12); y += 18; }
+  if (item && lines.indexOf("business") >= 0) {
+    ctx.font = "11px Arial";
+    ctx.fillText(((me && me.business && me.business.name) || "").slice(0, 40), 160, y + 10); y += 14;
+    ctx.font = "bold 13px Arial";
+  }
+  var x = 20;
+  var digits = ("*" + value + "*").split("");
+  digits.forEach(function (ch) {
+    var code = ch.charCodeAt(0) % 7 + 2;
+    for (var i = 0; i < code; i++) {
+      var w = (i % 3 === 0) ? 3 : 1;
+      if (i % 2 === 0) ctx.fillRect(x, y, w, 52);
+      x += w + 1;
+      if (x > 290) break;
+    }
+    x += 3;
+  });
+  y += 62;
+  ctx.font = "12px Arial";
+  ctx.fillText(value, 160, y + 10); y += 16;
+  if (item && lines.indexOf("price") >= 0) { ctx.fillText("Sale Price: " + fmtRs(item.salePricePaisa), 160, y + 10); y += 16; }
+  if (item && lines.indexOf("mrp") >= 0 && item.mrpPaisa) { ctx.fillText("MRP: " + fmtRs(item.mrpPaisa), 160, y + 10); }
+}
+["bcItem", "bcValue"].forEach(function (id) {
+  $(id).addEventListener("input", drawBarcode);
+  $(id).addEventListener("change", drawBarcode);
+});
+document.querySelectorAll(".bc-line").forEach(function (cb) {
+  cb.addEventListener("change", drawBarcode);
+});
+$("btnBcPrint").addEventListener("click", function () {
+  var w = window.open("", "_blank", "width=400,height=300");
+  if (!w) { setMsg("appMsg", "Allow popups to print the label.", true); return; }
+  w.document.write('<img src="' + $("bcCanvas").toDataURL("image/png") + '" style="width:320px">');
+  w.document.close();
+  w.focus();
+  setTimeout(function () { w.print(); }, 300);
+});
+
+/* -------------------------------------------------- grow your business */
+var POSTERS = {
+  greetings: [
+    { title: "Eid Mubarak!", sub: "Warm wishes to you and your family.", cta: "Visit our shop today", bg: "#0f766e" },
+    { title: "Jummah Mubarak", sub: "May your Friday be blessed.", cta: "Open all week", bg: "#1d4ed8" },
+    { title: "Ramzan Mubarak", sub: "Special Ramzan offers inside.", cta: "Shop now", bg: "#7c3aed" },
+    { title: "Happy New Year", sub: "New year, new deals for your home.", cta: "Start shopping", bg: "#b45309" },
+  ],
+  trending: [
+    { title: "Biggest Sale of the Season!", sub: "Limited time — while stock lasts.", cta: "Order on WhatsApp", bg: "#dc2626" },
+    { title: "New Stock Arrived", sub: "Fresh items just landed in the shop.", cta: "See what's new", bg: "#0369a1" },
+    { title: "Deal of the Day", sub: "One day only. Don't miss it.", cta: "Grab the deal", bg: "#be185d" },
+  ],
+  business: [
+    { title: "We Are Open!", sub: "Quality products, honest prices, every day.", cta: "Visit us today", bg: "#065f46" },
+    { title: "Home Delivery Available", sub: "Order on WhatsApp and get it at your door.", cta: "Order now", bg: "#0e7490" },
+    { title: "Easy Instalments", sub: "Take it home today, pay in easy parts.", cta: "Ask in shop", bg: "#854d0e" },
+  ],
+  offers: [
+    { title: "Buy 1 Get 1 Free", sub: "On selected items. Terms apply.", cta: "Shop the offer", bg: "#c2410c" },
+    { title: "Flat 20% Off", sub: "This week only, on everything in store.", cta: "Save today", bg: "#15803d" },
+    { title: "Festival Offer", sub: "Special prices for the festive season.", cta: "Don't miss out", bg: "#a21caf" },
+  ],
+};
+var growTab = "greetings";
+document.querySelectorAll("[data-growtab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    growTab = b.getAttribute("data-growtab");
+    document.querySelectorAll("[data-growtab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    loadGrow();
+  });
+});
+function loadGrow() {
+  $("posterGrid").innerHTML = "";
+  (POSTERS[growTab] || []).forEach(function (p, idx) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "poster";
+    btn.style.background = "linear-gradient(150deg, " + p.bg + ", #111827)";
+    btn.innerHTML = '<div><div class="poster-title">' + esc(p.title) + '</div>' +
+      '<div class="poster-sub">' + esc(p.sub) + "</div></div>" +
+      '<span class="poster-cta">' + esc(p.cta) + "</span>";
+    btn.addEventListener("click", function () { openPosterDialog(p); });
+    $("posterGrid").appendChild(btn);
+  });
+}
+function posterCanvas(p, extraText) {
+  var canvas = document.createElement("canvas");
+  canvas.width = 720; canvas.height = 900;
+  var ctx = canvas.getContext("2d");
+  var grad = ctx.createLinearGradient(0, 0, 720, 900);
+  grad.addColorStop(0, p.bg); grad.addColorStop(1, "#111827");
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, 720, 900);
+  ctx.fillStyle = "rgba(255,255,255,.14)";
+  ctx.beginPath(); ctx.arc(620, 120, 190, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(60, 820, 150, 0, 7); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+  ctx.font = "800 64px Arial";
+  wrapText(ctx, p.title, 360, 300, 620, 76);
+  ctx.font = "30px Arial";
+  wrapText(ctx, p.sub, 360, 470, 560, 42);
+  ctx.font = "700 30px Arial";
+  ctx.fillText(p.cta, 360, 600);
+  var biz = (me && me.business) || {};
+  ctx.font = "800 36px Arial";
+  ctx.fillText((biz.name || "Your Business").slice(0, 34), 360, 730);
+  ctx.font = "26px Arial";
+  var contact = [biz.phone || "", biz.address || ""].filter(Boolean).join(" · ");
+  wrapText(ctx, contact.slice(0, 60), 360, 775, 620, 34);
+  if (extraText) {
+    ctx.font = "italic 26px Arial";
+    wrapText(ctx, extraText.slice(0, 90), 360, 845, 620, 34);
+  }
+  return canvas;
+}
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  var words = String(text || "").split(" ");
+  var line = "", yy = y;
+  words.forEach(function (word) {
+    var test = line ? line + " " + word : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, yy); line = word; yy += lineHeight;
+    } else line = test;
+  });
+  if (line) ctx.fillText(line, x, yy);
+  return yy;
+}
+function openPosterDialog(p) {
+  var html = '<div style="text-align:center; margin-bottom:10px">' +
+    '<canvas id="posterCanvas" width="360" height="450" style="max-width:100%; border-radius:12px"></canvas></div>' +
+    '<label>Additional text <input id="posterExtra" type="text" placeholder="e.g. Offer ends Sunday"></label>' +
+    '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">' +
+    '<button class="btn btn-primary" id="btnPosterDownload" type="button">Download Image</button>' +
+    '<button class="btn" id="btnPosterShare" type="button">Share on WhatsApp</button></div>' +
+    '<p class="note">Your business name and contact are printed on the poster automatically.</p>';
+  openDialog(p.title, html);
+  function redraw() {
+    var big = posterCanvas(p, $("posterExtra").value);
+    var small = $("posterCanvas").getContext("2d");
+    small.drawImage(big, 0, 0, 360, 450);
+  }
+  redraw();
+  $("posterExtra").addEventListener("input", redraw);
+  $("btnPosterDownload").addEventListener("click", function () {
+    var a = document.createElement("a");
+    a.href = posterCanvas(p, $("posterExtra").value).toDataURL("image/png");
+    a.download = "qbill-poster.png";
+    a.click();
+  });
+  $("btnPosterShare").addEventListener("click", function () {
+    var text = p.title + " — " + p.sub + " " +
+      (((me && me.business) || {}).name || "") + " " + (((me && me.business) || {}).phone || "");
+    window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+  });
+}
+
+/* -------------------------------------------------- invoice preview -- */
+function openPreview(inv) {
+  if (!inv) { go("dashboard"); return; }
+  if (QB.settings && QB.settings.do_not_show_invoice_preview && !$("previewNoShow").checked) {
+    // honour the setting: skip straight back to the dashboard
+    setMsg("appMsg", DOC_META[inv.type].title + " " + inv.invoiceNo + " saved.");
+    go("dashboard");
+    return;
+  }
+  lastSavedInvoice = inv;
+  var themeSel = $("previewTheme");
+  themeSel.innerHTML = PRINT_THEMES.map(function (t) { return "<option>" + esc(t) + "</option>"; }).join("");
+  themeSel.value = (QB.settings && QB.settings.print_theme) || "Tally Theme";
+  $("previewColor").value = (QB.settings && QB.settings.print_color) || "#f26522";
+  renderPreviewBody();
+  document.querySelectorAll(".screen").forEach(function (s) { s.classList.add("hidden"); });
+  $("screen-preview").classList.remove("hidden");
+  currentScreen = "preview";
+  navKey = "quickbilling";
+  $("viewTitle").textContent = "Invoice Preview";
+  setActiveNav();
+}
+function renderPreviewBody() {
+  var inv = lastSavedInvoice;
+  if (!inv) return;
+  var s = QB.settings || {};
+  var color = $("previewColor").value || s.print_color || "#f26522";
+  var parties = ((cacheGet("parties") || {}).parties) || [];
+  var party = parties.filter(function (p) { return p.id === inv.partyId; })[0];
+  var rows = (inv.lines || []).map(function (l) {
+    var free = l.freeQty ? " + " + l.freeQty + " free" : "";
+    var item = l.itemId ? itemById(l.itemId) : null;
+    var lname = (item && item.name) || l.description || "Item";
+    return "<tr><td>" + esc(lname) + free + "</td><td>" + l.qty +
+      "</td><td>" + fmtRs(l.ratePaisa) + "</td><td>" + fmtRs((l.amountPaisa != null ? l.amountPaisa : l.qty * l.ratePaisa)) + "</td></tr>";
+  }).join("");
+  var saved = (inv.discountPaisa || 0) + (inv.loyaltyRedeemedPaisa || 0);
+  $("previewBody").innerHTML =
+    '<div style="border-top:8px solid ' + color + '; padding-top:10px">' +
+    "<strong>" + esc((me && me.business && me.business.name) || "Your Business") + "</strong>" +
+    '<div style="text-align:center; font-weight:800; font-size:19px; color:' + color + '">' +
+    esc(((s.print_names || {})[inv.type]) || DOC_META[inv.type].title.toUpperCase()) + "</div>" +
+    "<p>" + esc(inv.invoiceNo) + " · " + esc((inv.createdAt || "").slice(0, 10)) +
+    (party ? " · " + esc(party.name) : " · Cash") + "</p>" +
+    "<table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>" +
+    rows + "</tbody></table>" +
+    '<div style="text-align:right; margin-top:8px">Total: <strong>' + fmtRs(inv.totalPaisa) + "</strong><br>" +
+    "Paid: " + fmtRs(inv.paidPaisa || 0) + " · Balance: " + fmtRs(inv.balancePaisa || 0) +
+    (saved > 0 ? "<br>You Saved: " + fmtRs(saved) : "") +
+    (inv.loyaltyPointsEarned ? "<br>Loyalty points earned: " + inv.loyaltyPointsEarned : "") +
+    "</div></div>";
+}
+$("previewTheme").addEventListener("change", function () {
+  saveSettings({ print_theme: $("previewTheme").value });
+  renderPreviewBody();
+});
+$("previewColor").addEventListener("input", function () {
+  saveSettings({ print_color: $("previewColor").value });
+  renderPreviewBody();
+});
+$("previewNoShow").addEventListener("change", function () {
+  if ($("previewNoShow").checked) {
+    saveSettings({ do_not_show_invoice_preview: true }).then(function () {
+      setMsg("appMsg", "Invoice Preview will not open after saving. Turn it back on in Settings > TRANSACTION.");
+    });
+  }
+});
+$("btnPreviewPdf").addEventListener("click", function () {
+  if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, false);
+});
+$("btnPreviewThermal").addEventListener("click", function () {
+  if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, true);
+});
+$("btnPreviewPrint").addEventListener("click", function () { window.print(); });
+$("btnPreviewWhats").addEventListener("click", function () {
+  if (lastSavedInvoice) shareInvoiceWhatsApp(lastSavedInvoice);
+});
+$("btnPreviewBack").addEventListener("click", function () { go("dashboard"); });
+$("btnPreviewGmail").addEventListener("click", function () {
+  if (!lastSavedInvoice) return;
+  var inv = lastSavedInvoice;
+  var subject = encodeURIComponent(DOC_META[inv.type].title + " " + inv.invoiceNo);
+  var body = encodeURIComponent("Your bill of " + fmtRs(inv.totalPaisa) + " is ready. PDF: " +
+    location.origin + "/api/invoices/" + inv.id + "/pdf");
+  window.open("https://mail.google.com/mail/?view=cm&su=" + subject + "&body=" + body, "_blank");
+});
+$("btnPreviewMsg").addEventListener("click", function () {
+  if (!lastSavedInvoice) return;
+  var inv = lastSavedInvoice;
+  var text = DOC_META[inv.type].title + " " + inv.invoiceNo + " of " + fmtRs(inv.totalPaisa) +
+    ". PDF: " + location.origin + "/api/invoices/" + inv.id + "/pdf";
+  if (navigator.share) navigator.share({ text: text }).catch(function () {});
+  else window.open("sms:?&body=" + encodeURIComponent(text), "_blank");
+});

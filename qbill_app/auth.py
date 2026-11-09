@@ -117,8 +117,8 @@ def load_session():
     th = token_hash(header[len("Bearer "):].strip())
     row = db.query_one(
         "SELECT s.id AS session_id, s.account_id, s.unlocked, s.otp_fresh, "
-        "s.expires_at, a.email, a.is_owner, a.approved, a.reject_reason, "
-        "a.pw_salt, a.pw_hash "
+        "s.expires_at, s.active_business_id, a.email, a.is_owner, a.approved, "
+        "a.reject_reason, a.pw_salt, a.pw_hash "
         "FROM sessions s JOIN site_accounts a ON a.id = s.account_id "
         "WHERE s.token_hash = ?",
         (th,),
@@ -511,6 +511,15 @@ def logout():
 @bp.get("/me")
 @require_session
 def me():
+    from .team import memberships_for
+
+    memberships = memberships_for(g.session["account_id"])
+    active_id = g.session.get("active_business_id")
+    active_role = None
+    if active_id:
+        for membership in memberships:
+            if membership["businessId"] == active_id:
+                active_role = membership["role"]
     return jsonify(
         ok=True,
         email=g.session["email"],
@@ -520,4 +529,7 @@ def me():
         hasAppPassword=g.session["pw_hash"] is not None,
         unlocked=bool(g.session["unlocked"]),
         otpFresh=bool(g.session["otp_fresh"]),
+        memberOf=memberships,
+        activeBusinessId=active_id,
+        activeRole=active_role,
     )
