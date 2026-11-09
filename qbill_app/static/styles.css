@@ -13,7 +13,9 @@ body {
   display: flex; align-items: center; gap: 10px;
   background: #0a2540; color: #fff; padding: 10px 14px;
 }
-.brand { font-size: 20px; font-weight: 800; letter-spacing: .3px; }
+.brand { font-size: 20px; font-weight: 800; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+.brand-mark { width: 28px; height: 28px; border-radius: 7px; }
+.auth-logo { display: block; width: 180px; max-width: 72%; margin: 2px auto 8px; }
 .top-actions { margin-left: auto; display: flex; gap: 6px; }
 .pill {
   font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
