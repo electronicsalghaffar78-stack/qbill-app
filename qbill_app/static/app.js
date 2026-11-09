@@ -310,12 +310,14 @@ function clientTotals() {
 /* All sign-in happens in ONE popup (authModal) over a blurred backdrop.
    The front door is the CLASSIC login (stepLogin): email + password +
    "Remember me", no email code needed day to day. Around it:
-   - "Create an account" (stepSignup): email -> code -> create password.
+   - "Create an account" (stepOne): ONE single form stacked top to
+     bottom — email, the emailed code, a created password, "Log in";
+     completing it opens the app directly.
    - "Forgot your password?" (stepForgot): email -> code -> stepReset,
      a NEW password for the SAME account (needs an OTP-fresh session).
-   - "Email me a login code instead" (stepEmail): the original code
-     route; after the code, a locked session lands on stepWelcome
-     (welcome back) to finish with the password.
+   Owner's rule: an emailed code appears ONLY in the create-account
+   form and the forgot route — never as a third login route (the old
+   stepEmail panel stays in the markup, unlinked).
    The app behind the popup is only shown once the session is unlocked. */
 var me = null;
 /* Set when the user came through a "Forgot your password?" route: after
@@ -328,7 +330,7 @@ var forgotIntent = false;
 var codeContext = "codesignin";
 var otpEmail = "";
 var codeFromStep = "stepLogin";
-var AUTH_STEPS = ["stepLogin", "stepEmail", "stepSignup", "stepForgot",
+var AUTH_STEPS = ["stepOne", "stepLogin", "stepEmail", "stepSignup", "stepForgot",
   "stepCode", "stepCreate", "stepWelcome", "stepReset"];
 function showAuthStep(step) {
   $("appView").classList.add("hidden");
@@ -485,6 +487,80 @@ $("btnVerifyCode").addEventListener("click", function () {
   }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 
+/* ------------------------------------------------------- ONE form ---- */
+/* The create-an-account form (owner's design): ONE form stacked top
+   to bottom — email, the emailed code, a created password, "Log in".
+   Completing it chains verify-otp -> set-password and opens the app.
+   An email that already HAS a password never gets a new one here:
+   the just-created code session is logged out and the user is sent
+   to the classic login to use the password they already have. */
+$("btnOneSend").addEventListener("click", function () {
+  var email = $("oneEmail").value.trim();
+  if (!email) { setMsg("authMsg", "Please enter your email first.", true); return; }
+  setMsg("authMsg", "Sending code…");
+  apiPost("/api/auth/request-otp", { email: email }).then(function () {
+    $("btnOneSend").textContent = "Resend code";
+    setMsg("authMsg", "Code sent — check your email. The code is valid for 10 minutes.");
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
+});
+$("btnOneLogin").addEventListener("click", function () {
+  var email = $("oneEmail").value.trim();
+  var code = $("oneCode").value.trim();
+  var pw = $("onePassword").value;
+  var at = email.indexOf("@");
+  // Check on this device FIRST, with clear messages — a bad entry
+  // must never silently fail against the server.
+  if (!email || at < 1 || email.lastIndexOf(".") < at + 2) {
+    setMsg("authMsg", "Please enter a valid email address.", true); return;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    setMsg("authMsg", "Please enter the 6-digit code sent to your email.", true); return;
+  }
+  if (pw.length < 4) {
+    setMsg("authMsg", "Password must be at least 4 characters.", true); return;
+  }
+  setMsg("authMsg", "Opening QBill…");
+  // A dedicated fetch (not apiPost): a failed verify must show its
+  // message here, and its (non-)token must never be stored or treated
+  // as a dead session by handleAuthFailure.
+  fetch("/api/auth/verify-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email, code: code })
+  }).then(function (resp) {
+    return resp.json().catch(function () { return {}; }).then(function (body) {
+      if (!resp.ok) throw new Error(body.error || ("Could not check the code (" + resp.status + ")"));
+      return body;
+    });
+  }).then(function (body) {
+    if (body.hasAppPassword) {
+      // This email already has an account and a password: end the
+      // code session just created and route to the classic login.
+      // set-password is NEVER called on this path.
+      return fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + body.token },
+        body: "{}"
+      }).catch(function () {}).then(function () {
+        setToken(null);
+        me = null;
+        $("liEmail").value = email;
+        showAuthStep("stepLogin");
+        setMsg("authMsg", "This email already has an account and a password. Please log in with your password.");
+      });
+    }
+    setToken(body.token); // code sign-ins stay remembered on this device
+    return apiPost("/api/auth/set-password", { password: pw }).then(function () {
+      $("onePassword").value = "";
+      $("oneCode").value = "";
+      forgotIntent = false;
+      refreshMe(); // set-password unlocked this session: the app opens
+    });
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
+});
+$("btnOneHavePw").addEventListener("click", function () { showAuthStep("stepLogin"); });
+$("btnOneForgot").addEventListener("click", function () { showAuthStep("stepForgot"); });
+
 /* ------------------------------------------------ classic login form -- */
 $("loginForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
@@ -512,8 +588,7 @@ $("loginForm").addEventListener("submit", function (ev) {
   }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 $("btnLoginForgot").addEventListener("click", function () { showAuthStep("stepForgot"); });
-$("btnLoginSignup").addEventListener("click", function () { showAuthStep("stepSignup"); });
-$("btnCodeInstead").addEventListener("click", function () { showAuthStep("stepEmail"); });
+$("btnLoginSignup").addEventListener("click", function () { showAuthStep("stepOne"); });
 $("btnEmailBack").addEventListener("click", function () { showAuthStep("stepLogin"); });
 $("btnSignupBack").addEventListener("click", function () { showAuthStep("stepLogin"); });
 $("btnForgotBack").addEventListener("click", function () { showAuthStep("stepLogin"); });

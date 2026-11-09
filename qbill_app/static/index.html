@@ -179,6 +179,31 @@
   <div class="modal-box card auth-box">
     <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
 
+    <!-- STEP: ONE form — create an account (email -> code -> create password -> Log in) -->
+    <div id="stepOne" class="auth-step hidden">
+      <h1>Welcome to QBill</h1>
+      <p class="auth-sub">Billing software for your shop.</p>
+      <label>Your email
+        <input id="oneEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="btnOneSend" class="btn btn-block" type="button">Send code</button>
+      <label>Login code
+        <input id="oneCode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code">
+      </label>
+      <label>Create a password
+        <span class="pw-wrap">
+          <input id="onePassword" type="password" autocapitalize="none" autocomplete="new-password">
+          <button class="pw-toggle" type="button" data-toggle="onePassword">Show</button>
+        </span>
+      </label>
+      <p class="note">At least 4 characters.</p>
+      <button id="btnOneLogin" class="btn btn-primary btn-block" type="button">Log in</button>
+      <div style="display:flex; justify-content:space-between">
+        <button id="btnOneHavePw" class="btn btn-link" type="button">I already have a password — Log in</button>
+        <button id="btnOneForgot" class="btn btn-link" type="button">Forgot your password?</button>
+      </div>
+    </div>
+
     <!-- STEP: classic login (the default front door) -->
     <div id="stepLogin" class="auth-step">
       <h1>Log in to QBill</h1>
@@ -201,7 +226,6 @@
       </form>
       <button id="btnLoginForgot" class="btn btn-link btn-block" type="button">Forgot your password?</button>
       <button id="btnLoginSignup" class="btn btn-link btn-block" type="button">Create an account</button>
-      <button id="btnCodeInstead" class="btn btn-link btn-block" type="button">Email me a login code instead</button>
     </div>
 
     <!-- STEP: email (sign in with an emailed code instead of a password) -->

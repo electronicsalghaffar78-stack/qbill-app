@@ -899,6 +899,28 @@ check("frontend: classic login panels served (stepLogin/stepSignup/stepForgot + 
       and "Remember me" in html)
 check("frontend: app.js posts to /api/auth/login", "/api/auth/login" in js)
 
+# "Create an account" is ONE single form (owner's design): email,
+# the emailed code, a created password, then "Log in" — stacked in
+# that exact order inside the stepOne panel. The signed-out default
+# stays the classic login, and an emailed code is never offered as
+# a third login route (owner's rule).
+one_at = html.find('id="stepOne"')
+login_at = html.find('id="stepLogin"')
+one_block = html[one_at:login_at] if 0 <= one_at < login_at else ""
+check("frontend: ONE-form panel served (stepOne with a Send code button)",
+      bool(one_block) and 'id="btnOneSend"' in one_block and "Send code" in one_block)
+_i_email = one_block.find('id="oneEmail"')
+_i_code = one_block.find('id="oneCode"')
+_i_pw = one_block.find('id="onePassword"')
+_i_login = one_block.find('id="btnOneLogin"')
+check("frontend: stepOne stacks email -> code -> create password -> Log in, in that order",
+      0 <= _i_email < _i_code < _i_pw < _i_login)
+_sa = js.find("function showAuth()")
+check("frontend: app.js makes stepLogin the signed-out default",
+      _sa >= 0 and 'showAuthStep("stepLogin")' in js[_sa:_sa + 200])
+check("frontend: no 'login code instead' third route on the login panel",
+      'id="btnCodeInstead"' not in html and "Email me a login code instead" not in html)
+
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
 r = client.get("/api/auth/me", headers=H(owner_token))
