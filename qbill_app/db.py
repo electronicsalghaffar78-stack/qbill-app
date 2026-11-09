@@ -137,6 +137,7 @@ def _ddl():
              token_hash TEXT NOT NULL UNIQUE,
              account_id INTEGER NOT NULL REFERENCES site_accounts(id),
              unlocked INTEGER NOT NULL DEFAULT 0,
+             otp_fresh INTEGER NOT NULL DEFAULT 0,
              expires_at TEXT NOT NULL,
              created_at TEXT NOT NULL
            )""",
@@ -243,6 +244,7 @@ _ADDED_COLUMNS = [
     ("expenses", "client_ref", "TEXT"),
     ("auto_backups", "emailed", "INTEGER NOT NULL DEFAULT 0"),
     ("auto_backups", "client_ref", "TEXT"),
+    ("sessions", "otp_fresh", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

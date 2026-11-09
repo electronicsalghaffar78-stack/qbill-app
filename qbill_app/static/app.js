@@ -20,9 +20,40 @@ function lsSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
 }
 function lsDel(key) { try { localStorage.removeItem(key); } catch (e) {} }
+function ssGet(key, fallback) {
+  try {
+    var raw = sessionStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (e) { return fallback; }
+}
+function ssSet(key, value) {
+  try { sessionStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+}
+function ssDel(key) { try { sessionStorage.removeItem(key); } catch (e) {} }
 
-var token = function () { return lsGet("qbill_token", null); };
-function setToken(t) { if (t) lsSet("qbill_token", t); else lsDel("qbill_token"); }
+/* The session token lives in localStorage for "Remember me" logins and
+   OTP sign-ins (it survives a browser restart), or in sessionStorage
+   for a login WITHOUT "Remember me" (gone when the browser closes).
+   Lookup checks localStorage first, then sessionStorage. The
+   qbill_token_temp flag marks a sessionStorage token so the pagehide
+   handler can lock it: closing the page then asks the password again
+   when this tab reopens. */
+var TOKEN_KEY = "qbill_token";
+var token = function () {
+  var t = lsGet(TOKEN_KEY, null);
+  return t !== null ? t : ssGet(TOKEN_KEY, null);
+};
+function setToken(t, remember) {
+  if (!t) {
+    lsDel(TOKEN_KEY); ssDel(TOKEN_KEY); lsDel("qbill_token_temp");
+    return;
+  }
+  if (remember === false) {
+    ssSet(TOKEN_KEY, t); lsDel(TOKEN_KEY); lsSet("qbill_token_temp", true);
+  } else {
+    lsSet(TOKEN_KEY, t); ssDel(TOKEN_KEY); lsDel("qbill_token_temp");
+  }
+}
 function outbox() { return lsGet("qbill_outbox", []); }
 function setOutbox(q) { lsSet("qbill_outbox", q); updateSyncPill(); }
 function localBackups() { return lsGet("qbill_local_backups", []); }
@@ -69,7 +100,10 @@ function authHeaders() {
 }
 
 function handleAuthFailure(status, body) {
-  if (status === 401) { setToken(null); showAuth(); return true; }
+  // Only a dead/expired session ("Sign-in required.") ends the local
+  // session. A 401 that means "wrong password" (verify-password,
+  // change-password) must surface its message and keep the session.
+  if (status === 401 && body && body.error === "Sign-in required.") { setToken(null); showAuth(); return true; }
   if (status === 403 && body && body.code === "locked") { showLock(); return true; }
   return false;
 }
@@ -273,26 +307,58 @@ function clientTotals() {
 }
 
 /* --------------------------------------------------------------- auth -- */
+/* All sign-in happens in ONE popup (authModal) over a blurred backdrop.
+   The front door is the CLASSIC login (stepLogin): email + password +
+   "Remember me", no email code needed day to day. Around it:
+   - "Create an account" (stepSignup): email -> code -> create password.
+   - "Forgot your password?" (stepForgot): email -> code -> stepReset,
+     a NEW password for the SAME account (needs an OTP-fresh session).
+   - "Email me a login code instead" (stepEmail): the original code
+     route; after the code, a locked session lands on stepWelcome
+     (welcome back) to finish with the password.
+   The app behind the popup is only shown once the session is unlocked. */
 var me = null;
-function showAuth() {
-  me = null;
-  $("authView").classList.remove("hidden");
-  $("lockView").classList.add("hidden");
+/* Set when the user came through a "Forgot your password?" route: after
+   the fresh email code verifies, route to the create-a-new-password
+   step instead of the normal welcome-back step. */
+var forgotIntent = false;
+/* Which flow the code step belongs to ("signup" | "forgot" |
+   "codesignin"), the email the code was sent to, and the panel the
+   code step's back link returns to. */
+var codeContext = "codesignin";
+var otpEmail = "";
+var codeFromStep = "stepLogin";
+var AUTH_STEPS = ["stepLogin", "stepEmail", "stepSignup", "stepForgot",
+  "stepCode", "stepCreate", "stepWelcome", "stepReset"];
+function showAuthStep(step) {
   $("appView").classList.add("hidden");
   $("btnLock").classList.add("hidden");
-  $("btnLogout").classList.add("hidden");
-  $("pwModal").classList.add("hidden");
+  // A session exists on the password steps, so Log out stays available.
+  $("btnLogout").classList.toggle("hidden",
+    step !== "stepCreate" && step !== "stepWelcome" && step !== "stepReset");
+  if (step === "stepWelcome") {
+    // Just signed in with an email code (OTP-fresh session): the user
+    // may replace a forgotten password right away. A plain locked
+    // session instead offers the sign-in-again "Forgot" route.
+    var fresh = !!(me && me.otpFresh);
+    $("btnWelcomeReset").classList.toggle("hidden", !fresh);
+    $("btnForgotPw").classList.toggle("hidden", fresh);
+  }
+  $("authModal").classList.remove("hidden");
+  AUTH_STEPS.forEach(function (s) { $(s).classList.toggle("hidden", s !== step); });
+  setMsg("authMsg", "");
+}
+function showAuth() {
+  // No session on this device: the classic login is the front door.
+  me = null;
+  showAuthStep("stepLogin");
 }
 function showLock() {
-  $("authView").classList.add("hidden");
-  $("lockView").classList.remove("hidden");
-  $("appView").classList.add("hidden");
-  $("btnLock").classList.add("hidden");
-  $("btnLogout").classList.remove("hidden");
+  // Session exists but is locked: ask for the password, never a dead end.
+  showAuthStep("stepWelcome");
 }
 function showApp() {
-  $("authView").classList.add("hidden");
-  $("lockView").classList.add("hidden");
+  $("authModal").classList.add("hidden");
   $("appView").classList.remove("hidden");
   $("btnLock").classList.remove("hidden");
   $("btnLogout").classList.remove("hidden");
@@ -310,11 +376,16 @@ function refreshMe() {
     if (!body) return;
     me = body;
     if (!body.hasAppPassword) {
-      showLock();
-      $("pwModal").classList.remove("hidden");
+      forgotIntent = false; // a first password is created, never "reset"
+      showAuthStep("stepCreate"); // first time: create a password, NOT a lock screen
     } else if (!body.unlocked) {
-      showLock();
+      if (forgotIntent) {
+        showAuthStep("stepReset"); // forgot it: the fresh code proved the email
+      } else {
+        showAuthStep("stepWelcome");
+      }
     } else {
+      forgotIntent = false;
       showApp();
     }
   }).catch(function () {
@@ -324,41 +395,214 @@ function refreshMe() {
   });
 }
 
-$("btnSendCode").addEventListener("click", function () {
-  var email = $("loginEmail").value.trim();
+/* Show/Hide toggles on the password fields. */
+document.querySelectorAll(".pw-toggle").forEach(function (btn) {
+  btn.addEventListener("click", function (ev) {
+    ev.preventDefault();
+    var input = $(btn.getAttribute("data-toggle"));
+    if (!input) return;
+    var show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "Hide" : "Show";
+    input.focus();
+  });
+});
+
+/* Ask the server for an email code and move to the code step, keeping
+   track of which flow asked (signup / forgot / codesignin) so the code
+   step's wording and the routing after the code fit the flow. */
+function requestCode(email, context, fromStep) {
+  codeContext = context;
+  otpEmail = email;
+  codeFromStep = fromStep;
   setMsg("authMsg", "Sending code…");
-  apiPost("/api/auth/request-otp", { email: email }).then(function () {
+  return apiPost("/api/auth/request-otp", { email: email }).then(function () {
+    updateCodeText();
+    showAuthStep("stepCode");
     setMsg("authMsg", "Code sent. Check your email inbox.");
-    $("loginStep1").classList.add("hidden");
-    $("loginStep2").classList.remove("hidden");
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
+}
+function updateCodeText() {
+  $("codeSentTo").textContent = otpEmail;
+  if (codeContext === "signup") {
+    $("codeHeading").textContent = "Verify your email";
+    $("codeSubLead").textContent = "Enter the code we sent to";
+    $("codeSubTail").textContent = " to verify it is yours.";
+  } else if (codeContext === "forgot") {
+    $("codeHeading").textContent = "Enter your login code";
+    $("codeSubLead").textContent = "We sent a 6-digit code to";
+    $("codeSubTail").textContent = ". After the code, you can create a new password.";
+  } else {
+    $("codeHeading").textContent = "Enter your login code";
+    $("codeSubLead").textContent = "We sent a 6-digit code to";
+    $("codeSubTail").textContent = ". Please enter it below.";
+  }
+}
+function sendCode() {
+  // stepEmail's Continue: sign in with an emailed code instead.
+  requestCode($("loginEmail").value.trim(), "codesignin", "stepEmail");
+}
+$("btnSendCode").addEventListener("click", sendCode);
+$("btnResendCode").addEventListener("click", function () {
+  var email = otpEmail || $("loginEmail").value.trim();
+  setMsg("authMsg", "Sending a new code…");
+  apiPost("/api/auth/request-otp", { email: email }).then(function () {
+    setMsg("authMsg", "A new code was sent. Check your email inbox.");
   }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 $("btnBackToEmail").addEventListener("click", function () {
-  $("loginStep1").classList.remove("hidden");
-  $("loginStep2").classList.add("hidden");
+  // Back to whichever panel asked for the code (signup/forgot/email).
+  showAuthStep(codeFromStep);
 });
+/* After a code verifies, route by the flow that asked for it. */
+function routeAfterVerify(body) {
+  if (codeContext === "signup" && body.hasAppPassword) {
+    // This email already has an account: the code sign-in is dropped
+    // and the user logs in with the password, like everyone else.
+    forgotIntent = false;
+    apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
+      setToken(null);
+      me = null;
+      $("liEmail").value = otpEmail;
+      showAuthStep("stepLogin");
+      setMsg("authMsg", "This email already has an account. Please log in.");
+    });
+    return;
+  }
+  // forgot: refreshMe lands on the reset step (or the create step when
+  // the account never had a password). signup/codesignin: refreshMe
+  // routes create (no password) / welcome (locked) / app (unlocked).
+  forgotIntent = codeContext === "forgot";
+  refreshMe();
+}
 $("btnVerifyCode").addEventListener("click", function () {
-  var email = $("loginEmail").value.trim();
+  var email = otpEmail || $("loginEmail").value.trim();
   var code = $("loginCode").value.trim();
-  setMsg("authMsg", "Verifying…");
+  setMsg("authMsg", "Checking your code…");
   apiPost("/api/auth/verify-otp", { email: email, code: code }).then(function (body) {
-    setToken(body.token);
-    setMsg("authMsg", "");
-    refreshMe();
+    setToken(body.token); // code sign-ins stay remembered on this device
+    routeAfterVerify(body);
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
+});
+
+/* ------------------------------------------------ classic login form -- */
+$("loginForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var remember = $("liRemember").checked;
+  setMsg("authMsg", "Logging in…");
+  // A dedicated fetch (not apiPost): a 401 here is the normal "wrong
+  // email or password" answer whose message the user must see — not a
+  // dead session for handleAuthFailure to clean up.
+  fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: $("liEmail").value.trim(),
+      password: $("liPassword").value,
+      remember: remember
+    })
+  }).then(function (resp) {
+    return resp.json().catch(function () { return {}; }).then(function (body) {
+      if (!resp.ok) throw new Error(body.error || ("Log in failed (" + resp.status + ")"));
+      setToken(body.token, remember);
+      $("liPassword").value = "";
+      forgotIntent = false;
+      refreshMe(); // the login session starts unlocked: the app opens
+    });
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
+});
+$("btnLoginForgot").addEventListener("click", function () { showAuthStep("stepForgot"); });
+$("btnLoginSignup").addEventListener("click", function () { showAuthStep("stepSignup"); });
+$("btnCodeInstead").addEventListener("click", function () { showAuthStep("stepEmail"); });
+$("btnEmailBack").addEventListener("click", function () { showAuthStep("stepLogin"); });
+$("btnSignupBack").addEventListener("click", function () { showAuthStep("stepLogin"); });
+$("btnForgotBack").addEventListener("click", function () { showAuthStep("stepLogin"); });
+$("btnSignupContinue").addEventListener("click", function () {
+  forgotIntent = false;
+  requestCode($("suEmail").value.trim(), "signup", "stepSignup");
+});
+$("btnForgotContinue").addEventListener("click", function () {
+  var email = $("fgEmail").value.trim();
+  forgotIntent = true;
+  if (token()) {
+    // A locked session may still be signed in on this device: end it
+    // first — a password reset must start from the email code alone.
+    apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
+      setToken(null);
+      me = null;
+      requestCode(email, "forgot", "stepForgot");
+    });
+  } else {
+    requestCode(email, "forgot", "stepForgot");
+  }
+});
+$("btnSetPassword").addEventListener("click", function () {
+  var pw = $("pwNew").value;
+  var confirm = $("pwConfirm").value;
+  // Check on this device FIRST, with a big clear message — a short or
+  // mistyped password must never silently fail against the server.
+  if (pw.length < 4) {
+    setMsg("authMsg", "Password must be at least 4 characters.", true);
+    return;
+  }
+  if (pw !== confirm) {
+    setMsg("authMsg", "The two passwords do not match. Please type the same password in both boxes.", true);
+    return;
+  }
+  setMsg("authMsg", "Saving your password…");
+  apiPost("/api/auth/set-password", { password: pw }).then(function () {
+    $("pwNew").value = "";
+    $("pwConfirm").value = "";
+    forgotIntent = false;
+    refreshMe(); // the server unlocked this session: the app opens
   }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 $("btnUnlock").addEventListener("click", function () {
+  setMsg("authMsg", "Opening QBill…");
   apiPost("/api/auth/verify-password", { password: $("lockPassword").value }).then(function () {
     $("lockPassword").value = "";
+    forgotIntent = false; // a normal login finished: intent is spent
     refreshMe();
-  }).catch(function (e) { setMsg("lockMsg", e.message, true); });
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
-$("btnSetPassword").addEventListener("click", function () {
-  apiPost("/api/auth/set-password", { password: $("pwNew").value }).then(function () {
-    $("pwNew").value = "";
-    $("pwModal").classList.add("hidden");
-    refreshMe();
-  }).catch(function (e) { setMsg("pwMsg", e.message, true); });
+$("btnForgotPw").addEventListener("click", function () {
+  // The forgot route starts at its own email-first panel; its Continue
+  // ends any current session before asking for the code.
+  if (me && me.email) $("fgEmail").value = me.email;
+  showAuthStep("stepForgot");
+});
+$("btnWelcomeOther").addEventListener("click", function () {
+  // Sign this device out completely and go back to the classic login.
+  apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
+    setToken(null);
+    forgotIntent = false;
+    showAuth();
+  });
+});
+$("btnWelcomeReset").addEventListener("click", function () {
+  // This session just proved the email with a fresh code, so a new
+  // password may be created right away (the server checks otp_fresh).
+  showAuthStep("stepReset");
+});
+$("btnResetPassword").addEventListener("click", function () {
+  var pw = $("pwResetNew").value;
+  var confirm = $("pwResetConfirm").value;
+  // Same on-device checks as the create step, before any API call.
+  if (pw.length < 4) {
+    setMsg("authMsg", "Password must be at least 4 characters.", true);
+    return;
+  }
+  if (pw !== confirm) {
+    setMsg("authMsg", "The two passwords do not match. Please type the same password in both boxes.", true);
+    return;
+  }
+  setMsg("authMsg", "Saving your new password…");
+  apiPost("/api/auth/reset-password", { password: pw }).then(function () {
+    $("pwResetNew").value = "";
+    $("pwResetConfirm").value = "";
+    forgotIntent = false;
+    refreshMe(); // reset unlocked this session: the app opens
+  }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 $("btnLock").addEventListener("click", function () {
   apiPost("/api/auth/lock", {}).then(function () { refreshMe(); })
@@ -367,6 +611,7 @@ $("btnLock").addEventListener("click", function () {
 $("btnLogout").addEventListener("click", function () {
   apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
     setToken(null);
+    forgotIntent = false;
     showAuth();
   });
 });
@@ -793,6 +1038,17 @@ $("btnMailTest").addEventListener("click", function () {
 });
 
 /* -------------------------------------------------------------- boot --- */
+/* A login WITHOUT "Remember me" ends when the page goes away: lock the
+   session (best effort, keepalive) so reopening this tab asks for the
+   password again. Remembered and code sign-ins stay open on the device. */
+window.addEventListener("pagehide", function () {
+  if (!token() || !lsGet("qbill_token_temp", false)) return;
+  try {
+    fetch("/api/auth/lock", {
+      method: "POST", headers: authHeaders(), body: "{}", keepalive: true
+    }).catch(function () {});
+  } catch (e) {}
+});
 window.addEventListener("online", function () { updateSyncPill(); syncNow(); });
 window.addEventListener("offline", updateSyncPill);
 document.addEventListener("visibilitychange", function () {

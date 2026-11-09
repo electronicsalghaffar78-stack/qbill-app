@@ -577,6 +577,327 @@ check(
     r_sw.status_code == 200 and r_mf.status_code == 200
     and r_js.status_code == 200 and len(r_js.get_data()) > 1000,
 )
+html = r.get_data(as_text=True)
+check(
+    "frontend: ONE auth popup (email/code/create/welcome/reset), old auth screens gone",
+    'id="authModal"' in html and 'id="stepEmail"' in html
+    and 'id="stepCode"' in html and 'id="stepCreate"' in html
+    and 'id="stepWelcome"' in html and 'id="stepReset"' in html
+    and 'id="btnWelcomeReset"' in html
+    and "Create a new password for billing software" in html
+    and 'id="authView"' not in html and 'id="lockView"' not in html
+    and 'id="pwModal"' not in html,
+)
+
+# ============ 12b. reported case: first-run password flow (owner) =======
+# Reported 2026-11-09 (4 failed phone attempts): after entering the email
+# code, setting his password of choice NEVER worked, and the app kept
+# landing on a "locked" screen where Unlock could never succeed because
+# no password existed. Cause: the old 6-character minimum silently
+# rejected his short password every time. Minimum is now 4; the exact
+# reported flow is exercised end to end here.
+email5 = "newshop@example.com"
+_, code5 = request_and_get_code(email5)
+r = client.post("/api/auth/verify-otp", json={"email": email5, "code": code5})
+new_token = r.get_json().get("token") if r.status_code == 200 else None
+me5 = client.get("/api/auth/me", headers=H(new_token)).get_json() if new_token else {}
+check(
+    "reported case: fresh account starts locked, no password set",
+    bool(new_token) and me5.get("hasAppPassword") is False
+    and me5.get("unlocked") is False,
+    json.dumps(me5),
+)
+r = client.get("/api/parties", headers=H(new_token))
+check(
+    "reported case: no-password session cannot use business data yet",
+    r.status_code == 403,
+)
+r = client.post("/api/auth/set-password", headers=H(new_token),
+                json={"password": "ab1"})
+check(
+    "password under 4 chars rejected with the clear error",
+    r.status_code == 400
+    and r.get_json().get("error") == "Password must be at least 4 characters.",
+    r.get_data(as_text=True),
+)
+r = client.post("/api/auth/set-password", headers=H(new_token),
+                json={"password": "ab12"})
+check(
+    "reported case FIXED: a 4-character password is now accepted",
+    r.status_code == 200, r.get_data(as_text=True),
+)
+me5 = client.get("/api/auth/me", headers=H(new_token)).get_json()
+r2 = client.get("/api/parties", headers=H(new_token))
+check(
+    "setting the password unlocks the app (business data opens)",
+    me5.get("hasAppPassword") is True and me5.get("unlocked") is True
+    and r2.status_code == 200,
+    json.dumps(me5),
+)
+client.post("/api/auth/lock", headers=H(new_token))
+r = client.get("/api/parties", headers=H(new_token))
+check("returning device: lock closes business data again",
+      r.status_code == 403)
+r = client.post("/api/auth/verify-password", headers=H(new_token),
+                json={"password": "zz99"})
+check("returning device: wrong password refused", r.status_code == 401)
+r = client.post("/api/auth/verify-password", headers=H(new_token),
+                json={"password": "ab12"})
+check("returning device: the same 4-char password reopens (no new OTP)",
+      r.status_code == 200)
+r = client.post("/api/auth/change-password", headers=H(new_token),
+                json={"oldPassword": "ab12", "newPassword": "xy9"})
+check(
+    "change-password also enforces the 4-char minimum clearly",
+    r.status_code == 400
+    and r.get_json().get("error") == "New password must be at least 4 characters.",
+    r.get_data(as_text=True),
+)
+r = client.post("/api/auth/change-password", headers=H(new_token),
+                json={"oldPassword": "ab12", "newPassword": "zz42"})
+check("change-password accepts a 4-character password",
+      r.status_code == 200, r.get_data(as_text=True))
+client.post("/api/auth/lock", headers=H(new_token))
+r = client.post("/api/auth/verify-password", headers=H(new_token),
+                json={"password": "zz42"})
+check("the changed 4-char password reopens after lock",
+      r.status_code == 200)
+
+# ============ 12c. forgot password: code -> NEW password -> same account =
+# Owner requirement 2026-11-09: a user who FORGETS the account password
+# gets back in with an email code and creates a NEW password; the SAME
+# account (all its data) opens. Before this fix, a fresh OTP session
+# still demanded the old, forgotten password — another dead end. Only a
+# session created by that fresh code verify (otp_fresh) may reset.
+email6 = "forgotshop@example.com"
+_, code6 = request_and_get_code(email6)
+r = client.post("/api/auth/verify-otp", json={"email": email6, "code": code6})
+forgot_a = r.get_json().get("token") if r.status_code == 200 else None
+me6 = client.get("/api/auth/me", headers=H(forgot_a)).get_json() if forgot_a else {}
+check(
+    "forgot flow: a fresh OTP session is marked otpFresh",
+    bool(forgot_a) and me6.get("otpFresh") is True,
+    json.dumps(me6),
+)
+r = client.post("/api/auth/set-password", headers=H(forgot_a),
+                json={"password": "oldpass1"})
+me6 = client.get("/api/auth/me", headers=H(forgot_a)).get_json()
+check(
+    "forgot flow: set-password clears otpFresh (session used normally)",
+    r.status_code == 200 and me6.get("otpFresh") is False,
+    r.get_data(as_text=True),
+)
+# Data on the account that must survive the reset:
+r = client.post("/api/parties", headers=H(forgot_a),
+                json={"name": "Forgot Test Party"})
+forgot_party_id = r.get_json()["party"]["id"] if r.status_code == 201 else None
+r = client.post("/api/invoices", headers=H(forgot_a), json={
+    "party_id": forgot_party_id,
+    "lines": [{"description": "Forgot test sale", "qty": 1, "rate_paisa": 12345}],
+})
+forgot_inv = r.get_json().get("invoice", {}) if r.status_code == 201 else {}
+check(
+    "forgot flow: account has data (party + invoice) before the reset",
+    forgot_party_id is not None and forgot_inv.get("totalPaisa") == 12345,
+    json.dumps(forgot_inv),
+)
+# A second device/session for the same account (the reset must kick it):
+_, code6b = request_and_get_code(email6)
+r = client.post("/api/auth/verify-otp", json={"email": email6, "code": code6b})
+forgot_b = r.get_json().get("token") if r.status_code == 200 else None
+check("forgot flow: second session exists before the reset", bool(forgot_b))
+# The owner "forgets" the password: log out device A, sign in by code.
+client.post("/api/auth/logout", headers=H(forgot_a))
+_, code6c = request_and_get_code(email6)
+r = client.post("/api/auth/verify-otp", json={"email": email6, "code": code6c})
+reset_body = r.get_json() if r.status_code == 200 else {}
+forgot_c = reset_body.get("token")
+me6 = client.get("/api/auth/me", headers=H(forgot_c)).get_json() if forgot_c else {}
+check(
+    "forgot flow: fresh code session still has the (forgotten) password, locked",
+    bool(forgot_c) and reset_body.get("hasAppPassword") is True
+    and me6.get("otpFresh") is True and me6.get("unlocked") is False,
+    json.dumps(me6),
+)
+r = client.post("/api/auth/reset-password", headers=H(forgot_c),
+                json={"password": "ab1"})
+check(
+    "forgot flow: reset enforces the 4-char minimum with the clear error",
+    r.status_code == 400
+    and r.get_json().get("error") == "Password must be at least 4 characters.",
+    r.get_data(as_text=True),
+)
+r = client.post("/api/auth/reset-password", headers=H(forgot_c),
+                json={"password": "newpass2"})
+me6 = client.get("/api/auth/me", headers=H(forgot_c)).get_json() if forgot_c else {}
+check(
+    "forgot flow FIXED: reset with a new password succeeds and opens the app",
+    r.status_code == 200 and me6.get("unlocked") is True
+    and me6.get("otpFresh") is False,
+    r.get_data(as_text=True),
+)
+r = client.get("/api/parties", headers=H(forgot_c))
+party_ids = ([p["id"] for p in r.get_json().get("parties", [])]
+             if r.status_code == 200 else [])
+r2 = client.get("/api/invoices/{}".format(forgot_inv.get("id")),
+                headers=H(forgot_c))
+check(
+    "forgot flow: SAME account — party and invoice survived the reset",
+    forgot_party_id in party_ids
+    and r2.status_code == 200
+    and r2.get_json()["invoice"]["totalPaisa"] == 12345,
+)
+r = client.get("/api/auth/me", headers=H(forgot_b))
+check(
+    "forgot flow: the reset signed out the account's OTHER session",
+    r.status_code == 401,
+)
+r = client.post("/api/auth/reset-password", headers=H(forgot_c),
+                json={"password": "third33"})
+check(
+    "forgot flow: a second reset on the same session is refused (otp_fresh spent)",
+    r.status_code == 400
+    and "right after signing in with an email code"
+        in (r.get_json().get("error") or ""),
+    r.get_data(as_text=True),
+)
+client.post("/api/auth/lock", headers=H(forgot_c))
+r = client.post("/api/auth/verify-password", headers=H(forgot_c),
+                json={"password": "oldpass1"})
+check("forgot flow: the OLD password no longer opens the account",
+      r.status_code == 401)
+r = client.post("/api/auth/verify-password", headers=H(forgot_c),
+                json={"password": "newpass2"})
+check("forgot flow: the NEW password opens the account",
+      r.status_code == 200)
+# (a) a merely-locked session (NOT otp-fresh) may not reset:
+client.post("/api/auth/lock", headers=H(forgot_c))
+r = client.post("/api/auth/reset-password", headers=H(forgot_c),
+                json={"password": "sneaky1"})
+check(
+    "security: reset refused on a locked (not OTP-fresh) session",
+    r.status_code == 400
+    and "right after signing in with an email code"
+        in (r.get_json().get("error") or ""),
+    r.get_data(as_text=True),
+)
+# (b) an account with NO password uses set-password, never reset:
+email7 = "nopwshop@example.com"
+_, code7 = request_and_get_code(email7)
+r = client.post("/api/auth/verify-otp", json={"email": email7, "code": code7})
+nopw_token = r.get_json().get("token") if r.status_code == 200 else None
+r = client.post("/api/auth/reset-password", headers=H(nopw_token),
+                json={"password": "abcd"})
+check(
+    "security: reset refused when the account has no password (set-password is the path)",
+    r.status_code == 400
+    and "no password yet" in (r.get_json().get("error") or ""),
+    r.get_data(as_text=True),
+)
+
+# ================= 12d. classic login (email + password) ===============
+# The everyday route from the owner's reference picture: email +
+# password + "Remember me", no email code needed. A wrong email and a
+# wrong password must get the IDENTICAL generic 401 (no enumeration);
+# an account with no password yet gets guidance, not the 401.
+from datetime import datetime as _dt2, timezone as _tz2  # noqa: E402
+
+from qbill_app.security import token_hash as _token_hash  # noqa: E402
+
+
+def _session_days(tok):
+    row = db.query_one(
+        "SELECT expires_at FROM sessions WHERE token_hash = ?",
+        (_token_hash(tok),),
+    )
+    exp = _dt2.fromisoformat(row["expires_at"])
+    return (exp - _dt2.now(_tz2.utc)).total_seconds() / 86400.0
+
+
+login_email = "classic@example.com"
+_, lcode = request_and_get_code(login_email)
+r = client.post("/api/auth/verify-otp", json={"email": login_email, "code": lcode})
+login_otp_token = (r.get_json() or {}).get("token")
+r = client.post("/api/auth/set-password", headers=H(login_otp_token),
+                json={"password": "mypw42"})
+check("classic login setup: password set via the code route",
+      r.status_code == 200, r.get_data(as_text=True))
+client.post("/api/auth/logout", headers=H(login_otp_token))
+
+r = client.post("/api/auth/login", json={"email": "ghost@example.com",
+                                         "password": "mypw42", "remember": True})
+unknown_body = r.get_json()
+check("login: unknown email gets the generic 401",
+      r.status_code == 401
+      and unknown_body.get("error") == "Email or password is wrong.",
+      r.get_data(as_text=True))
+r = client.post("/api/auth/login", json={"email": login_email,
+                                         "password": "wrongpw", "remember": True})
+check("login: wrong password gets the IDENTICAL generic 401 (no enumeration)",
+      r.status_code == 401 and r.get_json() == unknown_body,
+      r.get_data(as_text=True))
+
+client.post("/api/auth/request-otp", json={"email": "nopw@example.com"})
+r = client.post("/api/auth/login", json={"email": "nopw@example.com",
+                                         "password": "mypw42", "remember": True})
+check("login: account without a password gets the create-account guidance",
+      r.status_code == 400
+      and r.get_json().get("error") == "This account does not have a password yet. "
+      "Tap “Create an account” and verify your email to set one.",
+      r.get_data(as_text=True))
+
+r = client.post("/api/auth/login", json={"email": login_email,
+                                         "password": "mypw42", "remember": True})
+login_token = (r.get_json() or {}).get("token")
+check("login: correct email + password signs in (remember)",
+      r.status_code == 200 and bool(login_token)
+      and r.get_json().get("hasAppPassword") is True,
+      r.get_data(as_text=True))
+r = client.get("/api/dashboard", headers=H(login_token))
+check("login: remembered session is unlocked immediately (dashboard opens)",
+      r.status_code == 200, r.get_data(as_text=True)[:200])
+check("login: remembered session lasts ~30 days",
+      bool(login_token) and _session_days(login_token) > 20,
+      str(_session_days(login_token)) if login_token else "no token")
+
+r = client.post("/api/auth/login", json={"email": login_email,
+                                         "password": "mypw42", "remember": False})
+short_token = (r.get_json() or {}).get("token")
+r = client.get("/api/dashboard", headers=H(short_token))
+check("login: correct login without remember also works at once",
+      bool(short_token) and r.status_code == 200,
+      r.get_data(as_text=True)[:200])
+check("login: non-remembered session lasts ~1 day",
+      bool(short_token) and 0 < _session_days(short_token) < 2,
+      str(_session_days(short_token)) if short_token else "no token")
+
+client.post("/api/auth/logout", headers=H(login_token))
+r = client.get("/api/auth/me", headers=H(login_token))
+check("login: after logout the login token is dead", r.status_code == 401)
+
+r = client.post("/api/auth/change-password", headers=H(short_token),
+                json={"oldPassword": "mypw42", "newPassword": "newpw99"})
+check("login setup: password changed on the no-remember session",
+      r.status_code == 200, r.get_data(as_text=True))
+r = client.post("/api/auth/login", json={"email": login_email,
+                                         "password": "mypw42", "remember": True})
+check("login: after a password change the old password is refused",
+      r.status_code == 401
+      and r.get_json().get("error") == "Email or password is wrong.",
+      r.get_data(as_text=True))
+r = client.post("/api/auth/login", json={"email": login_email,
+                                         "password": "newpw99", "remember": True})
+check("login: after a password change only the new password works",
+      r.status_code == 200 and bool((r.get_json() or {}).get("token")),
+      r.get_data(as_text=True))
+
+html = client.get("/").get_data(as_text=True)
+js = client.get("/static/app.js").get_data(as_text=True)
+check("frontend: classic login panels served (stepLogin/stepSignup/stepForgot + Remember me)",
+      'id="stepLogin"' in html and 'id="stepSignup"' in html
+      and 'id="stepForgot"' in html and 'id="loginForm"' in html
+      and "Remember me" in html)
+check("frontend: app.js posts to /api/auth/login", "/api/auth/login" in js)
 
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))

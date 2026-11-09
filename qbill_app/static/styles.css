@@ -15,7 +15,23 @@ body {
 }
 .brand { font-size: 20px; font-weight: 800; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
 .brand-mark { width: 28px; height: 28px; border-radius: 7px; }
-.auth-logo { display: block; width: 180px; max-width: 72%; margin: 2px auto 8px; }
+.auth-logo { display: block; width: 120px; max-width: 60%; margin: 2px auto 10px; }
+.auth-sub { font-size: 14px; color: #5f7186; margin: 0 0 14px; }
+/* Messages inside the auth popup are a clear, full-width bar — never a
+   tiny note a shopkeeper can miss. */
+.auth-box .msg {
+  margin: 14px 0 0; padding: 10px 12px; border-radius: 8px; min-height: 0;
+  background: #e6f4ea; color: #137333; font-size: 14.5px; font-weight: 600;
+}
+.auth-box .msg:empty { display: none; }
+.auth-box .msg.err { background: #fdecea; color: #b3261e; }
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input { padding-right: 62px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 12px;
+  border: none; background: none; color: #0a66c2;
+  font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px;
+}
 .top-actions { margin-left: auto; display: flex; gap: 6px; }
 .pill {
   font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
@@ -30,11 +46,12 @@ main { max-width: 760px; margin: 0 auto; padding: 14px 12px 90px; }
   padding: 16px; margin-bottom: 14px;
   box-shadow: 0 1px 2px rgba(10, 37, 64, .05);
 }
-.auth-card { max-width: 420px; margin: 30px auto; }
 h1 { font-size: 20px; margin: 0 0 12px; }
 h2 { font-size: 16px; margin: 0 0 10px; }
 h3 { font-size: 15px; margin: 18px 0 8px; }
 label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #33475b; }
+.check-row { display: flex; align-items: center; gap: 8px; }
+.check-row input[type="checkbox"] { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; }
 input, select, textarea {
   display: block; width: 100%; margin-top: 4px; padding: 10px;
   font-size: 15px; font-weight: 400; color: #16222e;
@@ -99,6 +116,7 @@ button.row { width: 100%; text-align: left; cursor: pointer; font: inherit; }
 .modal {
   position: fixed; inset: 0; z-index: 50; background: rgba(10, 37, 64, .55);
   display: flex; align-items: center; justify-content: center; padding: 16px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .modal-box { width: 100%; max-width: 400px; margin: 0; }
 

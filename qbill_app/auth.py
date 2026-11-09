@@ -20,6 +20,18 @@ SESSION / DEVICE MODEL (the simple choice, documented):
   no new OTP.
 - "Logout needs OTP + password again": /logout destroys the session, so
   the next sign-in is a fresh OTP verify followed by the password.
+- "Forgot password": a session created by verify-otp is marked
+  otp_fresh=1. Only such a session may call /reset-password (the email
+  code just proved ownership), which replaces the password, unlocks this
+  session, clears otp_fresh, and deletes the account's OTHER sessions.
+  /lock, verify-password and set-password also clear otp_fresh — once a
+  session has been used normally it can no longer reset the password.
+- "Classic login" (/login): the everyday route once a password exists —
+  email + password, no email code. The session starts UNLOCKED. With
+  remember=true it lasts 30 days; without, 1 day. A wrong email and a
+  wrong password get the same generic 401 (no account enumeration);
+  an account with no password yet gets a 400 pointing at the
+  "Create an account" code route instead.
 """
 import hmac
 import logging
@@ -74,8 +86,8 @@ def load_session():
         return None
     th = token_hash(header[len("Bearer "):].strip())
     row = db.query_one(
-        "SELECT s.id AS session_id, s.account_id, s.unlocked, s.expires_at, "
-        "a.email, a.is_owner, a.pw_salt, a.pw_hash "
+        "SELECT s.id AS session_id, s.account_id, s.unlocked, s.otp_fresh, "
+        "s.expires_at, a.email, a.is_owner, a.pw_salt, a.pw_hash "
         "FROM sessions s JOIN site_accounts a ON a.id = s.account_id "
         "WHERE s.token_hash = ?",
         (th,),
@@ -206,8 +218,8 @@ def verify_otp():
             "SELECT * FROM site_accounts WHERE email = ?", (email,)
         )
         tx.execute(
-            "INSERT INTO sessions (token_hash, account_id, unlocked, expires_at, created_at) "
-            "VALUES (?, ?, 0, ?, ?)",
+            "INSERT INTO sessions (token_hash, account_id, unlocked, otp_fresh, expires_at, created_at) "
+            "VALUES (?, ?, 0, 1, ?, ?)",
             (token_hash(token), account["id"], after_iso(days=SESSION_DAYS), now_iso()),
         )
         business = tx.query_one(
@@ -228,13 +240,66 @@ def verify_otp():
     )
 
 
+# ------------------------------------------------------- classic login ----
+@bp.post("/login")
+def login():
+    """Everyday sign-in: email + password, no email code needed.
+
+    A wrong email and a wrong password return the SAME generic 401, so
+    this endpoint never reveals whether an account exists. An account
+    that has no password yet cannot use this route — its owner must
+    first prove the email with a code ("Create an account") and set one.
+    remember -> 30-day session; otherwise the session lasts 1 day.
+    """
+    data = _body()
+    email = _clean_email(data.get("email"))
+    password = str(data.get("password") or "")
+    remember = bool(data.get("remember"))
+    account = db.query_one(
+        "SELECT * FROM site_accounts WHERE email = ?", (email,)
+    )
+    if account is None:
+        return jsonify(ok=False, error="Email or password is wrong."), 401
+    if account["pw_hash"] is None:
+        raise ApiError(
+            "This account does not have a password yet. Tap "
+            "“Create an account” and verify your email to set one."
+        )
+    if not check_password(password, account["pw_salt"], account["pw_hash"]):
+        return jsonify(ok=False, error="Email or password is wrong."), 401
+    token = new_session_token()
+    days = SESSION_DAYS if remember else 1
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO sessions (token_hash, account_id, unlocked, otp_fresh, expires_at, created_at) "
+            "VALUES (?, ?, 1, 0, ?, ?)",
+            (token_hash(token), account["id"], after_iso(days=days), now_iso()),
+        )
+        business = tx.query_one(
+            "SELECT id FROM businesses WHERE account_id = ? ORDER BY id LIMIT 1",
+            (account["id"],),
+        )
+        if business is None:
+            tx.insert(
+                "INSERT INTO businesses (account_id, name, created_at) "
+                "VALUES (?, ?, ?) RETURNING id",
+                (account["id"], "My Business", now_iso()),
+            )
+    return jsonify(
+        ok=True,
+        token=token,
+        isOwner=bool(account["is_owner"]),
+        hasAppPassword=True,
+    )
+
+
 # --------------------------------------------------------- app password ----
 @bp.post("/set-password")
 @require_session
 def set_password():
     password = str(_body().get("password") or "")
-    if len(password) < 6:
-        raise ApiError("Password must be at least 6 characters.")
+    if len(password) < 4:
+        raise ApiError("Password must be at least 4 characters.")
     if g.session["pw_hash"] is not None:
         raise ApiError(
             "A QBill password is already set. Use change-password instead."
@@ -246,7 +311,7 @@ def set_password():
             (salt, digest, g.session["account_id"]),
         )
         tx.execute(
-            "UPDATE sessions SET unlocked = 1 WHERE id = ?",
+            "UPDATE sessions SET unlocked = 1, otp_fresh = 0 WHERE id = ?",
             (g.session["session_id"],),
         )
     return jsonify(ok=True)
@@ -261,7 +326,7 @@ def verify_password():
     if not check_password(password, g.session["pw_salt"], g.session["pw_hash"]):
         return jsonify(ok=False, error="Wrong password."), 401
     db.run(
-        "UPDATE sessions SET unlocked = 1 WHERE id = ?",
+        "UPDATE sessions SET unlocked = 1, otp_fresh = 0 WHERE id = ?",
         (g.session["session_id"],),
     )
     return jsonify(ok=True)
@@ -276,8 +341,8 @@ def change_password():
     new = str(data.get("newPassword") or "")
     if not check_password(old, g.session["pw_salt"], g.session["pw_hash"]):
         return jsonify(ok=False, error="Current password is wrong."), 401
-    if len(new) < 6:
-        raise ApiError("New password must be at least 6 characters.")
+    if len(new) < 4:
+        raise ApiError("New password must be at least 4 characters.")
     salt, digest = hash_password(new)
     db.run(
         "UPDATE site_accounts SET pw_salt = ?, pw_hash = ? WHERE id = ?",
@@ -286,12 +351,55 @@ def change_password():
     return jsonify(ok=True)
 
 
+@bp.post("/reset-password")
+@require_session
+def reset_password():
+    """Forgot password: replace it right after an email-code sign-in.
+
+    Allowed ONLY on a session created moments ago by verify-otp
+    (otp_fresh=1) — the code just proved this email belongs to the user —
+    and only when the account already HAS a password (a first password
+    goes through set-password instead). On success this session is
+    unlocked and every OTHER session of the account is deleted, so a
+    reset also signs out any other device.
+    """
+    if g.session["pw_hash"] is None:
+        raise ApiError(
+            "This account has no password yet, so there is nothing to "
+            "replace. Please create your first password."
+        )
+    if not g.session["otp_fresh"]:
+        raise ApiError(
+            "For security, a forgotten password can only be replaced "
+            "right after signing in with an email code. Please sign in "
+            "with a fresh code first."
+        )
+    password = str(_body().get("password") or "")
+    if len(password) < 4:
+        raise ApiError("Password must be at least 4 characters.")
+    salt, digest = hash_password(password)
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE site_accounts SET pw_salt = ?, pw_hash = ? WHERE id = ?",
+            (salt, digest, g.session["account_id"]),
+        )
+        tx.execute(
+            "UPDATE sessions SET unlocked = 1, otp_fresh = 0 WHERE id = ?",
+            (g.session["session_id"],),
+        )
+        tx.execute(
+            "DELETE FROM sessions WHERE account_id = ? AND id != ?",
+            (g.session["account_id"], g.session["session_id"]),
+        )
+    return jsonify(ok=True)
+
+
 @bp.post("/lock")
 @require_session
 def lock():
     """App closed: this device now needs only the password to reopen."""
     db.run(
-        "UPDATE sessions SET unlocked = 0 WHERE id = ?",
+        "UPDATE sessions SET unlocked = 0, otp_fresh = 0 WHERE id = ?",
         (g.session["session_id"],),
     )
     return jsonify(ok=True)
@@ -314,4 +422,5 @@ def me():
         isOwner=bool(g.session["is_owner"]),
         hasAppPassword=g.session["pw_hash"] is not None,
         unlocked=bool(g.session["unlocked"]),
+        otpFresh=bool(g.session["otp_fresh"]),
     )

@@ -20,37 +20,6 @@
 </header>
 
 <main>
-  <!-- ======================= LOGIN ======================= -->
-  <section id="authView" class="card auth-card hidden">
-    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
-    <h1>Sign in to QBill</h1>
-    <div id="loginStep1">
-      <label>Your email
-        <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com">
-      </label>
-      <button id="btnSendCode" class="btn btn-primary btn-block" type="button">Send login code</button>
-      <p class="note">We email you a 6-digit code. It is valid for 10 minutes.</p>
-    </div>
-    <div id="loginStep2" class="hidden">
-      <label>6-digit code from your email
-        <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
-      </label>
-      <button id="btnVerifyCode" class="btn btn-primary btn-block" type="button">Verify &amp; sign in</button>
-      <button id="btnBackToEmail" class="btn btn-link btn-block" type="button">Use a different email</button>
-    </div>
-    <p id="authMsg" class="msg"></p>
-  </section>
-
-  <!-- ======================= LOCK ======================= -->
-  <section id="lockView" class="card auth-card hidden">
-    <h1>QBill is locked</h1>
-    <label>Your QBill password
-      <input id="lockPassword" type="password" autocomplete="current-password" placeholder="Password">
-    </label>
-    <button id="btnUnlock" class="btn btn-primary btn-block" type="button">Unlock</button>
-    <p id="lockMsg" class="msg"></p>
-  </section>
-
   <!-- ======================= APP ======================= -->
   <div id="appView" class="hidden">
     <nav class="mainnav">
@@ -205,16 +174,139 @@
   </div>
 </main>
 
-<!-- ============ SET-PASSWORD MODAL ============ -->
-<div id="pwModal" class="modal hidden">
-  <div class="modal-box card">
-    <h2>Set a password</h2>
-    <p class="note">Set your QBill password. You will use it to open QBill on this device — no email code needed for daily use.</p>
-    <label>New password (min 6 characters)
-      <input id="pwNew" type="password" autocomplete="new-password">
-    </label>
-    <button id="btnSetPassword" class="btn btn-primary btn-block" type="button">Set password &amp; open QBill</button>
-    <p id="pwMsg" class="msg"></p>
+<!-- ============ AUTH POPUP (sign-in / create password / welcome back) ============ -->
+<div id="authModal" class="modal hidden">
+  <div class="modal-box card auth-box">
+    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
+
+    <!-- STEP: classic login (the default front door) -->
+    <div id="stepLogin" class="auth-step">
+      <h1>Log in to QBill</h1>
+      <p class="auth-sub">Billing software for your shop.</p>
+      <form id="loginForm">
+        <label>Your email
+          <input id="liEmail" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </label>
+        <label>Password
+          <span class="pw-wrap">
+            <input id="liPassword" type="password" autocapitalize="none" autocomplete="current-password" placeholder="Password" required>
+            <button class="pw-toggle" type="button" data-toggle="liPassword">Show</button>
+          </span>
+        </label>
+        <label class="check-row">
+          <input id="liRemember" type="checkbox" checked>
+          <span>Remember me</span>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">Log in</button>
+      </form>
+      <button id="btnLoginForgot" class="btn btn-link btn-block" type="button">Forgot your password?</button>
+      <button id="btnLoginSignup" class="btn btn-link btn-block" type="button">Create an account</button>
+      <button id="btnCodeInstead" class="btn btn-link btn-block" type="button">Email me a login code instead</button>
+    </div>
+
+    <!-- STEP: email (sign in with an emailed code instead of a password) -->
+    <div id="stepEmail" class="auth-step hidden">
+      <h1>Welcome to QBill</h1>
+      <p class="auth-sub">Billing software for your shop.</p>
+      <label>Your email
+        <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="btnSendCode" class="btn btn-primary btn-block" type="button">Continue</button>
+      <p class="note">New to QBill? Your account is created automatically with your email. We email you a 6-digit login code (valid 10 minutes).</p>
+      <button id="btnEmailBack" class="btn btn-link btn-block" type="button">Back to log in</button>
+    </div>
+
+    <!-- STEP: create an account (email first, then the code) -->
+    <div id="stepSignup" class="auth-step hidden">
+      <h1>Create your QBill account</h1>
+      <p class="auth-sub">Enter your email. We will send a 6-digit code to prove it is yours, then you create your password.</p>
+      <label>Your email
+        <input id="suEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="btnSignupContinue" class="btn btn-primary btn-block" type="button">Continue</button>
+      <button id="btnSignupBack" class="btn btn-link btn-block" type="button">Back to log in</button>
+    </div>
+
+    <!-- STEP: forgot password (email first, then the code, then a new password) -->
+    <div id="stepForgot" class="auth-step hidden">
+      <h1>Forgot your password?</h1>
+      <p class="auth-sub">Enter your account email. We will send a 6-digit code; after the code you can create a new password. Your account and data stay the same.</p>
+      <label>Your email
+        <input id="fgEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <button id="btnForgotContinue" class="btn btn-primary btn-block" type="button">Continue</button>
+      <button id="btnForgotBack" class="btn btn-link btn-block" type="button">Back to log in</button>
+    </div>
+
+    <!-- STEP: code -->
+    <div id="stepCode" class="auth-step hidden">
+      <h1 id="codeHeading">Enter your login code</h1>
+      <p class="auth-sub"><span id="codeSubLead">We sent a 6-digit code to</span> <strong id="codeSentTo"></strong><span id="codeSubTail">. Please enter it below.</span></p>
+      <label>6-digit code
+        <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+      </label>
+      <button id="btnVerifyCode" class="btn btn-primary btn-block" type="button">Continue</button>
+      <button id="btnResendCode" class="btn btn-link btn-block" type="button">Resend code</button>
+      <button id="btnBackToEmail" class="btn btn-link btn-block" type="button">Use a different email</button>
+    </div>
+
+    <!-- STEP: create a password (first time on this account) -->
+    <div id="stepCreate" class="auth-step hidden">
+      <h1>Create a new password for billing software</h1>
+      <p class="auth-sub">This password opens QBill on this device, so you will not need an email code every day.</p>
+      <label>New password
+        <span class="pw-wrap">
+          <input id="pwNew" type="password" autocapitalize="none" autocomplete="new-password">
+          <button class="pw-toggle" type="button" data-toggle="pwNew">Show</button>
+        </span>
+      </label>
+      <label>Confirm password
+        <span class="pw-wrap">
+          <input id="pwConfirm" type="password" autocapitalize="none" autocomplete="new-password">
+          <button class="pw-toggle" type="button" data-toggle="pwConfirm">Show</button>
+        </span>
+      </label>
+      <p class="note">At least 4 characters.</p>
+      <button id="btnSetPassword" class="btn btn-primary btn-block" type="button">Continue</button>
+    </div>
+
+    <!-- STEP: welcome back (this device has a session, password needed) -->
+    <div id="stepWelcome" class="auth-step hidden">
+      <h1>Welcome back</h1>
+      <p class="auth-sub">Enter your password to open your QBill account.</p>
+      <label>Your password
+        <span class="pw-wrap">
+          <input id="lockPassword" type="password" autocapitalize="none" autocomplete="current-password" placeholder="Password">
+          <button class="pw-toggle" type="button" data-toggle="lockPassword">Show</button>
+        </span>
+      </label>
+      <button id="btnUnlock" class="btn btn-primary btn-block" type="button">Log in</button>
+      <button id="btnForgotPw" class="btn btn-link btn-block" type="button">Forgot your password?</button>
+      <button id="btnWelcomeReset" class="btn btn-link btn-block hidden" type="button">Forgot your password? Create a new one</button>
+      <button id="btnWelcomeOther" class="btn btn-link btn-block" type="button">Use a different account</button>
+    </div>
+
+    <!-- STEP: create a NEW password after proving the email with a code -->
+    <div id="stepReset" class="auth-step hidden">
+      <h1>Create a new password</h1>
+      <p class="auth-sub">You proved this email is yours, so you can set a new password. Your account and all its data stay exactly the same.</p>
+      <label>New password
+        <span class="pw-wrap">
+          <input id="pwResetNew" type="password" autocapitalize="none" autocomplete="new-password">
+          <button class="pw-toggle" type="button" data-toggle="pwResetNew">Show</button>
+        </span>
+      </label>
+      <label>Confirm password
+        <span class="pw-wrap">
+          <input id="pwResetConfirm" type="password" autocapitalize="none" autocomplete="new-password">
+          <button class="pw-toggle" type="button" data-toggle="pwResetConfirm">Show</button>
+        </span>
+      </label>
+      <p class="note">At least 4 characters.</p>
+      <button id="btnResetPassword" class="btn btn-primary btn-block" type="button">Continue</button>
+    </div>
+
+    <p id="authMsg" class="msg"></p>
   </div>
 </div>
 
