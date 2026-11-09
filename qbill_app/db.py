@@ -265,6 +265,13 @@ _ADDED_COLUMNS = [
     # signup; NULL for normal accounts. The owner can clear it by
     # approving the account.
     ("site_accounts", "reject_reason", "TEXT"),
+    # Vyapar-style document types: an estimate / sale order / challan
+    # converted into a sale invoice points at the invoice it became.
+    ("invoices", "converted_to_id", "INTEGER"),
+    # Invoice defaults printed on PDFs (Settings -> TRANSACTION):
+    # a free-text tax note and the business's own terms & conditions.
+    ("businesses", "tax_note", "TEXT"),
+    ("businesses", "terms", "TEXT"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

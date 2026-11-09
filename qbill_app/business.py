@@ -114,6 +114,8 @@ def _profile_dict(row):
         "address": row.get("address") or "",
         "phone": row.get("phone") or "",
         "email": row.get("email") or "",
+        "taxNote": row.get("tax_note") or "",
+        "terms": row.get("terms") or "",
     }
 
 
@@ -140,12 +142,15 @@ def update_business():
         biz = _business_id(tx)
         row = _business_row(tx, biz)
         tx.execute(
-            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ? WHERE id = ?",
+            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ?, "
+            "tax_note = ?, terms = ? WHERE id = ?",
             (
                 name if "name" in data else row["name"],
                 str(data.get("address", row.get("address") or "") or "").strip() or None,
                 str(data.get("phone", row.get("phone") or "") or "").strip() or None,
                 str(data.get("email", row.get("email") or "") or "").strip() or None,
+                str(data.get("tax_note", row.get("tax_note") or "") or "").strip() or None,
+                str(data.get("terms", row.get("terms") or "") or "").strip() or None,
                 biz,
             ),
         )
@@ -245,7 +250,12 @@ def create_payment():
             )
             if invoice is None:
                 raise ApiError("Invoice not found.")
-            if direction == "in" and amount > invoice["balance_paisa"]:
+            if invoice["type"] in ("estimate", "sale_order", "purchase_order", "challan"):
+                raise ApiError(
+                    "Payments are recorded against invoices and bills, not against "
+                    "estimates, orders or challans."
+                )
+            if amount > invoice["balance_paisa"]:
                 raise ApiError("Payment is more than the invoice balance.")
             if party_id is None:
                 party_id = invoice["party_id"]
@@ -330,14 +340,23 @@ def party_ledger(party_id):
             "SELECT * FROM payments WHERE business_id = ? AND party_id = ? ORDER BY id",
             (biz, party_id),
         )
+    # Only balance-affecting documents enter the ledger: estimates,
+    # orders and challans are not dues and are skipped. Returns move
+    # the balance back the other way.
+    ledger_docs = {
+        "sale": (True, "Sale invoice {}"),
+        "purchase": (False, "Purchase invoice {}"),
+        "sale_return": (False, "Sale return / Credit note {}"),
+        "purchase_return": (True, "Purchase return / Debit note {}"),
+    }
     entries = []
     for inv in invoices:
-        if inv["type"] == "sale":
-            debit, credit = inv["total_paisa"], 0
-            desc = "Sale invoice {}".format(inv["invoice_no"])
-        else:
-            debit, credit = 0, inv["total_paisa"]
-            desc = "Purchase invoice {}".format(inv["invoice_no"])
+        rule = ledger_docs.get(inv["type"])
+        if rule is None:
+            continue
+        is_debit, desc_fmt = rule
+        debit, credit = (inv["total_paisa"], 0) if is_debit else (0, inv["total_paisa"])
+        desc = desc_fmt.format(inv["invoice_no"])
         entries.append(
             {
                 "date": inv["created_at"],
@@ -380,3 +399,158 @@ def party_ledger(party_id):
         entries=entries,
         balancePaisa=balance,
     )
+
+
+# ------------------------------------------------------------ day book ----
+DOC_LABELS = {
+    "sale": "Sale Invoice",
+    "purchase": "Purchase Bill",
+    "sale_return": "Sale Return / Credit Note",
+    "purchase_return": "Purchase Return / Debit Note",
+    "estimate": "Estimate/Quotation",
+    "sale_order": "Sale Order",
+    "purchase_order": "Purchase Order",
+    "challan": "Delivery Challan",
+}
+
+
+@bp.get("/reports/day-book")
+@require_session
+@require_approved
+@require_unlocked
+def day_book():
+    """Every transaction of one date: documents, payments, expenses."""
+    date = request.args.get("date") or _today()
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise ApiError("Date must be YYYY-MM-DD.")
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        parties = {
+            r["id"]: r["name"]
+            for r in tx.query_all(
+                "SELECT id, name FROM parties WHERE business_id = ?", (biz,)
+            )
+        }
+        docs = tx.query_all(
+            "SELECT * FROM invoices WHERE business_id = ? "
+            "AND substr(created_at, 1, 10) = ? ORDER BY id",
+            (biz, date),
+        )
+        pays = tx.query_all(
+            "SELECT * FROM payments WHERE business_id = ? "
+            "AND substr(created_at, 1, 10) = ? ORDER BY id",
+            (biz, date),
+        )
+        exps = tx.query_all(
+            "SELECT * FROM expenses WHERE business_id = ? "
+            "AND substr(created_at, 1, 10) = ? ORDER BY id",
+            (biz, date),
+        )
+    entries = []
+    for d in docs:
+        entries.append(
+            {
+                "kind": d["type"],
+                "ref": d["invoice_no"],
+                "description": "{} {}".format(
+                    DOC_LABELS.get(d["type"], "Document"), d["invoice_no"]
+                ),
+                "party": parties.get(d["party_id"]) or "",
+                "amountPaisa": d["total_paisa"],
+                "createdAt": d["created_at"],
+                "_sort": (d["created_at"], 0, d["id"]),
+            }
+        )
+    for p in pays:
+        entries.append(
+            {
+                "kind": "payment",
+                "ref": "",
+                "description": "Payment In" if p["direction"] == "in" else "Payment Out",
+                "party": parties.get(p["party_id"]) or "",
+                "amountPaisa": p["amount_paisa"],
+                "createdAt": p["created_at"],
+                "_sort": (p["created_at"], 1, p["id"]),
+            }
+        )
+    for e in exps:
+        entries.append(
+            {
+                "kind": "expense",
+                "ref": "",
+                "description": "Expense — {}".format(e["title"]),
+                "party": "",
+                "amountPaisa": e["amount_paisa"],
+                "createdAt": e["created_at"],
+                "_sort": (e["created_at"], 2, e["id"]),
+            }
+        )
+    entries.sort(key=lambda x: x["_sort"])
+    for entry in entries:
+        del entry["_sort"]
+    totals = {
+        "documentsPaisa": sum(d["total_paisa"] for d in docs),
+        "paymentsInPaisa": sum(
+            p["amount_paisa"] for p in pays if p["direction"] == "in"
+        ),
+        "paymentsOutPaisa": sum(
+            p["amount_paisa"] for p in pays if p["direction"] == "out"
+        ),
+        "expensesPaisa": sum(e["amount_paisa"] for e in exps),
+    }
+    return jsonify(ok=True, date=date, entries=entries, totals=totals)
+
+
+# -------------------------------------------------------- stock summary ----
+@bp.get("/reports/stock-summary")
+@require_session
+@require_approved
+@require_unlocked
+def stock_summary():
+    """Per item: opening, in, out, closing quantities + closing value.
+
+    Movements come from document lines of the stock-affecting types
+    (in = purchase + sale return; out = sale + purchase return).
+    Closing is the item's live stock; opening is derived from it, so
+    opening + in - out always equals closing exactly.
+    """
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        items = tx.query_all(
+            "SELECT * FROM items WHERE business_id = ? ORDER BY id", (biz,)
+        )
+        in_rows = tx.query_all(
+            "SELECT l.item_id AS iid, COALESCE(SUM(l.qty), 0) AS q "
+            "FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id "
+            "WHERE i.business_id = ? AND l.item_id IS NOT NULL "
+            "AND i.type IN ('purchase', 'sale_return') GROUP BY l.item_id",
+            (biz,),
+        )
+        out_rows = tx.query_all(
+            "SELECT l.item_id AS iid, COALESCE(SUM(l.qty), 0) AS q "
+            "FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id "
+            "WHERE i.business_id = ? AND l.item_id IS NOT NULL "
+            "AND i.type IN ('sale', 'purchase_return') GROUP BY l.item_id",
+            (biz,),
+        )
+    in_map = {r["iid"]: r["q"] for r in in_rows}
+    out_map = {r["iid"]: r["q"] for r in out_rows}
+    result = []
+    for item in items:
+        qty_in = in_map.get(item["id"], 0)
+        qty_out = out_map.get(item["id"], 0)
+        closing = item["stock_qty"]
+        result.append(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "openingQty": closing - (qty_in - qty_out),
+                "inQty": qty_in,
+                "outQty": qty_out,
+                "closingQty": closing,
+                "valuePaisa": closing * item["purchase_price_paisa"],
+            }
+        )
+    return jsonify(ok=True, items=result)

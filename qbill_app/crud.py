@@ -54,9 +54,12 @@ def party_balance_map(tx, business_id):
     """Current balance per party, in paisa (positive = the party owes us).
 
     balance = opening + sale totals - purchase totals
+              - sale returns + purchase returns
               - payments in (party paid us) + payments out (we paid party)
     Invoice-time payments are ordinary payment rows, so an invoice's own
-    paid part nets out automatically. One aggregate query, exact integers.
+    paid part nets out automatically. Estimates, orders and challans are
+    NOT dues and never enter the balance. One aggregate query, exact
+    integers.
     """
     rows = tx.query_all(
         "SELECT p.id AS pid, p.opening_balance_paisa AS opening, "
@@ -64,6 +67,10 @@ def party_balance_map(tx, business_id):
         "          WHERE i.party_id = p.id AND i.type = 'sale'), 0) AS sales, "
         "COALESCE((SELECT SUM(i.total_paisa) FROM invoices i "
         "          WHERE i.party_id = p.id AND i.type = 'purchase'), 0) AS purchases, "
+        "COALESCE((SELECT SUM(i.total_paisa) FROM invoices i "
+        "          WHERE i.party_id = p.id AND i.type = 'sale_return'), 0) AS sale_returns, "
+        "COALESCE((SELECT SUM(i.total_paisa) FROM invoices i "
+        "          WHERE i.party_id = p.id AND i.type = 'purchase_return'), 0) AS purchase_returns, "
         "COALESCE((SELECT SUM(pay.amount_paisa) FROM payments pay "
         "          WHERE pay.party_id = p.id AND pay.direction = 'in'), 0) AS paid_in, "
         "COALESCE((SELECT SUM(pay.amount_paisa) FROM payments pay "
@@ -72,7 +79,9 @@ def party_balance_map(tx, business_id):
         (business_id,),
     )
     return {
-        r["pid"]: r["opening"] + r["sales"] - r["purchases"] - r["paid_in"] + r["paid_out"]
+        r["pid"]: r["opening"] + r["sales"] - r["purchases"]
+        - r["sale_returns"] + r["purchase_returns"]
+        - r["paid_in"] + r["paid_out"]
         for r in rows
     }
 
@@ -114,7 +123,14 @@ def _invoice_dict(tx, row):
         "taxPaisa": row["tax_paisa"],
         "totalPaisa": row["total_paisa"],
         "paidPaisa": row["paid_paisa"],
-        "balancePaisa": row["balance_paisa"],
+        # Estimates, orders and challans carry no due balance at all.
+        "balancePaisa": (
+            0
+            if (row.get("type") or "sale")
+            in ("estimate", "sale_order", "purchase_order", "challan")
+            else row["balance_paisa"]
+        ),
+        "convertedToId": row.get("converted_to_id"),
         "lines": [
             {
                 "id": line["id"],
@@ -223,24 +239,34 @@ def list_items():
 
 
 # ------------------------------------------------------------- invoices ----
-@bp.post("/invoices")
-@require_session
-@require_approved
-@require_unlocked
-def create_invoice():
-    data = _body()
-    inv_type = str(data.get("type") or "sale").strip().lower()
-    if inv_type not in ("sale", "purchase"):
-        raise ApiError("Invoice type must be 'sale' or 'purchase'.")
-    client_ref = _client_ref(data)
-    lines_in = data.get("lines")
+# One document engine for every Vyapar-style document. The type drives
+# the number prefix, the stock effect, and whether a payment can be
+# taken on the document:
+#   sale            S-   stock out,  payment 'in'  (customer pays us)
+#   purchase        P-   stock in,   payment 'out' (we pay the supplier)
+#   sale_return     SR-  stock in,   payment 'out' (we refund the customer)
+#   purchase_return PR-  stock out,  payment 'in'  (supplier refunds us)
+#   estimate        EST- no stock effect, no payments (not a due)
+#   sale_order      SO-  no stock effect, no payments (not a due)
+#   purchase_order  PO-  no stock effect, no payments (not a due)
+#   challan         DC-  no stock effect, no payments (not a due)
+DOC_TYPES = {
+    "sale": {"prefix": "S", "stock": -1, "pay_direction": "in"},
+    "purchase": {"prefix": "P", "stock": 1, "pay_direction": "out"},
+    "sale_return": {"prefix": "SR", "stock": 1, "pay_direction": "out"},
+    "purchase_return": {"prefix": "PR", "stock": -1, "pay_direction": "in"},
+    "estimate": {"prefix": "EST", "stock": 0, "pay_direction": None},
+    "sale_order": {"prefix": "SO", "stock": 0, "pay_direction": None},
+    "purchase_order": {"prefix": "PO", "stock": 0, "pay_direction": None},
+    "challan": {"prefix": "DC", "stock": 0, "pay_direction": None},
+}
+CONVERTIBLE_TYPES = ("estimate", "sale_order", "challan")
+
+
+def _prepare_lines(tx, biz, lines_in):
+    """Validate raw line input; returns (lines, subtotal_paisa)."""
     if not isinstance(lines_in, list) or not lines_in:
         raise ApiError("An invoice needs at least one line.")
-    discount = _int_field(data, "discount_paisa", default=0, min_value=0)
-    tax = _int_field(data, "tax_paisa", default=0, min_value=0)
-    paid = _int_field(data, "paid_paisa", default=0, min_value=0)
-    party_id = data.get("party_id")
-
     lines = []
     subtotal = 0
     for raw in lines_in:
@@ -259,12 +285,101 @@ def create_invoice():
                 "amount_paisa": amount,
             }
         )
+    for line in lines:
+        if line["item_id"] is not None:
+            item = tx.query_one(
+                "SELECT id, name FROM items WHERE id = ? AND business_id = ?",
+                (line["item_id"], biz),
+            )
+            if item is None:
+                raise ApiError("Item not found.")
+            if not line["description"]:
+                line["description"] = item["name"]
+        if not line["description"]:
+            raise ApiError("Each invoice line needs a description or an item.")
+    return lines, subtotal
+
+
+def _check_party(tx, biz, party_id):
+    if party_id is None:
+        return
+    party = tx.query_one(
+        "SELECT id FROM parties WHERE id = ? AND business_id = ?",
+        (party_id, biz),
+    )
+    if party is None:
+        raise ApiError("Party not found.")
+
+
+def _insert_document(tx, biz, inv_type, party_id, lines, subtotal,
+                     discount, tax, paid, client_ref):
+    """Insert one document + its lines, apply its stock effect and its
+    at-document payment (if any). Returns the new invoice row id."""
+    meta = DOC_TYPES[inv_type]
+    total = subtotal - discount + tax
+    balance = total - paid
+    count = tx.query_one(
+        "SELECT COUNT(*) AS c FROM invoices WHERE business_id = ? AND type = ?",
+        (biz, inv_type),
+    )["c"]
+    # Server-assigned per type (S-1.., EST-1..); devices can't collide.
+    invoice_no = "{}-{}".format(meta["prefix"], count + 1)
+    inv_id = tx.insert(
+        "INSERT INTO invoices (business_id, party_id, invoice_no, type, subtotal_paisa, "
+        "discount_paisa, tax_paisa, total_paisa, paid_paisa, balance_paisa, client_ref, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        (biz, party_id, invoice_no, inv_type, subtotal, discount, tax, total,
+         paid, balance, client_ref, now_iso()),
+    )
+    for line in lines:
+        tx.execute(
+            "INSERT INTO invoice_lines (invoice_id, item_id, description, qty, "
+            "rate_paisa, amount_paisa) VALUES (?, ?, ?, ?, ?, ?)",
+            (inv_id, line["item_id"], line["description"], line["qty"],
+             line["rate_paisa"], line["amount_paisa"]),
+        )
+        if line["item_id"] is not None and meta["stock"]:
+            tx.execute(
+                "UPDATE items SET stock_qty = stock_qty + ? WHERE id = ?",
+                (meta["stock"] * line["qty"], line["item_id"]),
+            )
+    if paid > 0 and meta["pay_direction"]:
+        tx.execute(
+            "INSERT INTO payments (business_id, party_id, invoice_id, direction, "
+            "amount_paisa, client_ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (biz, party_id, inv_id, meta["pay_direction"],
+             paid, "{}:pay".format(client_ref) if client_ref else None, now_iso()),
+        )
+    return inv_id
+
+
+def _totals_check(subtotal, discount, tax, paid):
     if discount > subtotal:
         raise ApiError("Discount cannot be more than the subtotal.")
     total = subtotal - discount + tax
     if paid > total:
         raise ApiError("Paid amount cannot be more than the invoice total.")
-    balance = total - paid
+    return total
+
+
+@bp.post("/invoices")
+@require_session
+@require_approved
+@require_unlocked
+def create_invoice():
+    data = _body()
+    inv_type = str(data.get("type") or "sale").strip().lower()
+    if inv_type not in DOC_TYPES:
+        raise ApiError(
+            "Document type must be one of: {}.".format(", ".join(sorted(DOC_TYPES)))
+        )
+    client_ref = _client_ref(data)
+    discount = _int_field(data, "discount_paisa", default=0, min_value=0)
+    tax = _int_field(data, "tax_paisa", default=0, min_value=0)
+    paid = _int_field(data, "paid_paisa", default=0, min_value=0)
+    party_id = data.get("party_id")
+    if DOC_TYPES[inv_type]["pay_direction"] is None and paid > 0:
+        raise ApiError("Payments are not taken on this document type.")
 
     with db.transaction() as tx:
         biz = _business_id(tx)
@@ -275,59 +390,77 @@ def create_invoice():
             )
             if existing is not None:  # offline replay: never double the stock
                 return jsonify(ok=True, invoice=_invoice_dict(tx, existing)), 200
-        if party_id is not None:
-            party = tx.query_one(
-                "SELECT id FROM parties WHERE id = ? AND business_id = ?",
-                (party_id, biz),
-            )
-            if party is None:
-                raise ApiError("Party not found.")
-        for line in lines:
-            if line["item_id"] is not None:
-                item = tx.query_one(
-                    "SELECT id, name FROM items WHERE id = ? AND business_id = ?",
-                    (line["item_id"], biz),
-                )
-                if item is None:
-                    raise ApiError("Item not found.")
-                if not line["description"]:
-                    line["description"] = item["name"]
-            if not line["description"]:
-                raise ApiError("Each invoice line needs a description or an item.")
-        count = tx.query_one(
-            "SELECT COUNT(*) AS c FROM invoices WHERE business_id = ? AND type = ?",
-            (biz, inv_type),
-        )["c"]
-        # Server-assigned per type (S-1.., P-1..); devices can't collide.
-        invoice_no = "{}-{}".format("S" if inv_type == "sale" else "P", count + 1)
-        inv_id = tx.insert(
-            "INSERT INTO invoices (business_id, party_id, invoice_no, type, subtotal_paisa, "
-            "discount_paisa, tax_paisa, total_paisa, paid_paisa, balance_paisa, client_ref, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-            (biz, party_id, invoice_no, inv_type, subtotal, discount, tax, total,
-             paid, balance, client_ref, now_iso()),
+        _check_party(tx, biz, party_id)
+        lines, subtotal = _prepare_lines(tx, biz, data.get("lines"))
+        _totals_check(subtotal, discount, tax, paid)
+        inv_id = _insert_document(
+            tx, biz, inv_type, party_id, lines, subtotal,
+            discount, tax, paid, client_ref,
         )
-        stock_sign = -1 if inv_type == "sale" else 1  # purchases add stock
-        for line in lines:
-            tx.execute(
-                "INSERT INTO invoice_lines (invoice_id, item_id, description, qty, "
-                "rate_paisa, amount_paisa) VALUES (?, ?, ?, ?, ?, ?)",
-                (inv_id, line["item_id"], line["description"], line["qty"],
-                 line["rate_paisa"], line["amount_paisa"]),
-            )
-            if line["item_id"] is not None:
-                tx.execute(
-                    "UPDATE items SET stock_qty = stock_qty + ? WHERE id = ?",
-                    (stock_sign * line["qty"], line["item_id"]),
-                )
-        if paid > 0:
-            tx.execute(
-                "INSERT INTO payments (business_id, party_id, invoice_id, direction, "
-                "amount_paisa, client_ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (biz, party_id, inv_id, "in" if inv_type == "sale" else "out",
-                 paid, "{}:pay".format(client_ref) if client_ref else None, now_iso()),
-            )
         row = tx.query_one("SELECT * FROM invoices WHERE id = ?", (inv_id,))
+        result = _invoice_dict(tx, row)
+    return jsonify(ok=True, invoice=result), 201
+
+
+@bp.post("/invoices/<int:invoice_id>/convert")
+@require_session
+@require_approved
+@require_unlocked
+def convert_invoice(invoice_id):
+    """Estimate / Sale Order / Delivery Challan -> Sale Invoice.
+
+    Copies party, lines, discount and tax into a brand-new sale invoice
+    (which takes the sale stock effect), and marks the source document
+    as converted so it cannot be converted twice.
+    """
+    data = _body()
+    client_ref = _client_ref(data)
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        if client_ref:
+            existing = tx.query_one(
+                "SELECT * FROM invoices WHERE business_id = ? AND client_ref = ?",
+                (biz, client_ref),
+            )
+            if existing is not None:  # replay of an already-done conversion
+                return jsonify(ok=True, invoice=_invoice_dict(tx, existing)), 200
+        src = tx.query_one(
+            "SELECT * FROM invoices WHERE id = ? AND business_id = ?",
+            (invoice_id, biz),
+        )
+        if src is None:
+            raise ApiError("Document not found.", status=404)
+        if (src.get("type") or "sale") not in CONVERTIBLE_TYPES:
+            raise ApiError(
+                "Only an Estimate, Sale Order or Delivery Challan can be "
+                "converted to a Sale Invoice."
+            )
+        if src.get("converted_to_id"):
+            raise ApiError("This document was already converted to a Sale Invoice.")
+        src_lines = tx.query_all(
+            "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY id",
+            (src["id"],),
+        )
+        lines = [
+            {
+                "item_id": l["item_id"],
+                "description": l["description"],
+                "qty": l["qty"],
+                "rate_paisa": l["rate_paisa"],
+                "amount_paisa": l["amount_paisa"],
+            }
+            for l in src_lines
+        ]
+        subtotal = sum(l["amount_paisa"] for l in lines)
+        new_id = _insert_document(
+            tx, biz, "sale", src["party_id"], lines, subtotal,
+            src["discount_paisa"], src["tax_paisa"], 0, client_ref,
+        )
+        tx.execute(
+            "UPDATE invoices SET converted_to_id = ? WHERE id = ?",
+            (new_id, src["id"]),
+        )
+        row = tx.query_one("SELECT * FROM invoices WHERE id = ?", (new_id,))
         result = _invoice_dict(tx, row)
     return jsonify(ok=True, invoice=result), 201
 

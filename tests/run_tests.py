@@ -1117,6 +1117,164 @@ check(
     and "03273799008" in html,
 )
 
+# ============ 12g. Vyapar document engine (types, stock, convert) ======
+# Every document type rides the one invoices table. Stock moves ONLY
+# for sale / purchase / sale_return / purchase_return; estimates,
+# orders and challans are paper only. Conversions copy lines + totals
+# into a real sale invoice exactly once.
+r = client.post("/api/parties", headers=H(user_token), json={"name": "Doc Customer"})
+doc_party = r.get_json()["party"]["id"]
+r = client.post("/api/parties", headers=H(user_token), json={"name": "Doc Supplier"})
+doc_supplier = r.get_json()["party"]["id"]
+r = client.post("/api/items", headers=H(user_token), json={
+    "name": "Doc Test Widget", "sale_price_paisa": 60000,
+    "purchase_price_paisa": 50000, "stock_qty": 10})
+doc_item = r.get_json()["item"]["id"]
+
+def _doc_stock():
+    rr = client.get("/api/items", headers=H(user_token))
+    return {i["id"]: i["stockQty"] for i in rr.get_json()["items"]}[doc_item]
+
+def _doc_balance(pid):
+    rr = client.get("/api/parties", headers=H(user_token))
+    return {p["id"]: p["balancePaisa"] for p in rr.get_json()["parties"]}[pid]
+
+def _mkdoc(payload):
+    rr = client.post("/api/invoices", headers=H(user_token), json=payload)
+    return rr, (rr.get_json() or {}).get("invoice", {})
+
+r, est = _mkdoc({"type": "estimate", "party_id": doc_party,
+                 "lines": [{"item_id": doc_item, "qty": 2, "rate_paisa": 60000}]})
+check(
+    "docs: estimate created with EST- prefix, no due balance",
+    r.status_code == 201 and est.get("invoiceNo", "").startswith("EST-")
+    and est.get("totalPaisa") == 120000 and est.get("balancePaisa") == 0,
+    json.dumps(est),
+)
+check("docs: estimate does NOT move stock or party balance",
+      _doc_stock() == 10 and _doc_balance(doc_party) == 0)
+r, _bad = _mkdoc({"type": "estimate", "party_id": doc_party, "paid_paisa": 100,
+                  "lines": [{"item_id": doc_item, "qty": 1, "rate_paisa": 60000}]})
+check("docs: an estimate cannot take a payment (400)", r.status_code == 400)
+r, so = _mkdoc({"type": "sale_order", "party_id": doc_party,
+                "lines": [{"item_id": doc_item, "qty": 1, "rate_paisa": 60000}]})
+check("docs: sale order SO- prefix, no stock change",
+      r.status_code == 201 and so.get("invoiceNo", "").startswith("SO-")
+      and _doc_stock() == 10, json.dumps(so))
+r, dc = _mkdoc({"type": "challan", "party_id": doc_party,
+                "lines": [{"item_id": doc_item, "qty": 1, "rate_paisa": 60000}]})
+check("docs: delivery challan DC- prefix, no stock change",
+      r.status_code == 201 and dc.get("invoiceNo", "").startswith("DC-")
+      and _doc_stock() == 10, json.dumps(dc))
+r, po = _mkdoc({"type": "purchase_order", "party_id": doc_supplier,
+                "lines": [{"item_id": doc_item, "qty": 3, "rate_paisa": 50000}]})
+check("docs: purchase order PO- prefix, no stock change",
+      r.status_code == 201 and po.get("invoiceNo", "").startswith("PO-")
+      and _doc_stock() == 10, json.dumps(po))
+
+r = client.post("/api/invoices/{}/convert".format(est["id"]),
+                headers=H(user_token), json={})
+conv = (r.get_json() or {}).get("invoice", {})
+check(
+    "docs: estimate converts to a sale invoice copying lines + totals",
+    r.status_code == 201 and conv.get("type") == "sale"
+    and conv.get("invoiceNo", "").startswith("S-")
+    and conv.get("totalPaisa") == 120000 and conv.get("balancePaisa") == 120000
+    and len(conv.get("lines", [])) == 1 and conv["lines"][0]["qty"] == 2,
+    json.dumps(conv),
+)
+check("docs: the converted sale moves stock (10->8) and the party balance",
+      _doc_stock() == 8 and _doc_balance(doc_party) == 120000)
+r = client.get("/api/invoices/{}".format(est["id"]), headers=H(user_token))
+check("docs: the source estimate is marked converted",
+      (r.get_json() or {})["invoice"].get("convertedToId") == conv["id"])
+r = client.post("/api/invoices/{}/convert".format(est["id"]),
+                headers=H(user_token), json={})
+check("docs: converting twice is refused (400)", r.status_code == 400)
+r = client.post("/api/invoices/{}/convert".format(conv["id"]),
+                headers=H(user_token), json={})
+check("docs: a plain sale invoice cannot be converted (400)",
+      r.status_code == 400)
+
+r, sret = _mkdoc({"type": "sale_return", "party_id": doc_party,
+                  "lines": [{"item_id": doc_item, "qty": 1, "rate_paisa": 60000}]})
+check(
+    "docs: sale return SR- prefix restores stock (8->9), balance drops",
+    r.status_code == 201 and sret.get("invoiceNo", "").startswith("SR-")
+    and _doc_stock() == 9 and _doc_balance(doc_party) == 60000,
+    json.dumps(sret),
+)
+r, pur = _mkdoc({"type": "purchase", "party_id": doc_supplier,
+                 "lines": [{"item_id": doc_item, "qty": 4, "rate_paisa": 50000}]})
+check("docs: purchase adds stock (9->13)",
+      r.status_code == 201 and _doc_stock() == 13, json.dumps(pur))
+r, pret = _mkdoc({"type": "purchase_return", "party_id": doc_supplier,
+                  "lines": [{"item_id": doc_item, "qty": 1, "rate_paisa": 50000}]})
+check(
+    "docs: purchase return PR- prefix reduces stock (13->12)",
+    r.status_code == 201 and pret.get("invoiceNo", "").startswith("PR-")
+    and _doc_stock() == 12, json.dumps(pret),
+)
+
+# Day Book: today's documents + a payment + an expense all appear.
+client.post("/api/payments", headers=H(user_token),
+            json={"party_id": doc_party, "direction": "in", "amount_paisa": 1000})
+client.post("/api/expenses", headers=H(user_token),
+            json={"title": "Doc day expense", "amount_paisa": 500})
+today = _dt.now(_tz.utc).date().isoformat()
+r = client.get("/api/reports/day-book?date=" + today, headers=H(user_token))
+dbk = r.get_json() or {}
+kinds = {e["kind"] for e in dbk.get("entries", [])}
+check(
+    "reports: day book holds documents + a payment + an expense for the date",
+    r.status_code == 200 and "sale" in kinds and "payment" in kinds
+    and "expense" in kinds and dbk.get("totals", {}).get("expensesPaisa", 0) >= 500,
+    json.dumps(dbk.get("totals", {})),
+)
+r = client.get("/api/reports/stock-summary", headers=H(user_token))
+srow = {i["id"]: i for i in (r.get_json() or {}).get("items", [])}.get(doc_item, {})
+check(
+    "reports: stock summary math (opening 10, in 5, out 3, closing 12)",
+    srow.get("openingQty") == 10 and srow.get("inQty") == 5
+    and srow.get("outQty") == 3 and srow.get("closingQty") == 12
+    and srow.get("valuePaisa") == 12 * 50000,
+    json.dumps(srow),
+)
+
+# Guards on the new routes: pending account + locked session refused.
+r = client.post("/api/invoices", headers=H(tok_ip_c), json={
+    "type": "estimate", "lines": [{"qty": 1, "rate_paisa": 100}]})
+r2 = client.get("/api/reports/day-book", headers=H(tok_ip_c))
+r3 = client.post("/api/invoices/{}/convert".format(dc["id"]),
+                 headers=H(tok_ip_c), json={})
+check(
+    "docs: unapproved account refused on create, day-book and convert (403 pending)",
+    r.status_code == 403 and r.get_json().get("code") == "pending"
+    and r2.status_code == 403 and r3.status_code == 403,
+)
+r = client.get("/api/invoices/{}/pdf".format(est["id"]), headers=H(user_token))
+check("docs: estimate PDF renders (Estimate title route works)",
+      r.status_code == 200 and r.data[:4] == b"%PDF")
+client.post("/api/auth/lock", headers=H(user_token), json={})
+r = client.get("/api/reports/stock-summary", headers=H(user_token))
+r2 = client.post("/api/invoices", headers=H(user_token), json={
+    "type": "sale", "lines": [{"qty": 1, "rate_paisa": 100}]})
+check("docs: a locked session is refused on the new routes (403)",
+      r.status_code == 403 and r2.status_code == 403)
+r = client.post("/api/auth/login",
+                json={"email": USER_EMAIL, "password": "shop-pass-2", "remember": True})
+user_token = (r.get_json() or {}).get("token") or user_token
+
+html = client.get("/").get_data(as_text=True)
+check(
+    "frontend: Vyapar shell served (Add More menu, shortcuts, search, owner contact)",
+    'id="addMoreMenu"' in html and "Shortcut to open this menu" in html
+    and "Search Transactions" in html and "abdulqudoos5581@gmail.com" in html
+    and "03273799008" in html and 'data-nav="salebook"' in html
+    and "Alt + S" in html and 'id="btnAddPurchase"' in html
+    and 'id="searchTx"' in html and 'data-setcard="transaction"' in html,
+)
+
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
 r = client.get("/api/auth/me", headers=H(owner_token))

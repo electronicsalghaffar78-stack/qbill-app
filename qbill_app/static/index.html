@@ -11,38 +11,131 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><img class="brand-mark" src="/static/icons/icon-192.png" alt="">QBill</div>
-  <div id="syncPill" class="pill pill-on">Online · Auto-sync ON</div>
+  <button id="btnMenu" class="btn btn-menu" type="button" aria-label="Open menu">☰</button>
+  <img class="brand-mark top-mark" src="/static/icons/icon-192.png" alt="">
+  <div class="head-brand" id="headBizName">QBill</div>
+  <div class="view-title hidden" id="viewTitle">Home</div>
+  <div class="head-search"><input id="searchTx" type="search" placeholder="Search Transactions" aria-label="Search Transactions"></div>
+  <div class="head-contact">Owner: <strong>03273799008</strong> · <strong>abdulqudoos5581@gmail.com</strong></div>
   <div class="top-actions">
+    <button id="btnAddSale" class="btn btn-addsale hidden" type="button">＋ Add Sale</button>
+    <button id="btnAddPurchase" class="btn btn-addpurchase hidden" type="button">＋ Add Purchase</button>
+    <button id="btnAddMore" class="btn btn-addmore hidden" type="button">＋ Add More</button>
     <button id="btnLock" class="btn btn-ghost hidden" type="button">Lock</button>
     <button id="btnLogout" class="btn btn-ghost hidden" type="button">Log out</button>
   </div>
+  <div id="addMoreMenu" class="mega hidden">
+    <div class="mega-cols">
+      <div class="mega-col">
+        <h4>SALE</h4>
+        <button class="mega-item" data-act="doc:sale" type="button"><span>Sale Invoice</span><kbd>Alt + S</kbd></button>
+        <button class="mega-item" data-act="payin" type="button"><span>Payment-In</span><kbd>Alt + I</kbd></button>
+        <button class="mega-item" data-act="doc:sale_return" type="button"><span>Sale Return <em>Cr Note</em></span><kbd>Alt + R</kbd></button>
+        <button class="mega-item" data-act="doc:sale_order" type="button"><span>Sale Order</span><kbd>Alt + F</kbd></button>
+        <button class="mega-item" data-act="doc:estimate" type="button"><span>Estimate/Quotation</span><kbd>Alt + M</kbd></button>
+        <button class="mega-item" data-act="doc:challan" type="button"><span>Delivery Challan</span><kbd>Alt + D</kbd></button>
+      </div>
+      <div class="mega-col">
+        <h4>PURCHASE</h4>
+        <button class="mega-item" data-act="doc:purchase" type="button"><span>Purchase Bill</span><kbd>Alt + P</kbd></button>
+        <button class="mega-item" data-act="payout" type="button"><span>Payment-Out</span><kbd>Alt + O</kbd></button>
+        <button class="mega-item" data-act="doc:purchase_return" type="button"><span>Purchase Return <em>Dr Note</em></span><kbd>Alt + L</kbd></button>
+        <button class="mega-item" data-act="doc:purchase_order" type="button"><span>Purchase Order</span><kbd>Alt + G</kbd></button>
+      </div>
+      <div class="mega-col">
+        <h4>OTHERS</h4>
+        <button class="mega-item" data-act="expenses" type="button"><span>Expenses</span><kbd>Alt + E</kbd></button>
+      </div>
+    </div>
+    <div class="mega-foot">Shortcut to open this menu: <kbd>Ctrl</kbd> + <kbd>Enter</kbd></div>
+  </div>
 </header>
+
+<div class="shell">
+  <!-- Sidebar (wide screens): brand, main navigation, sync status. -->
+  <aside class="sidebar" id="sidebar">
+    <div class="side-brand"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><div class="side-biz"><span id="sideBizName">QBill</span><span class="side-email" id="sideBizEmail"></span></div></div>
+    <nav class="sidenav" aria-label="Main">
+      <button data-nav="dashboard" class="navbtn active" type="button">Home</button>
+      <button data-nav="parties" class="navbtn" type="button">Parties</button>
+      <button data-nav="items" class="navbtn" type="button">Items</button>
+      <div class="nav-group">
+        <button class="nav-group-head" data-group="sale" type="button">SALE <span class="chev">▾</span></button>
+        <div class="nav-group-body" id="group-sale">
+          <button data-nav="salebook" class="navbtn sub" type="button">Sale Invoices</button>
+          <button data-nav="estimates" class="navbtn sub" type="button">Estimate/Quotation</button>
+          <button data-nav="paymentin" class="navbtn sub" type="button">Payment In</button>
+          <button data-nav="saleorders" class="navbtn sub" type="button">Sale Order</button>
+          <button data-nav="challans" class="navbtn sub" type="button">Delivery Challan</button>
+          <button data-nav="salereturns" class="navbtn sub" type="button">Sale Return/Cr Note</button>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-group-head" data-group="purchase" type="button">PURCHASE <span class="chev">▾</span></button>
+        <div class="nav-group-body" id="group-purchase">
+          <button data-nav="purchasebook" class="navbtn sub" type="button">Purchase Bills</button>
+          <button data-nav="paymentout" class="navbtn sub" type="button">Payment Out</button>
+          <button data-nav="purchaseorders" class="navbtn sub" type="button">Purchase Order</button>
+          <button data-nav="purchasereturns" class="navbtn sub" type="button">Purchase Return</button>
+        </div>
+      </div>
+      <button data-nav="quickbilling" class="navbtn" type="button">Quick Billing</button>
+      <button data-nav="expenses" class="navbtn" type="button">Expenses</button>
+      <button data-nav="cashbank" class="navbtn" type="button">Cash &amp; Bank</button>
+      <div class="nav-group">
+        <button class="nav-group-head" data-group="reports" type="button">REPORTS <span class="chev">▾</span></button>
+        <div class="nav-group-body" id="group-reports">
+          <button data-nav="pnl" class="navbtn sub" type="button">Profit &amp; Loss</button>
+          <button data-nav="daybook" class="navbtn sub" type="button">Day Book</button>
+          <button data-nav="stock" class="navbtn sub" type="button">Stock Summary</button>
+        </div>
+      </div>
+      <button data-nav="settings" class="navbtn" type="button">Settings</button>
+    </nav>
+    <div class="side-foot"><div id="syncPillSide" class="pill pill-on">Online · Auto-sync ON</div></div>
+  </aside>
+  <div id="sideScrim" class="side-scrim hidden"></div>
 
 <main>
   <!-- ======================= APP ======================= -->
   <div id="appView" class="hidden">
-    <nav class="mainnav">
-      <button data-nav="dashboard" class="navbtn active" type="button">Dashboard</button>
-      <button data-nav="parties" class="navbtn" type="button">Parties</button>
-      <button data-nav="items" class="navbtn" type="button">Items</button>
-      <button data-nav="sale" class="navbtn" type="button">New Sale</button>
-      <button data-nav="payments" class="navbtn" type="button">Payments</button>
-      <button data-nav="expenses" class="navbtn" type="button">Expenses</button>
-      <button data-nav="settings" class="navbtn" type="button">Settings</button>
-    </nav>
+    
     <p id="offlineNote" class="offline-note hidden">You are offline — showing the last loaded data. New entries are saved on this device and will sync automatically.</p>
     <p id="appMsg" class="msg"></p>
 
     <!-- Dashboard -->
     <section id="screen-dashboard" class="screen">
-      <div class="cards">
-        <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
-        <div class="stat"><span class="stat-label">This Month's Sales</span><span class="stat-value" id="dMonth">—</span></div>
-        <div class="stat"><span class="stat-label">Total Receivable</span><span class="stat-value" id="dReceivable">—</span></div>
-        <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="dCash">—</span></div>
-        <div class="stat"><span class="stat-label">Stock Value</span><span class="stat-value" id="dStock">—</span></div>
-        <div class="stat"><span class="stat-label">Profit (this month)</span><span class="stat-value" id="dProfit">—</span></div>
+      <div class="dash-grid">
+        <div class="dash-main">
+          <div class="card sale-hero">
+            <div class="sale-hero-top"><span class="stat-label">Sale</span><span class="hero-per">This Month</span></div>
+            <div class="hero-value" id="dMonth">—</div>
+            <div class="hero-sub">Total Sale (This Month)</div>
+          </div>
+          <div class="cards">
+            <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
+            <div class="stat"><span class="stat-label">You'll Receive</span><span class="stat-value pos" id="dReceivable">—</span></div>
+            <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span></div>
+            <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span></div>
+            <div class="stat"><span class="stat-label">Profit (This Month)</span><span class="stat-value" id="dProfit">—</span></div>
+          </div>
+        </div>
+        <aside class="dash-side">
+          <div class="card side-card">
+            <h3>Stock Inventory</h3>
+            <div class="kv"><span>Stock Value</span><strong id="dStock">—</strong></div>
+            <div class="kv hidden" id="dLowRow"><span>Low Stocks</span><strong class="neg-text" id="dLowStock">0 items</strong></div>
+          </div>
+          <div class="card side-card">
+            <h3>Sale</h3>
+            <div class="kv"><span>Sale Orders (Open)</span><strong id="dOpenOrders">0</strong></div>
+            <div class="kv"><span>Delivery Challans (Open)</span><strong id="dOpenChallans">0</strong></div>
+          </div>
+          <div class="card side-card">
+            <h3>Cash &amp; Bank</h3>
+            <div class="kv"><span>Cash in Hand</span><strong id="dCash">—</strong></div>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -79,33 +172,64 @@
       <div id="itemList" class="list"></div>
     </section>
 
-    <!-- New Sale -->
+    <!-- Document form (shared by every document type) -->
     <section id="screen-sale" class="screen hidden">
-      <form id="saleForm" class="card form-card">
-        <h2>New sale invoice</h2>
-        <label>Party
-          <select id="saleParty"><option value="">Cash Sale</option></select>
-        </label>
-        <div id="saleLines"></div>
-        <button id="btnAddLine" class="btn btn-link" type="button">+ Add line</button>
-        <div class="grid2">
-          <label>Discount (Rs) <input id="saleDiscount" type="number" step="0.01" min="0" value="0"></label>
-          <label>Paid now (Rs) <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
+      <form id="saleForm" class="card form-card doc-form">
+        <div class="doc-head">
+          <h2 id="docTitle">Sale Invoice</h2>
+          <div class="doc-toggle" id="docToggleWrap">
+            <span>Credit</span>
+            <button id="docCashToggle" class="toggle" type="button" role="switch" aria-checked="false" aria-label="Cash payment"><span class="knob"></span></button>
+            <span>Cash</span>
+          </div>
+          <div class="doc-meta">
+            <div><span>Invoice Number</span><strong id="docNumber">Auto</strong></div>
+            <div><span>Date</span><strong id="docDate">—</strong></div>
+          </div>
         </div>
-        <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong></p>
-        <button class="btn btn-primary btn-block" type="submit">Save invoice</button>
+        <div class="grid2">
+          <label><span id="docPartyLabel">Customer</span>
+            <select id="saleParty"><option value="">Cash Sale</option></select>
+          </label>
+          <label>Phone No. <input id="docPhone" type="text" readonly placeholder="Party phone"></label>
+        </div>
+        <div class="doc-party-extra">
+          <span id="docPartyBalance" class="note"></span>
+          <button id="btnDocAddParty" class="btn btn-link" type="button">+ Add Party</button>
+        </div>
+        <div id="docAddParty" class="grid2 hidden">
+          <label>New party name <input id="docNewPartyName" type="text"></label>
+          <label>New party phone <input id="docNewPartyPhone" type="text"></label>
+          <button id="btnDocPartySave" class="btn" type="button">Add party</button>
+        </div>
+        <div class="doc-lines-head"><span>Item</span><span>Qty</span><span>Unit</span><span>Price/Unit</span><span>Amount</span><span></span></div>
+        <div id="saleLines"></div>
+        <button id="btnAddLine" class="btn btn-link" type="button">+ Add Row</button>
+        <div class="doc-totals">
+          <label>Discount (Rs) <input id="saleDiscount" type="number" step="0.01" min="0" value="0"></label>
+          <label>Tax (Rs) <input id="saleTax" type="number" step="0.01" min="0" value="0"></label>
+          <label id="docPaidWrap"><span id="docPaidLabel">Paid now (Rs)</span> <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
+          <label class="check-row"><input id="docRoundOff" type="checkbox"> <span>Round Off</span></label>
+          <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong></p>
+        </div>
+        <button class="btn btn-primary btn-block" id="docSaveBtn" type="submit">Save</button>
       </form>
       <div id="saleDone" class="card hidden">
         <p id="saleDoneText"></p>
-        <button id="btnSalePdf" class="btn btn-primary" type="button">Download PDF</button>
-        <button id="btnSaleNew" class="btn btn-link" type="button">Make another sale</button>
+        <button id="btnSalePdf" class="btn btn-primary" type="button">Share (PDF)</button>
+        <button id="btnSaleNew" class="btn btn-link" type="button">Make another</button>
+        <button id="btnSaleBook" class="btn btn-link" type="button">Open the book</button>
       </div>
-      <h3>Recent invoices</h3>
-      <div id="invoiceList" class="list"></div>
     </section>
 
     <!-- Payments -->
     <section id="screen-payments" class="screen hidden">
+      <div class="filter-chips">
+        <button class="fchip active" data-payfilter="all" type="button">All Payments</button>
+        <button class="fchip" data-payfilter="in" type="button">Payment In</button>
+        <button class="fchip" data-payfilter="out" type="button">Payment Out</button>
+      </div>
+      <p id="paySettleNote" class="offline-note hidden"><span id="paySettleText"></span> <button id="btnPaySettleClear" class="btn btn-link" type="button">Clear</button></p>
       <form id="paymentForm" class="card form-card">
         <h2>Add payment</h2>
         <label>Party
@@ -135,9 +259,114 @@
       <div id="expenseList" class="list"></div>
     </section>
 
+    <!-- Sale / Purchase book -->
+    <section id="screen-book" class="screen hidden">
+      <div class="book-head">
+        <div class="period-row">
+          <button class="fchip active" id="bookPeriodMonth" type="button">This Month</button>
+          <label>From <input id="bookFrom" type="date"></label>
+          <label>To <input id="bookTo" type="date"></label>
+          <button id="btnBookGo" class="btn" type="button">Apply</button>
+        </div>
+        <button id="btnBookAdd" class="btn btn-addsale" type="button">＋ Add Sale</button>
+      </div>
+      <div class="sum-cards">
+        <div class="sum-card paid"><span>Paid</span><strong id="bookPaid">—</strong></div>
+        <div class="sum-op">+</div>
+        <div class="sum-card unpaid"><span>Unpaid</span><strong id="bookUnpaid">—</strong></div>
+        <div class="sum-op">=</div>
+        <div class="sum-card total"><span>Total</span><strong id="bookTotal">—</strong></div>
+      </div>
+      <div class="card table-card">
+        <table class="tx-table">
+          <thead><tr><th>Date</th><th>Invoice No.</th><th>Party Name</th><th>Type</th><th>Payment Type</th><th class="num">Amount</th><th class="num">Balance Due</th><th></th></tr></thead>
+          <tbody id="bookBody"></tbody>
+        </table>
+        <p id="bookEmpty" class="empty hidden">No transactions in this period.</p>
+      </div>
+    </section>
+
+    <!-- Document lists (estimates, orders, challans, returns) -->
+    <section id="screen-docs" class="screen hidden">
+      <div class="book-head">
+        <h2 id="docsTitle">Estimates</h2>
+        <button id="btnDocsAdd" class="btn btn-addsale" type="button">＋ Add</button>
+      </div>
+      <div class="card table-card">
+        <table class="tx-table">
+          <thead><tr><th>Date</th><th>Number</th><th>Party</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+          <tbody id="docsBody"></tbody>
+        </table>
+        <p id="docsEmpty" class="empty hidden">Nothing here yet.</p>
+      </div>
+    </section>
+
+    <!-- Cash & Bank -->
+    <section id="screen-cashbank" class="screen hidden">
+      <div class="cards">
+        <div class="stat"><span class="stat-label">Total Payments In</span><span class="stat-value pos" id="cbIn">—</span></div>
+        <div class="stat"><span class="stat-label">Total Payments Out</span><span class="stat-value neg" id="cbOut">—</span></div>
+        <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="cbCash">—</span></div>
+      </div>
+      <h3>All payments</h3>
+      <div id="cashbankList" class="list"></div>
+    </section>
+
+    <!-- Profit & Loss -->
+    <section id="screen-pnl" class="screen hidden">
+      <div class="book-head">
+        <div class="period-row">
+          <label>From <input id="pnlFrom" type="date"></label>
+          <label>To <input id="pnlTo" type="date"></label>
+          <button id="btnPnlGo" class="btn" type="button">Apply</button>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="stat"><span class="stat-label">Sales</span><span class="stat-value pos" id="pnlSales">—</span></div>
+        <div class="stat"><span class="stat-label">Purchases</span><span class="stat-value" id="pnlPurchases">—</span></div>
+        <div class="stat"><span class="stat-label">Expenses</span><span class="stat-value neg" id="pnlExpenses">—</span></div>
+        <div class="stat"><span class="stat-label">Profit</span><span class="stat-value" id="pnlProfit">—</span></div>
+      </div>
+    </section>
+
+    <!-- Day Book -->
+    <section id="screen-daybook" class="screen hidden">
+      <div class="book-head">
+        <div class="period-row">
+          <label>Date <input id="dbDate" type="date"></label>
+          <button id="btnDbGo" class="btn" type="button">Show</button>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="stat"><span class="stat-label">Documents</span><span class="stat-value" id="dbDocs">—</span></div>
+        <div class="stat"><span class="stat-label">Payments In</span><span class="stat-value pos" id="dbIn">—</span></div>
+        <div class="stat"><span class="stat-label">Payments Out</span><span class="stat-value neg" id="dbOut">—</span></div>
+        <div class="stat"><span class="stat-label">Expenses</span><span class="stat-value neg" id="dbExp">—</span></div>
+      </div>
+      <div id="daybookList" class="list"></div>
+    </section>
+
+    <!-- Stock Summary -->
+    <section id="screen-stock" class="screen hidden">
+      <div class="card table-card">
+        <table class="tx-table">
+          <thead><tr><th>Item</th><th class="num">Opening</th><th class="num">In</th><th class="num">Out</th><th class="num">Closing</th><th class="num">Value</th></tr></thead>
+          <tbody id="stockBody"></tbody>
+        </table>
+        <p id="stockEmpty" class="empty hidden">No items yet.</p>
+      </div>
+    </section>
+
     <!-- Settings -->
     <section id="screen-settings" class="screen hidden">
-      <form id="profileForm" class="card form-card">
+      <div class="settings-rail">
+        <button class="set-cat active" data-setcat="general" type="button">GENERAL</button>
+        <button class="set-cat" data-setcat="transaction" type="button">TRANSACTION</button>
+        <button class="set-cat" data-setcat="backups" type="button">BACKUPS</button>
+        <button class="set-cat hidden" data-setcat="email" id="setCatEmail" type="button">EMAIL DELIVERY</button>
+        <button class="set-cat hidden" data-setcat="accounts" id="setCatAccounts" type="button">CUSTOMER ACCOUNTS</button>
+      </div>
+      <form id="profileForm" class="card form-card" data-setcard="general">
         <h2>Business profile</h2>
         <label>Business name <input id="profName" type="text" required></label>
         <label>Address <input id="profAddress" type="text"></label>
@@ -146,14 +375,24 @@
         <button class="btn btn-primary" type="submit">Save profile</button>
       </form>
 
-      <div class="card form-card">
+      <form id="transForm" class="card form-card hidden" data-setcard="transaction">
+        <h2>Transaction settings</h2>
+        <p class="note">These print on every bill PDF. Leave empty to use the standard wording.</p>
+        <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
+        <label>Terms &amp; Conditions (one per line)
+          <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
+        </label>
+        <button class="btn btn-primary" type="submit">Save transaction settings</button>
+      </form>
+
+      <div class="card form-card hidden" data-setcard="backups">
         <h2>Backups</h2>
         <p class="note">A backup is made automatically every day and emailed to your login email. Backups made offline on this device upload themselves when the internet returns.</p>
         <button id="btnBackupNow" class="btn btn-primary" type="button">Back up now</button>
         <div id="backupList" class="list"></div>
       </div>
 
-      <div id="ownerMailCard" class="card form-card hidden">
+      <div id="ownerMailCard" class="card form-card hidden" data-setcard="email">
         <h2>Email Delivery (OTP) — owner</h2>
         <p class="note">Keys are kept only on the server and are never shown again. Leave a key field empty to keep the saved key.</p>
         <p id="mailRoutes" class="note"></p>
@@ -171,7 +410,7 @@
         <p id="mailMsg" class="msg"></p>
       </div>
 
-      <div id="ownerAccountsCard" class="card form-card hidden">
+      <div id="ownerAccountsCard" class="card form-card hidden" data-setcard="accounts">
         <h2>Customer accounts — owner</h2>
         <p class="note">Every QBill account is listed here, with the IP addresses it used. A new account cannot use QBill until you approve it. Blocking an account signs it out everywhere.</p>
         <p id="accountsMsg" class="msg"></p>
@@ -180,6 +419,7 @@
     </section>
   </div>
 </main>
+</div><!-- /.shell -->
 
 <!-- ============ ACTIVATE YOUR ACCOUNT (not approved / not activated yet) ============ -->
 <div id="pendingView" class="hidden">

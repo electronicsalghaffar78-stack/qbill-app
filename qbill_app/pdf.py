@@ -29,6 +29,17 @@ TERMS = [
     "4. Warranty, where applicable, is as per the manufacturer's terms.",
 ]
 
+DOC_TITLES = {
+    "sale": "SALE INVOICE",
+    "purchase": "PURCHASE INVOICE",
+    "estimate": "ESTIMATE",
+    "sale_order": "SALE ORDER",
+    "purchase_order": "PURCHASE ORDER",
+    "challan": "DELIVERY CHALLAN",
+    "sale_return": "CREDIT NOTE",
+    "purchase_return": "DEBIT NOTE",
+}
+
 
 # ------------------------------------------------------- amount in words --
 _ONES = [
@@ -109,7 +120,7 @@ def render_invoice_pdf(business, invoice, party_name):
     pdf.line(left, y, right, y)
     y -= 24
 
-    title = "SALE INVOICE" if (invoice.get("type") or "sale") == "sale" else "PURCHASE INVOICE"
+    title = DOC_TITLES.get(invoice.get("type") or "sale", "SALE INVOICE")
     pdf.setFont("Helvetica-Bold", 13)
     pdf.drawString(left, y, title)
     pdf.setFont("Helvetica", 10)
@@ -150,6 +161,10 @@ def render_invoice_pdf(business, invoice, party_name):
     totals = [
         ("Subtotal", invoice["subtotalPaisa"]),
         ("Discount", invoice["discountPaisa"]),
+    ]
+    if invoice.get("taxPaisa"):
+        totals.append(("Tax", invoice["taxPaisa"]))
+    totals += [
         ("Total", invoice["totalPaisa"]),
         ("Paid", invoice["paidPaisa"]),
         ("Balance", invoice["balancePaisa"]),
@@ -173,13 +188,21 @@ def render_invoice_pdf(business, invoice, party_name):
             fmt(invoice["paidPaisa"]), fmt(invoice["balancePaisa"])
         ),
     )
+    if business.get("tax_note"):
+        y -= 16
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(left, y, "Tax Note: " + str(business["tax_note"])[:110])
     y -= 22
     pdf.setFont("Helvetica-Bold", 10)
     pdf.drawString(left, y, "Terms & Conditions")
     y -= 14
     pdf.setFont("Helvetica", 9)
-    for term in TERMS:
-        pdf.drawString(left, y, term)
+    custom_terms = [
+        line.strip() for line in str(business.get("terms") or "").splitlines()
+        if line.strip()
+    ]
+    for term in (custom_terms or TERMS):
+        pdf.drawString(left, y, term[:110])
         y -= 12
     y -= 10
     pdf.setFont("Helvetica-Oblique", 9)
@@ -219,6 +242,8 @@ def invoice_pdf(invoice_id):
             "address": business.get("address"),
             "phone": business.get("phone"),
             "email": business.get("email"),
+            "tax_note": business.get("tax_note"),
+            "terms": business.get("terms"),
         },
         invoice,
         party_name,
