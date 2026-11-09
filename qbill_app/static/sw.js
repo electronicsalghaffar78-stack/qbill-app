@@ -2,7 +2,7 @@
    API requests (/api/...) are never intercepted and never cached: user
    data must always come from the server (or the app's own offline queue),
    never from a stale worker cache. */
-var CACHE = "qbill-shell-v1";
+var CACHE = "qbill-shell-v2";
 var SHELL = [
   "/",
   "/static/app.js",
@@ -10,7 +10,8 @@ var SHELL = [
   "/static/manifest.webmanifest",
   "/manifest.webmanifest",
   "/static/icons/icon-192.png",
-  "/static/icons/icon-512.png"
+  "/static/icons/icon-512.png",
+  "/static/icons/logo-full.png"
 ];
 
 self.addEventListener("install", function (event) {
