@@ -1841,12 +1841,12 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar6/v15 (sale-form cleanup build)",
+    "version/cache moved to vyapar7/v16 (type-to-search build)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-10.17-vyapar6"
-    and "qbill-shell-v15" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-10.18-vyapar7"
+    and "qbill-shell-v16" in client.get("/sw.js").get_data(as_text=True),
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -2430,6 +2430,71 @@ check("cleanup: values inside More Details + the Terms selection still "
       and sf_inv.get("repeatFreq") == "monthly"
       and sf_inv.get("termsId") == sf_term_id,
       json.dumps(sf_inv)[:240])
+
+# ----------------- 12o. type-to-search + sidebar + tax dropdown -------
+# Qudoos phone check of .17 (2026-11-10 ~22:03), against his Vyapar
+# reference photo: (1) the ITEM cell is a TEXT INPUT — he types the
+# item name himself, matching items drop down with the picker columns
+# (ITEM / SALE PRICE / PURCHASE PRICE / STOCK / LOCATION + an
+# "+ Add Item" header); picking nothing leaves a free-text line whose
+# typed name is saved as the line description — there is NO
+# "— Custom line —" resting state; (2) sidebar groups start
+# MINIMIZED, opening only on click, with a has-active header hint;
+# (3) the TAX cell is a dropdown resting on "Select".
+tt_html = client.get("/").get_data(as_text=True)
+tt_js = client.get("/static/app.js").get_data(as_text=True)
+tt_css = client.get("/static/styles.css").get_data(as_text=True)
+check("typetosearch: item cell = text input + hidden id, suggestion "
+      "menu keeps picker columns + Add Item, no Custom-line label, "
+      "free text saved as the line description",
+      'class="sl-item-name" type="text"' in tt_js
+      and 'class="sl-item" type="hidden"' in tt_js
+      and "Custom line" not in tt_js
+      and "showItemMenu" in tt_js and "buildItemMenu" in tt_js
+      and "SALE PRICE" in tt_js and "PURCHASE PRICE" in tt_js
+      and "sl-add-item" in tt_js
+      and "line.description = typedName" in tt_js
+      and ".sl-item-name" in tt_css)
+check("sidebar: SALE/PURCHASE/STOCK/REPORTS groups served closed "
+      "(head + body) with toggle + has-active hint wiring",
+      tt_html.count("nav-group-head closed") == 4
+      and tt_html.count("nav-group-body closed") == 4
+      and "has-active" in tt_js
+      and ".nav-group-head.has-active" in tt_css)
+check("tax dropdown: TAX cell is a <select> resting on 'Select' "
+      "(None + the account's rates), choice sets the line tax %",
+      '<select class="sl-tax"></select>' in tt_js
+      and 'textContent = "Select"' in tt_js
+      and 'textContent = "None"' in tt_js
+      and "buildLineTax" in tt_js and "setLineTaxPct" in tt_js
+      and "lineTaxRates" in tt_js)
+r = client.post("/api/invoices", headers=HW,
+                json={"type": "sale",
+                      "lines": [{"qty": 2, "rate_paisa": 10000,
+                                 "tax_paisa": 2000,
+                                 "description": "Taxed line"}]})
+tt_inv_id = (r.get_json() or {}).get("invoice", {}).get("id")
+r = client.get("/api/invoices/{}".format(tt_inv_id), headers=HW)
+tt_inv = (r.get_json() or {}).get("invoice", {})
+tt_line = (tt_inv.get("lines") or [{}])[0]
+check("tax dropdown: a chosen 10% rate saves exact (line tax 2000, "
+      "invoice tax 2000, total 22000)",
+      tt_line.get("taxPaisa") == 2000 and tt_inv.get("taxPaisa") == 2000
+      and tt_inv.get("totalPaisa") == 22000,
+      json.dumps(tt_inv)[:240])
+r = client.post("/api/invoices", headers=HW,
+                json={"type": "sale",
+                      "lines": [{"qty": 3, "rate_paisa": 15000,
+                                 "description": "Hand Typed Gadget"}]})
+ft_id = (r.get_json() or {}).get("invoice", {}).get("id")
+r = client.get("/api/invoices/{}".format(ft_id), headers=HW)
+ft_inv = (r.get_json() or {}).get("invoice", {})
+ft_line = (ft_inv.get("lines") or [{}])[0]
+check("typetosearch: a free-text line (no item id) saves and reloads "
+      "with its typed name",
+      ft_line.get("description") == "Hand Typed Gadget"
+      and ft_line.get("itemId") is None and ft_line.get("qty") == 3,
+      json.dumps(ft_inv)[:240])
 
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))

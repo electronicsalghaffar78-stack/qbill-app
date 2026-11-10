@@ -144,6 +144,10 @@ main { flex: 1; min-width: 0; width: 100%; max-width: 1180px; margin: 0 auto; pa
 .nav-group-head .chev { transition: transform .15s; }
 .nav-group-head.closed .chev { transform: rotate(-90deg); }
 .nav-group-body.closed { display: none; }
+/* Minimized group holding the active screen: white label, orange
+   chevron and an orange left bar — a hint only, never auto-open. */
+.nav-group-head.has-active { color: #fff; box-shadow: inset 4px 0 0 var(--orange); }
+.nav-group-head.has-active .chev { color: var(--orange); }
 .side-foot { padding: 12px 16px 16px; border-top: 1px solid rgba(255,255,255,.12); }
 .side-scrim { position: fixed; inset: 0; background: rgba(10, 25, 47, .45); z-index: 45; }
 .pill {
@@ -539,6 +543,8 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
 /* Audit 2026-11-10 additions: bill-line item picker, expenses layout,
    import-wizard template box. */
 .sl-picker { display: block; margin-top: 0; }
+/* Type-to-search item cell: a plain text input, Vyapar-style. */
+.sl-item-name { width: 100%; margin-top: 0; }
 .sl-picker-menu {
   position: fixed; right: auto; width: min(540px, 94vw);
   max-height: 380px; z-index: 60;

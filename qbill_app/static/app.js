@@ -807,6 +807,13 @@ function setActiveNav() {
   document.querySelectorAll(".navbtn").forEach(function (b) {
     b.classList.toggle("active", b.getAttribute("data-nav") === navKey);
   });
+  /* Sidebar groups start minimized (Qudoos phone check 2026-11-10):
+     a group holding the active screen gets a hint on its header —
+     it is NOT auto-opened; groups open only on the user's click. */
+  document.querySelectorAll(".nav-group").forEach(function (g) {
+    var head = g.querySelector(".nav-group-head");
+    if (head) head.classList.toggle("has-active", !!g.querySelector(".navbtn.active"));
+  });
 }
 function showScreen(name) {
   currentScreen = name;
@@ -1927,20 +1934,65 @@ function itemById(id) {
   return (((cacheGet("items") || {}).items) || []).filter(function (i) { return i.id === id; })[0] || null;
 }
 
-/* The bill-line item select stays the single value source (hidden);
-   fillLineItemOptions rebuilds its options from the items cache. */
+/* The bill line's item id lives on a hidden input (.sl-item) — the
+   single value source every reader uses; the visible cell is a
+   type-to-search text input (Vyapar behaviour, Qudoos phone check
+   2026-11-10). fillLineItemOptions is kept only as a guarded no-op
+   for any legacy SELECT caller; hidden inputs need no options. */
 function fillLineItemOptions(sel) {
-  var keep = sel.value;
-  sel.innerHTML = "";
-  var customs = document.createElement("option");
-  customs.value = ""; customs.textContent = "— Custom line —";
-  sel.appendChild(customs);
-  ((cacheGet("items") || {}).items || []).forEach(function (i) {
-    var o = document.createElement("option");
-    o.value = i.id; o.textContent = i.name; o.setAttribute("data-rate", i.salePricePaisa);
-    sel.appendChild(o);
+  /* No-op: the item cell is a text input + hidden id input now;
+     there are no per-line <select> options left to rebuild. */
+  return;
+}
+/* Bill-line TAX is a dropdown (Vyapar): resting label "Select", then
+   "None", then the rates the account actually uses — the Settings
+   default rate plus every rate items already carry. Choosing a rate
+   sets the line's tax %; the TAX AMOUNT column stays computed. */
+function fmtTaxPct(v) {
+  return String(Math.round(v * 100) / 100);
+}
+function lineTaxRates() {
+  var s = QB.settings || {};
+  var seen = {};
+  if (s.default_tax_bp) seen[s.default_tax_bp / 100] = true;
+  (((cacheGet("items") || {}).items) || []).forEach(function (i) {
+    if (i.taxBp) seen[i.taxBp / 100] = true;
   });
-  if (keep) sel.value = keep;
+  return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+}
+function ensureTaxOption(selEl, pct) {
+  var v = String(pct);
+  var found = false;
+  [].forEach.call(selEl.options, function (o) { if (o.value === v) found = true; });
+  if (!found) {
+    var o = document.createElement("option");
+    o.value = v; o.textContent = fmtTaxPct(pct) + "%";
+    selEl.appendChild(o);
+  }
+}
+function buildLineTax(selEl, initialPct) {
+  selEl.innerHTML = "";
+  var o0 = document.createElement("option");
+  o0.value = ""; o0.textContent = "Select";
+  selEl.appendChild(o0);
+  var o1 = document.createElement("option");
+  o1.value = "0"; o1.textContent = "None";
+  selEl.appendChild(o1);
+  lineTaxRates().forEach(function (pct) {
+    var o = document.createElement("option");
+    o.value = String(pct); o.textContent = fmtTaxPct(pct) + "%";
+    selEl.appendChild(o);
+  });
+  if (initialPct != null && initialPct !== "" && Number(initialPct) !== 0) {
+    ensureTaxOption(selEl, Number(initialPct));
+  }
+  selEl.value = (initialPct == null ? "" : String(initialPct));
+}
+function setLineTaxPct(w, pct) {
+  var selEl = w.querySelector(".sl-tax");
+  if (!selEl || selEl.tagName !== "SELECT") return;
+  ensureTaxOption(selEl, pct);
+  selEl.value = String(pct);
 }
 function addSaleLine(itemId, preset) {
   var s = QB.settings || {};
@@ -1948,9 +2000,9 @@ function addSaleLine(itemId, preset) {
   wrap.className = "sale-line";
   var html =
     '<span class="sl-num"></span>' +
-    '<span class="sl-item-cell"><select class="sl-item hidden"></select>' +
+    '<span class="sl-item-cell"><input class="sl-item" type="hidden">' +
     '<span class="party-picker sl-picker">' +
-      '<button type="button" class="party-picker-btn sl-picker-btn"><span class="sl-picker-text">— Custom line —</span><span class="party-picker-caret">▾</span></button>' +
+      '<input class="sl-item-name" type="text" placeholder="Type item name" autocomplete="off">' +
       '<span class="party-picker-menu sl-picker-menu hidden">' +
         '<button type="button" class="party-picker-add sl-add-item">+ Add Item</button>' +
         '<span class="sl-quickadd hidden">' +
@@ -1969,8 +2021,7 @@ function addSaleLine(itemId, preset) {
     '<span class="sl-unit-cell"><select class="sl-unit-sel"></select></span>' +
     '<span class="sl-rate-cell"><input class="sl-rate" type="number" step="0.01" min="0" value="0"></span>' +
     '<span class="sl-disc-cell"><input class="sl-disc" type="number" step="0.01" min="0" value="0"><span class="sl-disc-amt">Rs 0.00</span></span>' +
-    '<span class="sl-tax-cell"><input class="sl-tax" type="number" step="0.01" min="0" value="' +
-      ((s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : 0) + '"><span class="sl-tax-amt">Rs 0.00</span></span>' +
+    '<span class="sl-tax-cell"><select class="sl-tax"></select><span class="sl-tax-amt">Rs 0.00</span></span>' +
     '<span class="sl-amt">Rs 0.00</span>' +
     '<button class="rm" type="button" title="Remove line">×</button>' +
     /* Per-line Description / Batch No. / Serial No. / Exp inputs were
@@ -1996,23 +2047,34 @@ function addSaleLine(itemId, preset) {
     unitSel.appendChild(po);
   }
   var sel = wrap.querySelector(".sl-item");
-  fillLineItemOptions(sel);
-  /* Vyapar-style item picker (audit 2026-11-10, research §1): the
-     dropdown opens with "+ Add Item" and shows SALE PRICE /
-     PURCHASE PRICE / STOCK / LOCATION columns for every item. The
-     menu is fixed-positioned because the bill grid clips overflow. */
-  var pickerBtn = wrap.querySelector(".sl-picker-btn");
-  var pickerText = wrap.querySelector(".sl-picker-text");
+  buildLineTax(wrap.querySelector(".sl-tax"),
+    (s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : "");
+  /* Type-to-search item cell (Qudoos phone check 2026-11-10): the
+     shopkeeper types the item name himself; the suggestion dropdown
+     below lists the MATCHING items with Vyapar's columns (ITEM /
+     SALE PRICE / PURCHASE PRICE / STOCK / LOCATION) under a
+     "+ Add Item" header row. Picking a row fills the line exactly
+     as before; typing without picking leaves a free-text line (the
+     typed name is saved as the line description — no forced
+     selection, no special resting label). The menu is
+     fixed-positioned because the bill grid clips overflow. */
+  var nameInput = wrap.querySelector(".sl-item-name");
   var pickerMenu = wrap.querySelector(".sl-picker-menu");
   function buildItemMenu() {
     var list = wrap.querySelector(".sl-picker-list");
     list.innerHTML = "";
     var items = ((cacheGet("items") || {}).items || []);
-    if (!items.length) {
-      list.innerHTML = '<p class="empty" style="padding:6px">No items yet — use + Add Item above.</p>';
+    var q = nameInput.value.trim().toLowerCase();
+    var matches = items.filter(function (i) {
+      return !q || String(i.name || "").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!matches.length) {
+      list.innerHTML = '<p class="empty" style="padding:6px">' +
+        (items.length ? "No matching items — use + Add Item above."
+                      : "No items yet — use + Add Item above.") + "</p>";
       return;
     }
-    items.forEach(function (i) {
+    matches.forEach(function (i) {
       var b = document.createElement("button");
       b.type = "button";
       b.className = "sl-item-row" + (String(sel.value) === String(i.id) ? " sel" : "");
@@ -2022,6 +2084,7 @@ function addSaleLine(itemId, preset) {
         "<span>" + (i.stockQty != null ? i.stockQty : 0) + "</span>" +
         "<span>" + esc(i.location || "—") + "</span>";
       b.addEventListener("click", function () {
+        nameInput.value = i.name;
         sel.value = i.id;
         sel.dispatchEvent(new Event("change"));
         pickerMenu.classList.add("hidden");
@@ -2029,18 +2092,34 @@ function addSaleLine(itemId, preset) {
       list.appendChild(b);
     });
   }
-  pickerBtn.addEventListener("click", function (ev) {
-    ev.stopPropagation();
-    var opening = pickerMenu.classList.contains("hidden");
-    document.querySelectorAll(".sl-picker-menu").forEach(function (m) { m.classList.add("hidden"); });
-    if (!opening) return;
+  function showItemMenu() {
+    document.querySelectorAll(".sl-picker-menu").forEach(function (m) {
+      if (m !== pickerMenu) m.classList.add("hidden");
+    });
     wrap.querySelector(".sl-add-item").classList.toggle("hidden",
       !!(QB.settings && QB.settings.block_new_from_txn));
     buildItemMenu();
-    var r = pickerBtn.getBoundingClientRect();
+    var r = nameInput.getBoundingClientRect();
     pickerMenu.style.top = (r.bottom + 6) + "px";
     pickerMenu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 552)) + "px";
     pickerMenu.classList.remove("hidden");
+  }
+  nameInput.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    if (pickerMenu.classList.contains("hidden")) showItemMenu();
+  });
+  nameInput.addEventListener("focus", function () { showItemMenu(); });
+  nameInput.addEventListener("input", function () {
+    /* Editing the text away from the chosen item's name turns the
+       line back into free text: clear the id silently (rate, unit
+       and tax the shopkeeper already sees stay untouched). */
+    var chosen = itemById(parseInt(sel.value, 10) || 0);
+    if (chosen && nameInput.value !== chosen.name) sel.value = "";
+    if (pickerMenu.classList.contains("hidden")) showItemMenu();
+    else buildItemMenu();
+  });
+  nameInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") pickerMenu.classList.add("hidden");
   });
   pickerMenu.addEventListener("click", function (ev) { ev.stopPropagation(); });
   wrap.querySelector(".sl-add-item").addEventListener("click", function () {
@@ -2058,10 +2137,8 @@ function addSaleLine(itemId, preset) {
     }).then(function (r) {
       var newId = r.body && r.body.item ? r.body.item.id : null;
       return apiGet("/api/items", "items").then(function () {
-        document.querySelectorAll(".sale-line .sl-item").forEach(function (s2) {
-          fillLineItemOptions(s2);
-        });
         if (newId) {
+          nameInput.value = name;
           sel.value = newId;
           sel.dispatchEvent(new Event("change"));
         }
@@ -2077,10 +2154,11 @@ function addSaleLine(itemId, preset) {
   wrap.querySelector(".sl-tax-cell").classList.toggle("hidden",
     !(s.tax_enabled && s.item_wise_tax !== false && s.txn_wise_tax !== false));
   function fillFromItem() {
-    var o = sel.options[sel.selectedIndex];
     var it = itemById(parseInt(sel.value, 10) || 0);
-    pickerText.textContent = it ? it.name : "— Custom line —";
-    if (o && o.getAttribute("data-rate")) wrap.querySelector(".sl-rate").value = (o.getAttribute("data-rate") / 100).toFixed(2);
+    if (it) {
+      nameInput.value = it.name;
+      wrap.querySelector(".sl-rate").value = (it.salePricePaisa / 100).toFixed(2);
+    }
     var unitName = it && it.unit ? it.unit : (s.default_unit || "Pcs");
     var us = wrap.querySelector(".sl-unit-sel");
     if (![].some.call(us.options, function (x) { return x.value === unitName; })) {
@@ -2096,7 +2174,7 @@ function addSaleLine(itemId, preset) {
       } else if (it.discountBp) {
         wrap.querySelector(".sl-disc").value = it.discountBp / 100;
       }
-      if (it.taxBp != null && s.tax_enabled) wrap.querySelector(".sl-tax").value = it.taxBp / 100;
+      if (it.taxBp != null && s.tax_enabled) setLineTaxPct(wrap, it.taxBp / 100);
       var pid = $("saleParty").value;
       if (s.party_wise_item_rate && pid) {
         apiGet("/api/parties/" + pid + "/item-rate/" + it.id, null).then(function (r) {
@@ -2136,6 +2214,7 @@ function addSaleLine(itemId, preset) {
   ["sl-qty", "sl-free", "sl-rate", "sl-disc", "sl-tax"].forEach(function (cn) {
     wrap.querySelector("." + cn).addEventListener("input", calcSaleTotal);
   });
+  wrap.querySelector(".sl-tax").addEventListener("change", calcSaleTotal);
   wrap.querySelector(".sl-rate").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && QB.settings && QB.settings.txn_quick_entry) {
       ev.preventDefault(); addSaleLine();
@@ -2151,11 +2230,14 @@ function addSaleLine(itemId, preset) {
     }
     if (preset.taxPaisa && preset.qty && preset.ratePaisa) {
       var net2 = preset.qty * preset.ratePaisa - (preset.discountPaisa || 0);
-      wrap.querySelector(".sl-tax").value = net2 ? (preset.taxPaisa / net2 * 100).toFixed(2) : 0;
+      if (net2) setLineTaxPct(wrap, Math.round(preset.taxPaisa / net2 * 10000) / 100);
     }
-    /* preset.description / batchNo / serialNo / expDate are ignored:
-       the bill form no longer collects per-line values for them
-       (Qudoos phone-check order, 2026-11-10). */
+    if (preset.description) nameInput.value = preset.description;
+    /* preset.batchNo / serialNo / expDate are ignored: the bill form
+       no longer collects per-line values for them (Qudoos
+       phone-check order, 2026-11-10). preset.description is the
+       line's name: for item lines the server stored the item name;
+       for free-text lines it is the name the shopkeeper typed. */
   }
   if (itemId) { sel.value = itemId; fillFromItem(); }
   $("saleLines").appendChild(wrap);
@@ -2199,9 +2281,13 @@ function saleLinesData() {
       tax_paisa: tax
     };
     if (itemId) line.item_id = parseInt(itemId, 10);
-    /* No per-line description/batch/serial/exp: the form no longer
-       collects them, so saved lines simply omit the fields and the
-       server defaults them empty. */
+    else {
+      /* Free-text line: the typed item name IS the line's
+         description (the server requires a description or an item).
+         Batch/serial/exp are still not collected. */
+      var typedName = (w.querySelector(".sl-item-name").value || "").trim();
+      if (typedName) line.description = typedName;
+    }
     if (line.qty > 0) lines.push(line);
   });
   return lines;
@@ -2377,6 +2463,7 @@ function captureDocState() {
     lines: Array.prototype.map.call(document.querySelectorAll(".sale-line"), function (w) {
       return {
         itemId: w.querySelector(".sl-item").value,
+        name: w.querySelector(".sl-item-name").value,
         qty: w.querySelector(".sl-qty").value, free: w.querySelector(".sl-free").value,
         rate: w.querySelector(".sl-rate").value, disc: w.querySelector(".sl-disc").value,
         tax: w.querySelector(".sl-tax").value
@@ -2397,11 +2484,13 @@ function restoreDocState(st) {
   st.lines.forEach(function (L) {
     var w = addSaleLine();
     w.querySelector(".sl-item").value = L.itemId;
+    w.querySelector(".sl-item-name").value = L.name ||
+      ((itemById(parseInt(L.itemId, 10) || 0) || {}).name || "");
     w.querySelector(".sl-qty").value = L.qty;
     w.querySelector(".sl-free").value = L.free;
     w.querySelector(".sl-rate").value = L.rate;
     w.querySelector(".sl-disc").value = L.disc;
-    w.querySelector(".sl-tax").value = L.tax;
+    setLineTaxPct(w, parseFloat(L.tax) || 0);
   });
   if (!st.lines.length) addSaleLine();
   $("docPayRows").innerHTML = "";
