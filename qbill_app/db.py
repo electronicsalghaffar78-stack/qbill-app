@@ -547,6 +547,23 @@ _ADDED_COLUMNS = [
     ("businesses", "pincode", "TEXT NOT NULL DEFAULT ''"),
     ("businesses", "state", "TEXT NOT NULL DEFAULT ''"),
     ("businesses", "signature_text", "TEXT NOT NULL DEFAULT ''"),
+    # ---- Delta build #3 (2026-11-10.15) columns ----
+    # Business Profile completion: the owner's own name, the city /
+    # location line, and the account's own logo (base64 image bytes +
+    # mime), stored per business so every account bills under its own
+    # identity only.
+    ("businesses", "owner_name", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "city", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "logo_mime", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "logo_data", "TEXT"),
+    # Delete-everywhere (Fix 4): soft delete for parties, items,
+    # expenses and other income — the Recycle Bin pattern invoices
+    # already use (deleted_at set => hidden everywhere, restorable,
+    # and every total stays exact because queries filter it out).
+    ("parties", "deleted_at", "TEXT"),
+    ("items", "deleted_at", "TEXT"),
+    ("expenses", "deleted_at", "TEXT"),
+    ("other_incomes", "deleted_at", "TEXT"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

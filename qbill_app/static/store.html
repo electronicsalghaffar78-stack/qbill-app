@@ -9,6 +9,8 @@
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color:var(--ink); background:#f6f8fa; }
   header { background:var(--navy); color:#fff; padding:16px; position:sticky; top:0; z-index:5; }
+  .store-brand { display:flex; align-items:center; gap:12px; }
+  .store-logo { width:46px; height:46px; border-radius:10px; object-fit:cover; background:#fff; display:none; }
   header h1 { margin:0; font-size:20px; }
   header p { margin:2px 0 0; opacity:.85; font-size:13px; }
   main { max-width:860px; margin:0 auto; padding:14px; }
@@ -39,8 +41,13 @@
 </head>
 <body>
 <header>
-  <h1 id="storeName">Online Store</h1>
-  <p id="storeSub">Order online — pay Cash on Delivery.</p>
+  <div class="store-brand">
+    <img id="storeLogo" class="store-logo" alt="">
+    <div>
+      <h1 id="storeName">Online Store</h1>
+      <p id="storeSub">Order online — pay Cash on Delivery.</p>
+    </div>
+  </div>
 </header>
 <main>
   <p id="storeMsg" class="note">Loading the store…</p>
@@ -183,6 +190,11 @@
     return resp.json().then(function (body) {
       if (!resp.ok) throw new Error(body.error || "Store unavailable");
       data = body;
+      if (body.store.logoUrl) {
+        var logoImg = document.getElementById("storeLogo");
+        logoImg.src = body.store.logoUrl;
+        logoImg.style.display = "block";
+      }
       document.getElementById("storeName").textContent = body.store.name || "Online Store";
       document.getElementById("storeSub").textContent =
         (body.store.name || "") + " · Order online — pay Cash on Delivery.";

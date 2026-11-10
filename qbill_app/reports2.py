@@ -95,6 +95,7 @@ def all_transactions():
             })
         for exp in tx.query_all(
             "SELECT * FROM expenses WHERE business_id = ? "
+            "AND deleted_at IS NULL "
             "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ? "
             "ORDER BY id",
             (biz, date_from, date_to),
@@ -106,6 +107,7 @@ def all_transactions():
             })
         for inc in tx.query_all(
             "SELECT * FROM other_incomes WHERE business_id = ? "
+            "AND deleted_at IS NULL "
             "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ? "
             "ORDER BY id",
             (biz, date_from, date_to),
@@ -264,12 +266,14 @@ def cash_flow():
             add(pay["created_at"][:10], pay["direction"], pay["amount_paisa"])
         for exp in tx.query_all(
             "SELECT * FROM expenses WHERE business_id = ? "
+            "AND deleted_at IS NULL "
             "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?",
             (biz, date_from, date_to),
         ):
             add(exp["created_at"][:10], "out", exp["amount_paisa"])
         for inc in tx.query_all(
             "SELECT * FROM other_incomes WHERE business_id = ? "
+            "AND deleted_at IS NULL "
             "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?",
             (biz, date_from, date_to),
         ):
@@ -657,7 +661,7 @@ def expense_report():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM expenses WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM expenses WHERE business_id = ? AND deleted_at IS NULL ORDER BY id", (biz,)
         )
         from .business import _expense_dict
 
@@ -695,7 +699,7 @@ def _expense_group(column):
         }
         rows = tx.query_all(
             "SELECT {c} AS name, COALESCE(SUM(amount_paisa), 0) AS s, COUNT(*) AS n "
-            "FROM expenses WHERE business_id = ? GROUP BY {c} ORDER BY s DESC".format(
+            "FROM expenses WHERE business_id = ? AND deleted_at IS NULL GROUP BY {c} ORDER BY s DESC".format(
                 c=column),
             (biz,),
         )
@@ -717,13 +721,13 @@ def other_income_report():
         biz = _business_id(tx)
         rows = tx.query_all(
             "SELECT category AS name, COALESCE(SUM(amount_paisa), 0) AS s, "
-            "COUNT(*) AS n FROM other_incomes WHERE business_id = ? "
+            "COUNT(*) AS n FROM other_incomes WHERE business_id = ? AND deleted_at IS NULL "
             "GROUP BY category ORDER BY s DESC",
             (biz,),
         )
         total = tx.query_one(
             "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM other_incomes "
-            "WHERE business_id = ?",
+            "WHERE business_id = ? AND deleted_at IS NULL",
             (biz,),
         )["s"]
     return jsonify(
@@ -795,7 +799,7 @@ def low_stock_report():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM items WHERE business_id = ? AND "
+            "SELECT * FROM items WHERE business_id = ? AND deleted_at IS NULL AND "
             "((min_stock > 0 AND stock_qty < min_stock) OR "
             " (min_stock = 0 AND stock_qty <= 0)) ORDER BY name",
             (biz,),
@@ -819,7 +823,7 @@ def item_batch_report():
         biz = _business_id(tx)
         rows = tx.query_all(
             "SELECT b.*, i.name AS item_name FROM item_batches b "
-            "JOIN items i ON i.id = b.item_id WHERE b.business_id = ? ORDER BY i.name, b.id",
+            "JOIN items i ON i.id = b.item_id WHERE b.business_id = ? AND i.deleted_at IS NULL ORDER BY i.name, b.id",
             (biz,),
         )
     return jsonify(
@@ -845,7 +849,7 @@ def stock_detail_report():
             "i.purchase_price_paisa FROM godown_stock gs "
             "JOIN godowns g ON g.id = gs.godown_id "
             "JOIN items i ON i.id = gs.item_id "
-            "WHERE gs.business_id = ? ORDER BY g.id, i.name",
+            "WHERE gs.business_id = ? AND i.deleted_at IS NULL ORDER BY g.id, i.name",
             (biz,),
         )
     return jsonify(

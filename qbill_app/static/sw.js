@@ -2,7 +2,7 @@
    API requests (/api/...) are never intercepted and never cached: user
    data must always come from the server (or the app's own offline queue),
    never from a stale worker cache. */
-var CACHE = "qbill-shell-v12";
+var CACHE = "qbill-shell-v14";
 var SHELL = [
   "/",
   "/static/app.js",

@@ -68,7 +68,7 @@ def list_store_items():
             "SELECT i.*, s.store_price_paisa, s.in_stock AS store_in_stock, "
             "s.id AS store_row_id FROM items i "
             "LEFT JOIN store_items s ON s.item_id = i.id AND s.business_id = i.business_id "
-            "WHERE i.business_id = ? ORDER BY i.id",
+            "WHERE i.business_id = ? AND i.deleted_at IS NULL ORDER BY i.id",
             (biz,),
         )
     return jsonify(
@@ -275,11 +275,37 @@ def store_order_status(order_id):
 
 
 # ------------------------------------------------------ public storefront ----
+@public_bp.get("/store/<int:business_id>/logo")
+def public_store_logo(business_id):
+    """The shop's own logo for its public storefront. Only the image
+    bytes are exposed — nothing else about the business."""
+    import base64
+    import binascii
+
+    from flask import Response
+
+    with db.transaction() as tx:
+        business = tx.query_one(
+            "SELECT logo_data, logo_mime FROM businesses WHERE id = ?",
+            (business_id,),
+        )
+    if business is None or not business.get("logo_data"):
+        raise ApiError("Store not found.", status=404)
+    try:
+        raw = base64.b64decode(business["logo_data"], validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError("Store not found.", status=404)
+    resp = Response(raw, mimetype=business.get("logo_mime") or "image/png")
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
 @public_bp.get("/store/<int:business_id>")
 def public_store(business_id):
     with db.transaction() as tx:
         business = tx.query_one(
-            "SELECT id, name FROM businesses WHERE id = ?", (business_id,)
+            "SELECT id, name, logo_data FROM businesses WHERE id = ?",
+            (business_id,),
         )
         if business is None:
             raise ApiError("Store not found.", status=404)
@@ -290,7 +316,7 @@ def public_store(business_id):
             "SELECT i.id, i.name, i.category, i.stock_qty, "
             "s.store_price_paisa FROM store_items s "
             "JOIN items i ON i.id = s.item_id "
-            "WHERE s.business_id = ? ORDER BY i.name",
+            "WHERE s.business_id = ? AND i.deleted_at IS NULL ORDER BY i.name",
             (business_id,),
         )
         link_stock = bool(store.get("link_stock", True))
@@ -307,6 +333,10 @@ def public_store(business_id):
         ok=True,
         store={
             "name": store.get("name") or business["name"],
+            "logoUrl": (
+                "/api/public/store/{}/logo".format(business_id)
+                if business.get("logo_data") else ""
+            ),
             "acceptOrders": bool(store.get("accept_orders", True)),
             "minOrderPaisa": int(store.get("min_order_paisa") or 0),
             "deliveryChargesPaisa": int(store.get("delivery_charges_paisa") or 0),
@@ -347,7 +377,7 @@ def public_order(business_id):
             listing = tx.query_one(
                 "SELECT s.store_price_paisa, i.name FROM store_items s "
                 "JOIN items i ON i.id = s.item_id "
-                "WHERE s.business_id = ? AND s.item_id = ?",
+                "WHERE s.business_id = ? AND s.item_id = ? AND i.deleted_at IS NULL",
                 (business_id, item_id),
             )
             if listing is None:

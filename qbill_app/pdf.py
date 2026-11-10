@@ -140,6 +140,26 @@ def _qr_image(payload):
     return ImageReader(buf)
 
 
+def _logo_image(business):
+    """The business's own logo as an ImageReader, or None when the
+    account has not set one (the header then stays text-only)."""
+    data = (business or {}).get("logo_data")
+    if not data:
+        return None
+    import base64
+    import binascii
+
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw:
+        return None
+    from reportlab.lib.utils import ImageReader
+
+    return ImageReader(io.BytesIO(raw))
+
+
 def _qty_text(line):
     qty = line["qty"]
     free = line.get("freeQty") or 0
@@ -172,20 +192,25 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
     y = height - 50 - int(settings.get("print_extra_top_space") or 0) * 2
 
     show_company = settings.get("print_company_info", True)
+    logo_img = _logo_image(business) if show_company else None
+    name_x = left + 46 if logo_img else left
     if show_company:
         if family == "band":
             pdf.setFillColorRGB(*accent)
             pdf.rect(0, y - 6, width, 44, stroke=0, fill=1)
+            if logo_img:
+                pdf.drawImage(logo_img, left, y - 3, width=38, height=38,
+                              mask="auto")
             pdf.setFillColorRGB(1, 1, 1)
             pdf.setFont("Helvetica-Bold", 19)
-            pdf.drawString(left, y + 14, business["name"] or "My Business")
+            pdf.drawString(name_x, y + 14, business["name"] or "My Business")
             pdf.setFont("Helvetica", 9)
             contact = " · ".join(
                 part for part in [business.get("address"), business.get("phone"),
                                   business.get("email")] if part
             )
             if contact:
-                pdf.drawString(left, y - 1, contact[:110])
+                pdf.drawString(name_x, y - 1, contact[:110])
             pdf.setFillColorRGB(0, 0, 0)
             y -= 58
         else:
@@ -195,8 +220,11 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
                 pdf.rect(left - 8, y - 26, right - left + 16, 46, stroke=1, fill=0)
                 pdf.setStrokeColorRGB(0, 0, 0)
                 pdf.setLineWidth(1)
+            if logo_img:
+                pdf.drawImage(logo_img, left, y - 15, width=40, height=40,
+                              mask="auto")
             pdf.setFont("Helvetica-Bold", 20)
-            pdf.drawString(left, y, business["name"] or "My Business")
+            pdf.drawString(name_x, y, business["name"] or "My Business")
             y -= 18
             pdf.setFont("Helvetica", 10)
             contact = " · ".join(
@@ -204,7 +232,7 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
                                   business.get("email")] if part
             )
             if contact:
-                pdf.drawString(left, y, contact)
+                pdf.drawString(name_x, y, contact)
                 y -= 6
             y -= 8
             pdf.setStrokeColorRGB(*accent)
@@ -488,6 +516,11 @@ def _render_thermal(business, invoice, party_name, settings, opts):
     left = 8
     right = width - 8
     y = height - 24
+    logo_img = _logo_image(business)
+    if logo_img:
+        pdf.drawImage(logo_img, width / 2 - 20, y - 28, width=40, height=40,
+                      mask="auto")
+        y -= 46
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawCentredString(width / 2, y, (business["name"] or "My Business")[:30])
     y -= 13
@@ -659,6 +692,8 @@ def invoice_pdf(invoice_id):
             "email": business.get("email"),
             "tax_note": business.get("tax_note"),
             "terms": business.get("terms"),
+            "logo_data": business.get("logo_data"),
+            "logo_mime": business.get("logo_mime"),
         },
         invoice,
         party_name,

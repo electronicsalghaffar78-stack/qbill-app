@@ -82,6 +82,49 @@ def create_godown():
     return jsonify(ok=True, godown=result), 201
 
 
+@bp.delete("/godowns/<int:godown_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_godown(godown_id):
+    """An empty, unused godown deletes cleanly. The Main Godown, a
+    godown holding stock, and one named in past transfers are refused
+    with the reason — their records are part of the stock history."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM godowns WHERE id = ? AND business_id = ?",
+            (godown_id, biz),
+        )
+        if row is None:
+            raise ApiError("Godown not found.", status=404)
+        if row["is_main"]:
+            raise ApiError("The Main Godown cannot be deleted.")
+        held = tx.query_one(
+            "SELECT COUNT(*) AS c FROM godown_stock "
+            "WHERE godown_id = ? AND qty != 0",
+            (godown_id,),
+        )["c"]
+        if held:
+            raise ApiError(
+                "This godown still holds stock — transfer it out "
+                "before deleting the godown.")
+        moved = tx.query_one(
+            "SELECT COUNT(*) AS c FROM stock_transfers "
+            "WHERE business_id = ? AND (from_godown_id = ? "
+            "OR to_godown_id = ?)",
+            (biz, godown_id, godown_id),
+        )["c"]
+        if moved:
+            raise ApiError(
+                "This godown appears in past stock transfers, so it "
+                "cannot be deleted.")
+        tx.execute(
+            "DELETE FROM godown_stock WHERE godown_id = ?", (godown_id,))
+        tx.execute("DELETE FROM godowns WHERE id = ?", (godown_id,))
+    return jsonify(ok=True)
+
+
 @bp.get("/godowns/<int:godown_id>/stock")
 @require_session
 @require_approved

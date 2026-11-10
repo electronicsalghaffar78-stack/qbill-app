@@ -70,7 +70,7 @@ def _client_ref(data):
     return ref or None
 
 
-def party_balance_map(tx, business_id):
+def party_balance_map(tx, business_id, include_deleted=False):
     """Current balance per party, in paisa (positive = the party owes us).
 
     balance = opening + sale totals - purchase totals
@@ -79,7 +79,9 @@ def party_balance_map(tx, business_id):
     Invoice-time payments are ordinary payment rows, so an invoice's own
     paid part nets out automatically. Estimates, orders and challans are
     NOT dues and never enter the balance. One aggregate query, exact
-    integers.
+    integers. Soft-deleted parties are excluded everywhere totals are
+    shown; the Recycle Bin passes include_deleted=True so a binned
+    party still displays the balance it carried.
     """
     rows = tx.query_all(
         "SELECT p.id AS pid, p.opening_balance_paisa AS opening, "
@@ -99,7 +101,8 @@ def party_balance_map(tx, business_id):
         "          WHERE pay.party_id = p.id AND pay.direction = 'out' "
         "          AND (pay.invoice_id IS NULL OR pay.invoice_id IN "
         "               (SELECT id FROM invoices WHERE deleted_at IS NULL))), 0) AS paid_out "
-        "FROM parties p WHERE p.business_id = ?",
+        "FROM parties p WHERE p.business_id = ?"
+        + ("" if include_deleted else " AND p.deleted_at IS NULL"),
         (business_id,),
     )
     return {
@@ -133,6 +136,7 @@ def _party_dict(row, balance=None):
         "shippingAddress": row.get("shipping_address") or "",
         "email": row.get("email") or "",
         "extras": extras if isinstance(extras, dict) else {},
+        "deletedAt": row.get("deleted_at"),
         "loyaltyPoints": row.get("loyalty_points") or 0,
     }
 
@@ -140,6 +144,7 @@ def _party_dict(row, balance=None):
 def _item_dict(row):
     return {
         "id": row["id"],
+        "deletedAt": row.get("deleted_at"),
         "name": row["name"],
         "salePricePaisa": row["sale_price_paisa"],
         "purchasePricePaisa": row["purchase_price_paisa"],
@@ -357,6 +362,32 @@ def update_party(party_id):
     return jsonify(ok=True, party=_party_dict(row, balances.get(row["id"])))
 
 
+@bp.delete("/parties/<int:party_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_party(party_id):
+    """Delete moves a party to the Recycle Bin (Utilities) — the Vyapar
+    way: the party leaves every list and its balance leaves the
+    dashboard totals, but its bills and payments are NOT touched and
+    restoring the party brings everything back exactly. The UI warns
+    about any open balance / history before calling this."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM parties WHERE id = ? AND business_id = ? "
+            "AND deleted_at IS NULL",
+            (party_id, biz),
+        )
+        if row is None:
+            raise ApiError("Party not found.", status=404)
+        tx.execute(
+            "UPDATE parties SET deleted_at = ? WHERE id = ?",
+            (now_iso(), party_id),
+        )
+    return jsonify(ok=True)
+
+
 @bp.get("/parties")
 @require_session
 @require_approved
@@ -365,7 +396,8 @@ def list_parties():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM parties WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM parties WHERE business_id = ? "
+            "AND deleted_at IS NULL ORDER BY id", (biz,)
         )
         balances = party_balance_map(tx, biz)
     return jsonify(
@@ -567,9 +599,35 @@ def list_items():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM items WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM items WHERE business_id = ? "
+            "AND deleted_at IS NULL ORDER BY id", (biz,)
         )
     return jsonify(ok=True, items=[_item_dict(r) for r in rows])
+
+
+@bp.delete("/items/<int:item_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_item(item_id):
+    """Delete moves an item to the Recycle Bin (Utilities): it leaves
+    every list, report and the sale form, but its record — and its
+    stock figure — is kept untouched, so restoring brings the exact
+    item back. Bills that used it keep their own line text."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM items WHERE id = ? AND business_id = ? "
+            "AND deleted_at IS NULL",
+            (item_id, biz),
+        )
+        if row is None:
+            raise ApiError("Item not found.", status=404)
+        tx.execute(
+            "UPDATE items SET deleted_at = ? WHERE id = ?",
+            (now_iso(), item_id),
+        )
+    return jsonify(ok=True)
 
 
 # ------------------------------------------------------------- invoices ----
@@ -781,7 +839,8 @@ def _prepare_lines(tx, biz, lines_in, settings):
         item = None
         if raw.get("item_id") is not None:
             item = tx.query_one(
-                "SELECT * FROM items WHERE id = ? AND business_id = ?",
+                "SELECT * FROM items WHERE id = ? AND business_id = ? "
+                "AND deleted_at IS NULL",
                 (raw["item_id"], biz),
             )
             if item is None:
@@ -826,7 +885,8 @@ def _check_party(tx, biz, party_id):
     if party_id is None:
         return
     party = tx.query_one(
-        "SELECT id FROM parties WHERE id = ? AND business_id = ?",
+        "SELECT id FROM parties WHERE id = ? AND business_id = ? "
+        "AND deleted_at IS NULL",
         (party_id, biz),
     )
     if party is None:

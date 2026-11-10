@@ -60,7 +60,9 @@ def build_snapshot(tx, business_id, source="server", created_at=None):
         "source": source,
         "business": {
             "name": business["name"],
+            "owner_name": business.get("owner_name"),
             "address": business.get("address"),
+            "city": business.get("city"),
             "phone": business.get("phone"),
             "email": business.get("email"),
             "tax_note": business.get("tax_note"),
@@ -70,6 +72,8 @@ def build_snapshot(tx, business_id, source="server", created_at=None):
             "pincode": business.get("pincode"),
             "state": business.get("state"),
             "signature_text": business.get("signature_text"),
+            "logo_mime": business.get("logo_mime"),
+            "logo_data": business.get("logo_data"),
         },
         "parties": parties,
         "items": items,
@@ -332,16 +336,23 @@ def restore_backup(backup_id):
             tx.execute("DELETE FROM {} WHERE business_id = ?".format(table), (biz,))
         profile = snap.get("business") or {}
         tx.execute(
-            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ?, "
+            "UPDATE businesses SET name = ?, owner_name = ?, address = ?, "
+            "city = ?, phone = ?, email = ?, "
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
-            "pincode = ?, state = ?, signature_text = ? WHERE id = ?",
-            (profile.get("name") or "My Business", profile.get("address"),
+            "pincode = ?, state = ?, signature_text = ?, "
+            "logo_mime = ?, logo_data = ? WHERE id = ?",
+            (profile.get("name") or "My Business",
+             profile.get("owner_name") or "",
+             profile.get("address"),
+             profile.get("city") or "",
              profile.get("phone"), profile.get("email"),
              profile.get("tax_note"), profile.get("terms"),
              profile.get("business_type") or "",
              profile.get("business_category") or "",
              profile.get("pincode") or "", profile.get("state") or "",
-             profile.get("signature_text") or "", biz),
+             profile.get("signature_text") or "",
+             profile.get("logo_mime") or "",
+             profile.get("logo_data"), biz),
         )
         for party in snap.get("parties", []):
             _insert_row(tx, "parties", _PARTY_COLS, party, biz)

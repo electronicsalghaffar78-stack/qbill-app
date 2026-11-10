@@ -431,10 +431,7 @@ function showApp() {
   ADD_BTNS.forEach(function (id) { $(id).classList.remove("hidden"); });
   if (me && me.email) $("sideBizEmail").textContent = me.email;
   var biz = (cacheGet("business") || {}).business || {};
-  if (biz.name) {
-    $("sideBizName").textContent = biz.name;
-    $("headBizName").textContent = biz.name;
-  }
+  if (biz.name) applyBusinessIdentity(biz);
   $("setCatEmail").classList.toggle("hidden", !(me && me.isOwner));
   $("setCatAccounts").classList.toggle("hidden", !(me && me.isOwner));
   setSettingsCat(settingsCat);
@@ -842,8 +839,8 @@ function go(nav) {
     case "salereturns": navKey = "salereturns"; docsType = "sale_return"; showScreen("docs"); break;
     case "purchaseorders": navKey = "purchaseorders"; docsType = "purchase_order"; showScreen("docs"); break;
     case "purchasereturns": navKey = "purchasereturns"; docsType = "purchase_return"; showScreen("docs"); break;
-    case "paymentin": navKey = "paymentin"; setPayFilter("in", "in"); showScreen("payments"); break;
-    case "paymentout": navKey = "paymentout"; setPayFilter("out", "out"); showScreen("payments"); break;
+    case "paymentin": navKey = "paymentin"; setPayFilter("in", "in"); showScreen("payments"); showPanel("paymentPanel"); break;
+    case "paymentout": navKey = "paymentout"; setPayFilter("out", "out"); showScreen("payments"); showPanel("paymentPanel"); break;
     case "payments": setPayFilter("all", null); showScreen("payments"); break;
     case "quickbilling": navKey = "quickbilling"; showScreen("quick"); break;
     case "expenses": navKey = "expenses"; showScreen("expenses"); break;
@@ -924,7 +921,10 @@ function loadDashboard() {
       badge.style.color = pct >= 0 ? "#137333" : "#b3261e";
     }
     $("dTopParty").textContent = d.topReceivableParty
-      ? d.topReceivableParty.name + " · " + fmtRs(d.topReceivableParty.balancePaisa)
+      ? d.topReceivableParty.name + " · " + fmtRs(d.topReceivableParty.amountPaisa)
+      : "—";
+    $("dTopPayParty").textContent = d.topPayableParty
+      ? d.topPayableParty.name + " · " + fmtRs(d.topPayableParty.amountPaisa)
       : "—";
     $("dPurchases").textContent = fmtRs(d.monthPurchasesPaisa || 0);
     $("dTopPurchaseParty").textContent = d.topPurchaseParty
@@ -1081,9 +1081,51 @@ function renderPartyFormExtras() {
       ' <input type="text" data-party-extra="' + i + '"></label>';
   }).join("");
 }
+/* ------------------------------------------- list-first panels ----- */
+/* Delta build #3: screens show their list + an Add button; add/edit
+   forms live in panels that open only on Add / Edit and close on
+   Save or Back. */
+function showPanel(id) { var p = $(id); if (p) p.classList.remove("hidden"); }
+function hidePanel(id) { var p = $(id); if (p) p.classList.add("hidden"); }
+function deleteRecord(what, detail, path, done, exactMsg) {
+  /* exactMsg (audit 2026-11-10): where Vyapar's own confirmation wording
+     is verified by research, the dialog opens with that exact sentence;
+     the record name + Recycle Bin note follow as detail. */
+  var msg = exactMsg ? exactMsg + (detail ? "\n" + detail : "")
+                     : "Delete " + what + "?" + (detail ? "\n" + detail : "");
+  if (!confirm(msg)) return;
+  apiDelete(path).then(function () {
+    setMsg("appMsg", what + " deleted.");
+    if (done) done();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+function miniBtn(label, fn) {
+  var b = document.createElement("button");
+  b.className = "btn btn-mini"; b.type = "button"; b.textContent = label;
+  b.addEventListener("click", fn);
+  return b;
+}
+
+/* Party Status (audit 2026-11-10, research §2): Vyapar parties carry an
+   active/inactive status — a "Party Status:" toggle on the party detail
+   (our Ledger screen), a status filter + bulk status update on the list,
+   and inactive parties hidden from the bill/payment pickers. All of it
+   is governed by Settings > PARTY > Manage Party Status. */
+var partyStatusFilter = "active";
+var lastPartyList = [];
+function partyInactive(p) {
+  return String((p && p.status) || "active").toLowerCase() === "inactive";
+}
+function setPartyStatus(p, status, done) {
+  apiPut("/api/parties/" + p.id, { status: status }).then(function () {
+    setMsg("appMsg", p.name + " is now " + (status === "inactive" ? "Inactive" : "Active") + ".");
+    if (done) done();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
 function loadParties() {
   apiGet("/api/parties", "parties").then(function (r) {
     var s = QB.settings || {};
+    $("partyStatusChips").classList.toggle("hidden", s.party_manage_status === false);
     renderPartyFormExtras();
     var parties = r.body.parties || [];
     var groups = partyGroupsList(parties);
@@ -1095,7 +1137,7 @@ function loadParties() {
     gs.innerHTML = '<option value="">— No group —</option>' + groups.map(function (g) {
       return '<option>' + esc(g) + "</option>";
     }).join("");
-    var dues = parties.filter(function (p) { return p.balancePaisa > 0; });
+    var dues = parties.filter(function (p) { return p.balancePaisa > 0 && !partyInactive(p); });
     $("reminderCard").classList.toggle("hidden", !(s.party_reminder_enabled && dues.length));
     $("reminderList").innerHTML = dues.slice(0, 10).map(function (p) {
       return '<div class="row"><div><div class="main">' + esc(p.name) + '</div><div class="sub">Owes ' +
@@ -1108,14 +1150,19 @@ function loadParties() {
       });
     });
     var q = searchText();
+    var manageStatus = s.party_manage_status !== false;
     var list = parties.filter(function (p) {
-      return !q || p.name.toLowerCase().indexOf(q) >= 0;
+      if (q && p.name.toLowerCase().indexOf(q) < 0) return false;
+      if (manageStatus && partyStatusFilter === "active" && partyInactive(p)) return false;
+      if (manageStatus && partyStatusFilter === "inactive" && !partyInactive(p)) return false;
+      return true;
     });
-    $("partyList").innerHTML = list.length ? "" : '<p class="empty">No parties yet.</p>';
+    lastPartyList = list;
+    $("partyList").innerHTML = list.length ? "" : '<p class="empty">No parties here.</p>';
     list.forEach(function (p) {
       var wrap = document.createElement("div");
       wrap.className = "row";
-      var sub = [p.phone || "", p.groupName || "", p.status && p.status !== "Active" ? p.status : "",
+      var sub = [p.phone || "", p.groupName || "", partyInactive(p) ? "Inactive" : "",
         p.creditLimitType === "custom" ? "Limit " + fmtRs(p.creditLimitPaisa || 0) : ""]
         .filter(Boolean).join(" · ");
       wrap.innerHTML = rowHtml(p.name, sub, fmtRs(p.balancePaisa), p.balancePaisa > 0 ? "neg" : "");
@@ -1129,11 +1176,53 @@ function loadParties() {
       ed.className = "btn btn-mini"; ed.type = "button"; ed.textContent = "Edit";
       ed.addEventListener("click", function () { startEditParty(p); });
       actions.appendChild(ed);
+      actions.appendChild(miniBtn("Delete", function () {
+        var warn = p.balancePaisa ? "It has an open balance of " + fmtRs(p.balancePaisa) + ". " : "";
+        deleteRecord("party '" + p.name + "'",
+          warn + "It moves to the Recycle Bin (Utilities) and leaves your lists and totals until you restore it. Its bills and payments stay saved.",
+          "/api/parties/" + p.id, function () { loadParties(); loadDashboard(); });
+      }));
+      if (manageStatus) {
+        actions.appendChild(miniBtn(partyInactive(p) ? "Activate" : "Deactivate", function () {
+          setPartyStatus(p, partyInactive(p) ? "active" : "inactive",
+            function () { loadParties(); fillPartySelects(); });
+        }));
+      }
       wrap.appendChild(actions);
       $("partyList").appendChild(wrap);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+document.querySelectorAll("[data-pstatus]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    partyStatusFilter = b.getAttribute("data-pstatus");
+    document.querySelectorAll("[data-pstatus]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    loadParties();
+  });
+});
+function bulkPartyStatus(status) {
+  var targets = lastPartyList.filter(function (p) {
+    return partyInactive(p) !== (status === "inactive");
+  });
+  if (!targets.length) { setMsg("appMsg", "Nothing to change in the shown list.", true); return; }
+  if (!confirm("Mark " + targets.length + " shown parties " +
+      (status === "inactive" ? "Inactive" : "Active") + "?")) return;
+  var chain = Promise.resolve();
+  targets.forEach(function (p) {
+    chain = chain.then(function () {
+      return apiPut("/api/parties/" + p.id, { status: status });
+    });
+  });
+  chain.then(function () {
+    setMsg("appMsg", targets.length + " parties marked " +
+      (status === "inactive" ? "Inactive" : "Active") + ".");
+    loadParties(); fillPartySelects();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("btnBulkActivate").addEventListener("click", function () { bulkPartyStatus("active"); });
+$("btnBulkDeactivate").addEventListener("click", function () { bulkPartyStatus("inactive"); });
 function sendReminder(p) {
   var s = QB.settings || {};
   var tmpl = s.party_reminder_message ||
@@ -1157,10 +1246,12 @@ $("btnSendRemindersBulk").addEventListener("click", function () {
     " parties (browsers block opening many tabs at once).");
 });
 function startEditParty(p) {
+  showPanel("partyPanel");
   editingPartyId = p.id;
   $("partyFormTitle").textContent = "Edit party";
   $("partySubmitBtn").textContent = "Save changes";
   $("partyCancelEdit").classList.remove("hidden");
+  $("partyDeleteBtn").classList.remove("hidden");
   $("partyName").value = p.name || "";
   $("partyPhone").value = p.phone || "";
   $("partyEmail").value = p.email || "";
@@ -1172,7 +1263,7 @@ function startEditParty(p) {
   });
   $("partyCreditLimit").value = ((p.creditLimitPaisa || 0) / 100).toFixed(2);
   $("partyCreditLimitWrap").classList.toggle("hidden", ctype !== "custom");
-  $("partyStatus").value = p.status || "Active";
+  $("partyStatus").value = partyInactive(p) ? "inactive" : "active";
   $("partyLoyalty").value = p.loyaltyPoints || 0;
   $("partyBilling").value = p.billingAddress || "";
   $("partyShipping").value = p.shippingAddress || "";
@@ -1190,8 +1281,20 @@ function startEditParty(p) {
   });
   $("partyName").focus();
 }
+$("partyDeleteBtn").addEventListener("click", function () {
+  if (!editingPartyId) return;
+  var name = $("partyName").value.trim();
+  deleteRecord("party '" + name + "'",
+    "It moves to the Recycle Bin (Utilities) and leaves your lists and totals until you restore it. Its bills and payments stay saved.",
+    "/api/parties/" + editingPartyId, function () {
+      $("partyCancelEdit").click();
+      hidePanel("partyPanel");
+      loadParties(); loadDashboard();
+    });
+});
 $("partyCancelEdit").addEventListener("click", function () {
   editingPartyId = null;
+  $("partyDeleteBtn").classList.add("hidden");
   $("partyForm").reset(); $("partyOpening").value = 0;
   $("partyFormTitle").textContent = "Add party";
   $("partySubmitBtn").textContent = "Add party";
@@ -1227,6 +1330,7 @@ $("partyForm").addEventListener("submit", function (ev) {
     $("partySubmitBtn").textContent = "Add party";
     $("partyCancelEdit").classList.add("hidden");
     if (partySaveNewFlag) { partySaveNewFlag = false; msg += " Add the next party."; $("partyName").focus(); }
+    else hidePanel("partyPanel");
     setMsg("appMsg", msg);
     loadParties();
   };
@@ -1261,14 +1365,44 @@ $("partySaveNew").addEventListener("click", function () {
   partySaveNewFlag = true;
   $("partyForm").requestSubmit();
 });
+$("btnAddParty").addEventListener("click", function () {
+  if (editingPartyId) $("partyCancelEdit").click();
+  showPanel("partyPanel");
+  $("partyName").focus();
+});
+$("btnPartyBack").addEventListener("click", function () {
+  if (editingPartyId) $("partyCancelEdit").click();
+  hidePanel("partyPanel");
+});
 $("btnOpenTeam").addEventListener("click", function () { go("team"); });
 
 /* ------------------------------------------------------------- ledger -- */
+var currentLedgerParty = null;
+function renderLedgerStatus() {
+  var rowEl = $("ledgerStatusRow");
+  if (!rowEl) return;
+  var manage = !QB.settings || QB.settings.party_manage_status !== false;
+  rowEl.classList.toggle("hidden", !manage || !currentLedgerParty);
+  if (currentLedgerParty) {
+    $("ledgerStatusToggle").textContent = partyInactive(currentLedgerParty) ? "Inactive" : "Active";
+  }
+}
+$("ledgerStatusToggle").addEventListener("click", function () {
+  if (!currentLedgerParty) return;
+  var next = partyInactive(currentLedgerParty) ? "active" : "inactive";
+  setPartyStatus(currentLedgerParty, next, function () {
+    currentLedgerParty.status = next;
+    renderLedgerStatus();
+    fillPartySelects();
+  });
+});
 function openLedger(party) {
   showScreen("parties");
   document.querySelectorAll(".screen").forEach(function (s) { s.classList.add("hidden"); });
   $("screen-ledger").classList.remove("hidden");
   currentScreen = "ledger";
+  currentLedgerParty = party;
+  renderLedgerStatus();
   $("ledgerTitle").textContent = "Ledger — " + party.name;
   apiGet("/api/parties/" + party.id + "/ledger", "ledger_" + party.id).then(function (r) {
     $("ledgerBalance").textContent = "Balance: " + fmtRs(r.body.balancePaisa);
@@ -1352,16 +1486,37 @@ function renderCategoryPanel() {
   $("categoryList").innerHTML = cats.length ? cats.map(function (c) {
     var n = items.filter(function (i) { return i.category === c; }).length;
     return '<div class="row"><div><div class="main">' + esc(c) + '</div><div class="sub">' + n +
-      ' items</div></div></div>';
+      ' items</div></div><button class="btn btn-mini" type="button" data-cat-del="' + esc(c) + '">Remove</button></div>';
   }).join("") : '<p class="empty">No categories yet.</p>';
+  $("categoryList").querySelectorAll("[data-cat-del]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var c = b.getAttribute("data-cat-del");
+      var used = items.filter(function (i) { return i.category === c; }).length;
+      if (used) { setMsg("appMsg", used + " item(s) use the category '" + c + "' - change those items first, then remove the category.", true); return; }
+      if (!confirm("Remove category '" + c + "'?")) return;
+      setItemCategories(itemCategories().filter(function (x) { return x !== c; }));
+      renderCategoryPanel(); refreshItemCategorySelect();
+    });
+  });
 }
 function renderUnitPanel() {
   $("unitList").innerHTML = itemUnits().map(function (u) {
     return '<div class="row"><div><div class="main">' + esc(u.name) +
       (u.code ? " (" + esc(u.code) + ")" : "") + '</div><div class="sub">' +
       (u.secondary ? ("1 " + esc(u.name) + " = " + u.conversion + " " + esc(u.secondary)) : "Base unit") +
-      "</div></div></div>";
+      '</div></div><button class="btn btn-mini" type="button" data-unit-del="' + esc(u.name) + '">Remove</button></div>';
   }).join("");
+  $("unitList").querySelectorAll("[data-unit-del]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var name = b.getAttribute("data-unit-del");
+      var items = ((cacheGet("items") || {}).items) || [];
+      var used = items.filter(function (i) { return i.unit === name; }).length;
+      if (used) { setMsg("appMsg", used + " item(s) use the unit '" + name + "' - change those items first, then remove the unit.", true); return; }
+      if (!confirm("Remove unit '" + name + "' from the unit list?")) return;
+      setItemUnits(itemUnits().filter(function (u) { return u.name !== name; }));
+      renderUnitPanel(); refreshItemUnitSelects();
+    });
+  });
 }
 function loadItems() {
   refreshItemUnitSelects();
@@ -1396,6 +1551,12 @@ function loadItems() {
       ed.className = "btn btn-mini"; ed.type = "button"; ed.textContent = "Edit";
       ed.addEventListener("click", function () { startEditItem(i); });
       actions.appendChild(ed);
+      actions.appendChild(miniBtn("Delete", function () {
+        deleteRecord("item '" + i.name + "'",
+          "'" + i.name + "' — Stock on hand: " + i.stockQty + ". It moves to the Recycle Bin (Utilities) and leaves your lists, reports and the sale form until you restore it. Bills that used it stay as they are.",
+          "/api/items/" + i.id, function () { loadItems(); loadDashboard(); },
+          "Do you really want to delete this item?");
+      }));
       div.appendChild(actions);
       $("itemList").appendChild(div);
     });
@@ -1419,8 +1580,11 @@ $("btnCatAdd").addEventListener("click", function () {
   if (cats.indexOf(v) < 0) cats.push(v);
   setItemCategories(cats);
   $("catNew").value = "";
+  hidePanel("catAddPanel");
   refreshItemCategorySelect(); renderCategoryPanel();
 });
+$("btnAddCategory").addEventListener("click", function () { showPanel("catAddPanel"); $("catNew").focus(); });
+$("btnCatCancel").addEventListener("click", function () { hidePanel("catAddPanel"); });
 $("btnUnitAdd").addEventListener("click", function () {
   var v = $("unitNew").value.trim();
   if (!v) return;
@@ -1429,8 +1593,11 @@ $("btnUnitAdd").addEventListener("click", function () {
                conversion: parseFloat($("unitNewConv").value || "0") || 0 });
   setItemUnits(units);
   $("unitNew").value = ""; $("unitNewSecondary").value = ""; $("unitNewConv").value = "";
+  hidePanel("unitAddPanel");
   refreshItemUnitSelects(); renderUnitPanel();
 });
+$("btnAddUnit").addEventListener("click", function () { showPanel("unitAddPanel"); $("unitNew").focus(); });
+$("btnUnitCancel").addEventListener("click", function () { hidePanel("unitAddPanel"); });
 $("btnAssignCode").addEventListener("click", function () {
   $("itemCode").value = "ITM-" + Math.floor(1000 + Math.random() * 9000);
 });
@@ -1444,7 +1611,9 @@ $("btnAddBatchRow").addEventListener("click", function () {
   $("batchRows").appendChild(row);
 });
 function startEditItem(i) {
+  showPanel("itemPanel");
   editingItemId = i.id;
+  $("itemDeleteBtn").classList.remove("hidden");
   $("itemFormTitle").textContent = "Edit item";
   $("itemSubmitBtn").textContent = "Save changes";
   $("itemCancelEdit").classList.remove("hidden");
@@ -1471,8 +1640,20 @@ function startEditItem(i) {
   $("itemConversion").value = i.conversion || 0;
   $("itemName").focus();
 }
+$("itemDeleteBtn").addEventListener("click", function () {
+  if (!editingItemId) return;
+  var name = $("itemName").value.trim();
+  deleteRecord("item '" + name + "'",
+    "'" + name + "' moves to the Recycle Bin (Utilities) and leaves your lists, reports and the sale form until you restore it. Bills that used it stay as they are.",
+    "/api/items/" + editingItemId, function () {
+      $("itemCancelEdit").click();
+      hidePanel("itemPanel");
+      loadItems(); loadDashboard();
+    }, "Do you really want to delete this item?");
+});
 $("itemCancelEdit").addEventListener("click", function () {
   editingItemId = null;
+  $("itemDeleteBtn").classList.add("hidden");
   $("itemForm").reset();
   $("itemFormTitle").textContent = "Add item";
   $("itemSubmitBtn").textContent = "Add item";
@@ -1527,6 +1708,7 @@ $("itemForm").addEventListener("submit", function (ev) {
     $("itemSubmitBtn").textContent = "Add item";
     $("itemCancelEdit").classList.add("hidden");
     if (itemSaveNewFlag) { itemSaveNewFlag = false; msg += " Add the next item."; $("itemName").focus(); }
+    else hidePanel("itemPanel");
     setMsg("appMsg", msg);
     loadItems();
   };
@@ -1545,6 +1727,15 @@ var itemSaveNewFlag = false;
 $("itemSaveNew").addEventListener("click", function () {
   itemSaveNewFlag = true;
   $("itemForm").requestSubmit();
+});
+$("btnAddItem").addEventListener("click", function () {
+  if (editingItemId) $("itemCancelEdit").click();
+  showPanel("itemPanel");
+  $("itemName").focus();
+});
+$("btnItemFormBack").addEventListener("click", function () {
+  if (editingItemId) $("itemCancelEdit").click();
+  hidePanel("itemPanel");
 });
 
 /* ------------------------------------------------- document form ----- */
@@ -1567,9 +1758,11 @@ function fillPartySelects() {
       first.value = ""; first.textContent = cashLabel;
       sel.appendChild(first);
       parties.forEach(function (p) {
+        if (partyInactive(p) && String(p.id) !== String(keep)) return;
         var o = document.createElement("option");
         o.value = p.id;
-        o.textContent = p.name + (p.balancePaisa ? "  ·  " + fmtRs(p.balancePaisa) : "") +
+        o.textContent = p.name + (partyInactive(p) ? " (Inactive)" : "") +
+          (p.balancePaisa ? "  ·  " + fmtRs(p.balancePaisa) : "") +
           (pair[1] && p.creditLimitType === "custom" ? "  ·  Limit " + fmtRs(p.creditLimitPaisa || 0) : "");
         o.setAttribute("data-phone", p.phone || "");
         o.setAttribute("data-balance", p.balancePaisa || 0);
@@ -1583,8 +1776,9 @@ function fillPartySelects() {
       var keep = sel.value;
       sel.innerHTML = id === "allocParty" ? '<option value="">— Choose party —</option>' : '<option value="">— None —</option>';
       parties.forEach(function (p) {
+        if (partyInactive(p) && String(p.id) !== String(keep)) return;
         var o = document.createElement("option");
-        o.value = p.id; o.textContent = p.name;
+        o.value = p.id; o.textContent = p.name + (partyInactive(p) ? " (Inactive)" : "");
         sel.appendChild(o);
       });
       sel.value = keep;
@@ -1592,6 +1786,61 @@ function fillPartySelects() {
     updateDocPartyInfo();
     updateLoyaltyInfo();
   }).catch(function () {});
+}
+/* Vyapar-style party picker (delta build #3): the button shows the
+   chosen party; the menu lists "+ Add Party" first, then every party
+   with its current balance right-aligned and a tick on the selected
+   one. The hidden #saleParty select stays the single source of truth
+   for the value, so every existing reader keeps working. */
+function renderDocPartyMenu() {
+  var sel = $("saleParty");
+  var list = $("docPartyList");
+  if (!sel || !list) return;
+  var q = ($("docPartySearch").value || "").trim().toLowerCase();
+  var meta = DOC_META[docType];
+  list.innerHTML = "";
+  var any = false;
+  Array.prototype.forEach.call(sel.options, function (o) {
+    if (!o.value) return;
+    var name = (o.textContent || "").split("  ·  ")[0];
+    if (q && name.toLowerCase().indexOf(q) < 0) return;
+    any = true;
+    var bal = parseInt(o.getAttribute("data-balance") || "0", 10);
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "party-row" + (sel.value === o.value ? " sel" : "");
+    b.innerHTML = "<span>" + esc(name) + (sel.value === o.value ? " ✓" : "") +
+      '</span><span class="p-bal">' + fmtRs(bal) + "</span>";
+    b.addEventListener("click", function () {
+      sel.value = o.value;
+      sel.dispatchEvent(new Event("change"));
+      hidePanel("docPartyMenu");
+    });
+    list.appendChild(b);
+  });
+  if (!any) {
+    var cash = document.createElement("button");
+    cash.type = "button";
+    cash.className = "party-row" + (!sel.value ? " sel" : "");
+    cash.innerHTML = "<span>" + esc(meta.cashName) + (!sel.value ? " ✓" : "") +
+      '</span><span class="p-bal">' + fmtRs(0) + "</span>";
+    cash.addEventListener("click", function () {
+      sel.value = "";
+      sel.dispatchEvent(new Event("change"));
+      hidePanel("docPartyMenu");
+    });
+    list.appendChild(cash);
+  }
+  syncDocPartyBtn();
+}
+function syncDocPartyBtn() {
+  var sel = $("saleParty");
+  var btn = $("docPartyBtnText");
+  if (!sel || !btn) return;
+  var o = sel.options[sel.selectedIndex];
+  btn.textContent = o && o.value
+    ? (o.textContent || "").split("  ·  ")[0]
+    : (o ? o.textContent : DOC_META[docType].cashName);
 }
 function updateDocPartyInfo() {
   var sel = $("saleParty");
@@ -1609,9 +1858,53 @@ function updateDocPartyInfo() {
     $("docPhone").value = "";
     $("docPartyBalance").textContent = "";
   }
+  renderDocPartyMenu();
+  syncDocBilling();
 }
+/* Billing Address on the bill form (audit 2026-11-10, research §1):
+   the box sits directly under Customer and appears once a party is
+   chosen, prefilled with the party's saved Billing Address; a manual
+   edit is never overwritten by a later party change. */
+var docBillingAuto = "";
+function syncDocBilling() {
+  var wrap = $("docBillingWrap"), box = $("docBilling");
+  if (!wrap || !box) return;
+  var pid = $("saleParty").value;
+  var party = null;
+  ((cacheGet("parties") || {}).parties || []).forEach(function (x) {
+    if (String(x.id) === String(pid)) party = x;
+  });
+  if (party) {
+    var addr = party.billingAddress || "";
+    if (!box.value.trim() || box.value === docBillingAuto) {
+      box.value = addr;
+      docBillingAuto = addr;
+    }
+  }
+  wrap.classList.toggle("hidden", !(pid || box.value.trim()));
+}
+$("docBilling").addEventListener("input", function () {
+  if ($("docBilling").value !== docBillingAuto) docBillingAuto = "\u0001manual";
+});
 $("saleParty").addEventListener("change", updateDocPartyInfo);
+$("docPartyBtn").addEventListener("click", function () {
+  var menu = $("docPartyMenu");
+  var opening = menu.classList.contains("hidden");
+  menu.classList.toggle("hidden");
+  if (opening) { renderDocPartyMenu(); $("docPartySearch").focus(); }
+});
+$("docPartySearch").addEventListener("input", renderDocPartyMenu);
+document.addEventListener("click", function (ev) {
+  var picker = $("docPartyPicker");
+  if (picker && !picker.contains(ev.target)) hidePanel("docPartyMenu");
+  var sw = document.querySelector(".share-wrap");
+  if (sw && !sw.contains(ev.target)) hidePanel("docShareMenu");
+  document.querySelectorAll(".sl-picker-menu").forEach(function (m) {
+    if (!m.contains(ev.target)) m.classList.add("hidden");
+  });
+});
 $("btnDocAddParty").addEventListener("click", function () {
+  hidePanel("docPartyMenu");
   $("docAddParty").classList.toggle("hidden");
 });
 $("btnDocPartySave").addEventListener("click", function () {
@@ -1634,29 +1927,11 @@ function itemById(id) {
   return (((cacheGet("items") || {}).items) || []).filter(function (i) { return i.id === id; })[0] || null;
 }
 
-function addSaleLine(itemId, preset) {
-  var s = QB.settings || {};
-  var wrap = document.createElement("div");
-  wrap.className = "sale-line";
-  var html =
-    '<label>Item<select class="sl-item"></select></label>' +
-    '<label>Qty<input class="sl-qty" type="number" step="1" min="1" value="1"></label>' +
-    '<label class="sl-free-wrap">Free<input class="sl-free" type="number" step="1" min="0" value="0"></label>' +
-    '<span class="sl-unit">—</span>' +
-    '<label>Price/Unit<input class="sl-rate" type="number" step="0.01" min="0" value="0"></label>' +
-    '<label class="sl-disc-wrap">Disc %<input class="sl-disc" type="number" step="0.01" min="0" value="0"></label>' +
-    '<label class="sl-tax-wrap">Tax %<input class="sl-tax" type="number" step="0.01" min="0" value="' +
-      ((s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : 0) + '"></label>' +
-    '<span class="sl-amt">Rs 0.00</span>' +
-    '<button class="rm" type="button" title="Remove line">×</button>' +
-    '<div class="sl-sub">' +
-      '<input class="sl-desc" placeholder="Description">' +
-      '<input class="sl-batch" placeholder="Batch No.">' +
-      '<input class="sl-serial" placeholder="Serial No./IMEI">' +
-      '<input class="sl-exp" placeholder="Exp (mm/yy)">' +
-    "</div>";
-  wrap.innerHTML = html;
-  var sel = wrap.querySelector(".sl-item");
+/* The bill-line item select stays the single value source (hidden);
+   fillLineItemOptions rebuilds its options from the items cache. */
+function fillLineItemOptions(sel) {
+  var keep = sel.value;
+  sel.innerHTML = "";
   var customs = document.createElement("option");
   customs.value = ""; customs.textContent = "— Custom line —";
   sel.appendChild(customs);
@@ -1665,16 +1940,154 @@ function addSaleLine(itemId, preset) {
     o.value = i.id; o.textContent = i.name; o.setAttribute("data-rate", i.salePricePaisa);
     sel.appendChild(o);
   });
-  wrap.querySelector(".sl-free-wrap").classList.toggle("hidden", !s.txn_free_item_qty);
-  wrap.querySelector(".sl-disc-wrap").classList.toggle("hidden",
+  if (keep) sel.value = keep;
+}
+function addSaleLine(itemId, preset) {
+  var s = QB.settings || {};
+  var wrap = document.createElement("div");
+  wrap.className = "sale-line";
+  var html =
+    '<span class="sl-num"></span>' +
+    '<span class="sl-item-cell"><select class="sl-item hidden"></select>' +
+    '<span class="party-picker sl-picker">' +
+      '<button type="button" class="party-picker-btn sl-picker-btn"><span class="sl-picker-text">— Custom line —</span><span class="party-picker-caret">▾</span></button>' +
+      '<span class="party-picker-menu sl-picker-menu hidden">' +
+        '<button type="button" class="party-picker-add sl-add-item">+ Add Item</button>' +
+        '<span class="sl-quickadd hidden">' +
+          '<input class="sl-qa-name" type="text" placeholder="New item name">' +
+          '<input class="sl-qa-sale" type="number" step="0.01" min="0" placeholder="Sale price (Rs)">' +
+          '<input class="sl-qa-purchase" type="number" step="0.01" min="0" placeholder="Purchase price (Rs)">' +
+          '<input class="sl-qa-stock" type="number" step="1" min="0" placeholder="Opening stock">' +
+          '<button type="button" class="btn btn-mini btn-primary sl-qa-save">Add Item</button>' +
+        '</span>' +
+        '<span class="sl-picker-head"><span>ITEM</span><span>SALE PRICE</span><span>PURCHASE PRICE</span><span>STOCK</span><span>LOCATION</span></span>' +
+        '<span class="sl-picker-list"></span>' +
+      '</span>' +
+    '</span></span>' +
+    '<span class="sl-qty-cell"><input class="sl-qty" type="number" step="1" min="1" value="1">' +
+      '<input class="sl-free" type="number" step="1" min="0" value="0" title="Free quantity" placeholder="+ Free"></span>' +
+    '<span class="sl-unit-cell"><select class="sl-unit-sel"></select></span>' +
+    '<span class="sl-rate-cell"><input class="sl-rate" type="number" step="0.01" min="0" value="0"></span>' +
+    '<span class="sl-disc-cell"><input class="sl-disc" type="number" step="0.01" min="0" value="0"><span class="sl-disc-amt">Rs 0.00</span></span>' +
+    '<span class="sl-tax-cell"><input class="sl-tax" type="number" step="0.01" min="0" value="' +
+      ((s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : 0) + '"><span class="sl-tax-amt">Rs 0.00</span></span>' +
+    '<span class="sl-amt">Rs 0.00</span>' +
+    '<button class="rm" type="button" title="Remove line">×</button>' +
+    '<div class="sl-sub">' +
+      '<input class="sl-desc" placeholder="Description">' +
+      '<input class="sl-batch" placeholder="Batch No.">' +
+      '<input class="sl-serial" placeholder="Serial No./IMEI">' +
+      '<input class="sl-exp" placeholder="Exp (mm/yy)">' +
+      '<span class="sl-lpp"></span>' +
+    "</div>";
+  wrap.innerHTML = html;
+  var unitSel = wrap.querySelector(".sl-unit-sel");
+  (itemUnits() || []).forEach(function (u) {
+    var nm = typeof u === "string" ? u : (u && u.name);
+    if (!nm) return;
+    var oo = document.createElement("option");
+    oo.value = nm; oo.textContent = nm;
+    unitSel.appendChild(oo);
+  });
+  if (!unitSel.options.length) {
+    var po = document.createElement("option");
+    po.value = "Pcs"; po.textContent = "Pcs";
+    unitSel.appendChild(po);
+  }
+  var sel = wrap.querySelector(".sl-item");
+  fillLineItemOptions(sel);
+  /* Vyapar-style item picker (audit 2026-11-10, research §1): the
+     dropdown opens with "+ Add Item" and shows SALE PRICE /
+     PURCHASE PRICE / STOCK / LOCATION columns for every item. The
+     menu is fixed-positioned because the bill grid clips overflow. */
+  var pickerBtn = wrap.querySelector(".sl-picker-btn");
+  var pickerText = wrap.querySelector(".sl-picker-text");
+  var pickerMenu = wrap.querySelector(".sl-picker-menu");
+  function buildItemMenu() {
+    var list = wrap.querySelector(".sl-picker-list");
+    list.innerHTML = "";
+    var items = ((cacheGet("items") || {}).items || []);
+    if (!items.length) {
+      list.innerHTML = '<p class="empty" style="padding:6px">No items yet — use + Add Item above.</p>';
+      return;
+    }
+    items.forEach(function (i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "sl-item-row" + (String(sel.value) === String(i.id) ? " sel" : "");
+      b.innerHTML = "<span>" + esc(i.name) + (String(sel.value) === String(i.id) ? " ✓" : "") + "</span>" +
+        "<span>" + fmtRs(i.salePricePaisa) + "</span>" +
+        "<span>" + fmtRs(i.purchasePricePaisa || 0) + "</span>" +
+        "<span>" + (i.stockQty != null ? i.stockQty : 0) + "</span>" +
+        "<span>" + esc(i.location || "—") + "</span>";
+      b.addEventListener("click", function () {
+        sel.value = i.id;
+        sel.dispatchEvent(new Event("change"));
+        pickerMenu.classList.add("hidden");
+      });
+      list.appendChild(b);
+    });
+  }
+  pickerBtn.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    var opening = pickerMenu.classList.contains("hidden");
+    document.querySelectorAll(".sl-picker-menu").forEach(function (m) { m.classList.add("hidden"); });
+    if (!opening) return;
+    wrap.querySelector(".sl-add-item").classList.toggle("hidden",
+      !!(QB.settings && QB.settings.block_new_from_txn));
+    buildItemMenu();
+    var r = pickerBtn.getBoundingClientRect();
+    pickerMenu.style.top = (r.bottom + 6) + "px";
+    pickerMenu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 552)) + "px";
+    pickerMenu.classList.remove("hidden");
+  });
+  pickerMenu.addEventListener("click", function (ev) { ev.stopPropagation(); });
+  wrap.querySelector(".sl-add-item").addEventListener("click", function () {
+    wrap.querySelector(".sl-quickadd").classList.toggle("hidden");
+    wrap.querySelector(".sl-qa-name").focus();
+  });
+  wrap.querySelector(".sl-qa-save").addEventListener("click", function () {
+    var name = wrap.querySelector(".sl-qa-name").value.trim();
+    if (!name) { setMsg("appMsg", "Enter the new item's name.", true); return; }
+    apiCreate("item", {
+      name: name,
+      sale_price_paisa: rsToPaisa(wrap.querySelector(".sl-qa-sale").value),
+      purchase_price_paisa: rsToPaisa(wrap.querySelector(".sl-qa-purchase").value),
+      stock_qty: parseInt(wrap.querySelector(".sl-qa-stock").value || "0", 10) || 0
+    }).then(function (r) {
+      var newId = r.body && r.body.item ? r.body.item.id : null;
+      return apiGet("/api/items", "items").then(function () {
+        document.querySelectorAll(".sale-line .sl-item").forEach(function (s2) {
+          fillLineItemOptions(s2);
+        });
+        if (newId) {
+          sel.value = newId;
+          sel.dispatchEvent(new Event("change"));
+        }
+        wrap.querySelector(".sl-quickadd").classList.add("hidden");
+        pickerMenu.classList.add("hidden");
+        setMsg("appMsg", "Item added.");
+      });
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+  wrap.querySelector(".sl-free").classList.toggle("hidden", !s.txn_free_item_qty);
+  wrap.querySelector(".sl-disc-cell").classList.toggle("hidden",
     s.item_wise_discount === false || s.txn_wise_discount === false);
-  wrap.querySelector(".sl-tax-wrap").classList.toggle("hidden",
+  wrap.querySelector(".sl-tax-cell").classList.toggle("hidden",
     !(s.tax_enabled && s.item_wise_tax !== false && s.txn_wise_tax !== false));
   function fillFromItem() {
     var o = sel.options[sel.selectedIndex];
     var it = itemById(parseInt(sel.value, 10) || 0);
+    pickerText.textContent = it ? it.name : "— Custom line —";
     if (o && o.getAttribute("data-rate")) wrap.querySelector(".sl-rate").value = (o.getAttribute("data-rate") / 100).toFixed(2);
-    wrap.querySelector(".sl-unit").textContent = it && it.unit ? it.unit : (s.default_unit || "Pcs");
+    var unitName = it && it.unit ? it.unit : (s.default_unit || "Pcs");
+    var us = wrap.querySelector(".sl-unit-sel");
+    if (![].some.call(us.options, function (x) { return x.value === unitName; })) {
+      var uo = document.createElement("option");
+      uo.value = unitName; uo.textContent = unitName;
+      us.appendChild(uo);
+    }
+    us.value = unitName;
     if (it) {
       var rateNow = rsToPaisa(wrap.querySelector(".sl-rate").value);
       if (it.discountType === "amount" && it.discountAmountPaisa && rateNow) {
@@ -1698,6 +2111,30 @@ function addSaleLine(itemId, preset) {
           if (r.body.ratePaisa != null) wrap.querySelector(".sl-rate").value = (r.body.ratePaisa / 100).toFixed(2);
           calcSaleTotal();
         }).catch(function () {});
+      }
+      /* Settings > TRANSACTION > "Show last 5 Purchase Price of Items"
+         (audit 2026-11-10: the toggle was a dead switch — nothing
+         honoured it). Shows the item's recent purchase rates here. */
+      var lpp = wrap.querySelector(".sl-lpp");
+      if (lpp) {
+        lpp.textContent = "";
+        if (s.show_last_purchase_price) {
+          apiGet("/api/reports/item-detail?item_id=" + it.id, null).then(function (r2) {
+            var rates = [];
+            (r2.body.rows || []).forEach(function (row) {
+              if (row.kind !== "purchase") return;
+              var rate = row.ratePaisa ||
+                (row.qty ? Math.round((row.amountPaisa || 0) / row.qty) : 0);
+              if (rate) rates.push(rate);
+            });
+            rates = rates.slice(-5).reverse().filter(function (v, ix, a) {
+              return ix === 0 || v !== a[ix - 1];
+            });
+            if (rates.length && String(sel.value) === String(it.id)) {
+              lpp.textContent = "Last purchase prices: " + rates.map(fmtRs).join(" · ");
+            }
+          }).catch(function () {});
+        }
       }
     }
     calcSaleTotal();
@@ -1792,11 +2229,23 @@ function docTotals() {
   return { sub: sub, disc: disc, tax: tax, total: total, rounded: rounded };
 }
 function calcSaleTotal() {
-  document.querySelectorAll(".sale-line").forEach(function (w) {
+  var qtySum = 0;
+  document.querySelectorAll(".sale-line").forEach(function (w, idx) {
     var a = lineAmounts(w);
+    var num = w.querySelector(".sl-num");
+    if (num) num.textContent = idx + 1;
     w.querySelector(".sl-amt").textContent = fmtRs(a.gross - a.disc + a.tax);
+    var da = w.querySelector(".sl-disc-amt");
+    if (da) da.textContent = fmtRs(a.disc);
+    var ta = w.querySelector(".sl-tax-amt");
+    if (ta) ta.textContent = fmtRs(a.tax);
+    qtySum += a.qty;
   });
   var t = docTotals();
+  $("docTotalQty").textContent = qtySum;
+  $("docTotalDisc").textContent = fmtRs(t.disc);
+  $("docTotalTax").textContent = fmtRs(t.tax);
+  $("docTotalAmt").textContent = fmtRs(t.total);
   var shown = $("docRoundOff").checked ? t.rounded : t.total;
   var loyUse = parseInt($("docLoyaltyUse").value || "0", 10) || 0;
   if (docType === "sale" && QB.settings && QB.settings.loyalty && QB.settings.loyalty.enabled && loyUse > 0) {
@@ -1875,16 +2324,17 @@ $("btnAddPayRow").addEventListener("click", function () { addDocPayRow(); });
 
 function applyDocType() {
   var meta = DOC_META[docType];
-  $("docTitle").textContent = meta.title;
+  $("docTitle").textContent = DOC_TAB_SHORT[docType] || meta.title;
   $("docPartyLabel").textContent = meta.party;
   $("docPaidLabel").textContent = meta.returnsDoc ? "Refund (Rs)" : "Paid now (Rs)";
   $("docToggleWrap").classList.toggle("hidden", meta.noPayment);
   $("docPaidWrap").classList.toggle("hidden", meta.noPayment);
   $("docPayBlock").classList.toggle("hidden", !!meta.noPayment);
   refreshDocBankAccounts();
-  $("docSaveBtn").textContent = editingInvoiceId ? "Save changes" : "Save " + meta.title;
-  $("docDate").textContent = new Date().toISOString().slice(0, 10);
+  $("docSaveBtn").textContent = editingInvoiceId ? "Save changes" : "Save";
+  $("docDateInput").value = new Date().toISOString().slice(0, 10);
   $("docNumber").textContent = editingInvoiceId ? "Editing" : "Auto";
+  syncDocPartyBtn();
   docCashMode = false;
   $("docCashToggle").classList.remove("on");
   $("docCashToggle").setAttribute("aria-checked", "false");
@@ -2082,6 +2532,42 @@ $("docSaveNewBtn").addEventListener("click", function () {
   docSaveNewFlag = true;
   $("saleForm").requestSubmit();
 });
+/* Reference-layout footer (delta build #3): ADD DESCRIPTION / IMAGE /
+   DOCUMENT reveal their inputs only when clicked; Share works on the
+   bill being edited (or the last one saved) via the existing PDF and
+   WhatsApp actions. */
+$("btnDocDesc").addEventListener("click", function () {
+  $("docDescWrap").classList.toggle("hidden");
+});
+$("btnDocImage").addEventListener("click", function () {
+  $("docAttachWrap").classList.toggle("hidden");
+});
+$("btnDocDoc").addEventListener("click", function () {
+  $("docAttachWrap").classList.toggle("hidden");
+});
+$("btnDocShare").addEventListener("click", function () {
+  $("docShareMenu").classList.toggle("hidden");
+});
+function docShareTarget(cb) {
+  var id = editingInvoiceId || (lastSavedInvoice && lastSavedInvoice.id);
+  if (!id) {
+    setMsg("appMsg", "Save this bill first — Share gives the PDF and WhatsApp options for a saved bill.", true);
+    return;
+  }
+  apiGet("/api/invoices", "invoices").then(function (r) {
+    var inv = (r.body.invoices || []).filter(function (i) { return i.id === id; })[0];
+    if (inv) cb(inv);
+    else setMsg("appMsg", "Save this bill first — Share gives the PDF and WhatsApp options for a saved bill.", true);
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("btnDocSharePdf").addEventListener("click", function () {
+  hidePanel("docShareMenu");
+  docShareTarget(function (inv) { downloadInvoicePdf(inv.id, false); });
+});
+$("btnDocShareWhats").addEventListener("click", function () {
+  hidePanel("docShareMenu");
+  docShareTarget(function (inv) { shareInvoiceWhatsApp(inv); });
+});
 
 function openDocForm(type) {
   type = DOC_META[type] ? type : "sale";
@@ -2125,6 +2611,41 @@ $("saleForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var lines = saleLinesData();
   if (!lines.length) { setMsg("appMsg", "Add at least one line.", true); return; }
+  /* Insufficient stock (audit 2026-11-10, research §1): Vyapar asks
+     BEFORE the sale completes — "Your stock for following item is not
+     sufficient to fulfil the sale. <item> — Do you want to continue?"
+     NO aborts, YES saves. With "Stop Sale on Negative Stock" ON the
+     bill is refused instead (the server enforces the same rule).
+     New Sale documents only; edits keep the post-save dialog. */
+  if (!editingInvoiceId && docType === "sale") {
+    var needByItem = {};
+    lines.forEach(function (l) {
+      if (!l.item_id) return;
+      needByItem[l.item_id] = (needByItem[l.item_id] || 0) +
+        (l.qty || 0) + (l.free_qty || 0);
+    });
+    var shortNames = [];
+    Object.keys(needByItem).forEach(function (iid) {
+      var itS = itemById(parseInt(iid, 10));
+      if (itS && needByItem[iid] > (itS.stockQty || 0)) {
+        shortNames.push(itS.name + " (stock " + (itS.stockQty || 0) +
+          ", need " + needByItem[iid] + ")");
+      }
+    });
+    if (shortNames.length) {
+      if (QB.settings && QB.settings.stop_sale_negative_stock) {
+        openDialog("Not enough stock",
+          "<p>Your stock for following item is not sufficient to fulfil the sale:</p><ul><li>" +
+          shortNames.map(esc).join("</li><li>") +
+          "</li></ul><p>“Stop Sale on Negative Stock” is ON in Settings &gt; GENERAL, so this bill cannot be saved.</p>" +
+          '<button class="btn btn-primary btn-block" id="stockStopOk" type="button">OK</button>');
+        $("stockStopOk").addEventListener("click", closeDialog);
+        return;
+      }
+      if (!confirm("Your stock for following item is not sufficient to fulfil the sale.\n" +
+          shortNames.join("\n") + "\nDo you want to continue?")) return;
+    }
+  }
   var meta = DOC_META[docType];
   var t = docTotals();
   var tax = t.tax, disc = t.disc;
@@ -2209,6 +2730,8 @@ function resetDocForm() {
   $("docPayTotal").textContent = "";
   $("salePaid").value = 0;
   $("docRoundOff").checked = false;
+  hidePanel("docDescWrap"); hidePanel("docAttachWrap"); hidePanel("docPartyMenu");
+  hidePanel("docBillingWrap"); docBillingAuto = "";
   ["docBilling", "docShipping", "docPoNumber", "docTransport", "docVehicle",
    "docDeliveryLoc", "docDescription", "docLoyaltyUse"].forEach(function (id) { $(id).value = ""; });
   $("docDueDate").value = ""; $("docDeliveryDate").value = "";
@@ -2261,18 +2784,30 @@ function loadBook() {
       if (q && ((partyNames[i.partyId] || "") + " " + i.invoiceNo).toLowerCase().indexOf(q) < 0) return false;
       return true;
     }).slice().reverse();
-    var paidSum = 0, unpaidSum = 0;
+    /* Book strip (audit 2026-11-10, research §12): Paid + Unpaid +
+       Overdue = Total, all over the filtered list. Paid = money
+       actually received, Unpaid = balance not yet due, Overdue =
+       balance past its Due Date — the three sum exactly to Total. */
+    var todayStr = new Date().toISOString().slice(0, 10);
+    function isOverdue(i) {
+      return i.balancePaisa > 0 && !!i.dueDate && i.dueDate < todayStr;
+    }
+    var paidSum = 0, unpaidSum = 0, overdueSum = 0, totalSum = 0;
     list.forEach(function (i) {
-      if (i.balancePaisa <= 0) paidSum += i.totalPaisa; else unpaidSum += i.balancePaisa;
+      paidSum += i.paidPaisa || 0;
+      totalSum += i.totalPaisa || 0;
+      if (isOverdue(i)) overdueSum += i.balancePaisa;
+      else unpaidSum += i.balancePaisa || 0;
     });
     $("bookPaid").textContent = fmtRs(paidSum);
     $("bookUnpaid").textContent = fmtRs(unpaidSum);
-    $("bookTotal").textContent = fmtRs(paidSum + unpaidSum);
+    $("bookOverdue").textContent = fmtRs(overdueSum);
+    $("bookTotal").textContent = fmtRs(totalSum);
     if (bookKind === "sale") {
       $("bookSaleWrap").classList.remove("hidden");
-      $("bookSaleTotal").textContent = fmtRs(paidSum + unpaidSum);
+      $("bookSaleTotal").textContent = fmtRs(totalSum);
       $("bookSaleReceived").textContent = fmtRs(paidSum);
-      $("bookSaleBalance").textContent = fmtRs(unpaidSum);
+      $("bookSaleBalance").textContent = fmtRs(unpaidSum + overdueSum);
       apiGet("/api/dashboard", "dashboard").then(function (dr) {
         var pct = dr.body.dashboard.salesVsLastMonthPct;
         $("bookSaleVs").textContent = pct == null ? "" :
@@ -2287,6 +2822,9 @@ function loadBook() {
     list.forEach(function (inv) {
       var tr = document.createElement("tr");
       var cash = inv.paidPaisa >= inv.totalPaisa && inv.totalPaisa > 0;
+      var status = inv.balancePaisa <= 0 ? "Paid"
+        : isOverdue(inv) ? "Overdue"
+        : (inv.paidPaisa > 0 ? "Partial" : "Unpaid");
       tr.innerHTML =
         "<td>" + esc((inv.createdAt || "").slice(0, 10)) + "</td>" +
         "<td>" + esc(inv.invoiceNo) + "</td>" +
@@ -2294,7 +2832,9 @@ function loadBook() {
         "<td>" + esc(meta.title) + "</td>" +
         "<td>" + (cash ? "Cash" : "Credit") + "</td>" +
         '<td class="num">' + fmtRs(inv.totalPaisa) + "</td>" +
-        '<td class="num">' + fmtRs(inv.balancePaisa) + "</td>";
+        '<td class="num">' + fmtRs(inv.balancePaisa) + "</td>" +
+        "<td>" + esc(inv.dueDate || "—") + "</td>" +
+        "<td>" + status + "</td>";
       var td = document.createElement("td");
       td.className = "row-actions";
       var pdf = document.createElement("button");
@@ -2406,7 +2946,7 @@ function appendDocRowActions(td, inv, meta, where) {
   del.className = "btn btn-mini"; del.type = "button"; del.textContent = "Delete";
   del.addEventListener("click", function () {
     passcodeCheck(function () {
-      if (!confirm("Delete " + meta.title + " " + inv.invoiceNo + "? It moves to Utilities > Recycle Bin and its stock effect is reversed.")) return;
+      if (!confirm("Do you really want to delete this transaction?\n" + meta.title + " " + inv.invoiceNo + " moves to Utilities > Recycle Bin and its stock effect is reversed.")) return;
       apiDelete("/api/invoices/" + inv.id).then(function () {
         setMsg("appMsg", meta.title + " " + inv.invoiceNo + " moved to the Recycle Bin.");
         if (where === "book") loadBook(); else loadDocs();
@@ -2448,6 +2988,8 @@ function startEditInvoice(inv) {
     $("docDeliveryDate").value = full.deliveryDate || "";
     $("docDeliveryLoc").value = full.deliveryLocation || "";
     $("docDescription").value = full.description || "";
+    if (full.description) showPanel("docDescWrap");
+    if (full.attachmentName) { $("docAttachment").value = full.attachmentName; showPanel("docAttachWrap"); }
     $("docNumber").textContent = full.invoiceNo;
     updateDocPartyInfo();
     calcSaleTotal();
@@ -2529,14 +3071,23 @@ function loadCashBank() {
     list.forEach(function (p) { if (p.direction === "in") tin += p.amountPaisa; else tout += p.amountPaisa; });
     $("cbIn").textContent = fmtRs(tin);
     $("cbOut").textContent = fmtRs(tout);
-    $("cashbankList").innerHTML = list.length ? "" : '<p class="empty">No payments yet.</p>';
+    /* Cash In Hand table (audit 2026-11-10, research §10): Type /
+       Name / Date / Amount columns, like Vyapar's screen. */
+    var cbody = $("cashBody");
+    cbody.innerHTML = "";
+    $("cashEmpty").classList.toggle("hidden", list.length > 0);
     list.forEach(function (p) {
-      var div = document.createElement("div");
-      div.className = "row";
-      div.innerHTML = rowHtml(
-        (p.direction === "in" ? "Received" : "Paid") + (p.partyId ? " · " + (parties[p.partyId] || "") : ""),
-        (p.createdAt || "").slice(0, 10) + (p.note ? " · " + p.note : ""), fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
-      $("cashbankList").appendChild(div);
+      var tr = document.createElement("tr");
+      var isAdj = (p.note || "").indexOf("Cash Adjustment") === 0;
+      var type = isAdj ? "Cash Adjustment" : (p.direction === "in" ? "Received" : "Paid");
+      var name = (p.partyId ? (parties[p.partyId] || "") : "") ||
+        (isAdj ? (p.note.replace(/^Cash Adjustment\s*—\s*/, "") || "Cash Adjustment") : (p.note || "Cash"));
+      tr.innerHTML =
+        "<td>" + esc(type) + "</td>" +
+        "<td>" + esc(name) + "</td>" +
+        "<td>" + esc((p.createdAt || "").slice(0, 10)) + "</td>" +
+        '<td class="num">' + (p.direction === "in" ? "+" : "−") + fmtRs(p.amountPaisa) + "</td>";
+      cbody.appendChild(tr);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
   apiGet("/api/dashboard", "dashboard").then(function (r) {
@@ -2642,6 +3193,7 @@ function startSettle(inv, direction, note) {
   $("paySettleNote").classList.remove("hidden");
   navKey = direction === "in" ? "paymentin" : "paymentout";
   showScreen("payments");
+  showPanel("paymentPanel");
   fillPartySelects();
   if (inv.partyId) $("payParty").value = inv.partyId;
 }
@@ -2676,6 +3228,14 @@ function loadPayments() {
         (p.direction === "in" ? "Received" : "Paid") + (p.partyId ? " · " + (parties[p.partyId] || "") : ""),
         (p.createdAt || "").slice(0, 10) + (metaBits ? " · " + metaBits : ""),
         fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
+      var pacts = document.createElement("div");
+      pacts.className = "row-actions";
+      pacts.appendChild(miniBtn("Delete", function () {
+        deleteRecord("this payment of " + fmtRs(p.amountPaisa),
+          "Only standalone cash payments can be deleted here - a payment recorded against a bill, or through a bank account, is refused with the reason so your balances never break.",
+          "/api/payments/" + p.id, function () { loadPayments(); loadDashboard(); });
+      }));
+      div.appendChild(pacts);
       $("paymentList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -2714,10 +3274,16 @@ $("paymentForm").addEventListener("submit", function (ev) {
     syncPayModeFields();
     payInvoiceId = null;
     $("paySettleNote").classList.add("hidden");
+    hidePanel("paymentPanel");
     setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Payment saved.");
     loadPayments();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddPayment").addEventListener("click", function () {
+  showPanel("paymentPanel");
+  $("payAmount").focus();
+});
+$("btnPaymentBack").addEventListener("click", function () { hidePanel("paymentPanel"); });
 $("btnAllocate").addEventListener("click", function () {
   var pid = $("allocParty").value;
   var amt = rsToPaisa($("allocAmount").value);
@@ -2751,21 +3317,69 @@ function loadExpenses() {
   }).catch(function () {});
   apiGet("/api/expenses", "expenses").then(function (r) {
     var q = searchText();
-    var list = (r.body.expenses || []).filter(function (e) {
+    lastExpenses = (r.body.expenses || []).filter(function (e) {
       return !q || (e.title || "").toLowerCase().indexOf(q) >= 0;
     }).slice().reverse();
-    $("expenseList").innerHTML = list.length ? "" : '<p class="empty">No expenses yet.</p>';
-    list.forEach(function (e) {
-      var div = document.createElement("div");
-      div.className = "row";
-      var sub = (e.category ? e.category + " (" + (e.categoryType || "Indirect Expense") + ") · " : "") +
-        (e.expenseItem ? e.expenseItem + " · " : "") + (e.createdAt || "").slice(0, 10);
-      var amt = fmtRs(e.amountPaisa) +
-        (e.balancePaisa > 0 ? " · Unpaid " + fmtRs(e.balancePaisa) : " · Paid");
-      div.innerHTML = rowHtml(e.title, sub, amt, "neg");
-      $("expenseList").appendChild(div);
-    });
+    renderExpenses();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+/* Expenses layout (audit 2026-11-10, research §11): a category pane
+   (each category with its total; click to filter) beside the detail
+   table — DATE / EXPENSE / PARTY / PAYMENT TYPE / AMOUNT / BALANCE.
+   QBill expenses are cash-book records, so the payment type reads
+   Cash; they carry no EXP NO. sequence (see the audit record). */
+var lastExpenses = [];
+var expCatFilter = "";
+function renderExpenses() {
+  var partyNames = {};
+  ((cacheGet("parties") || {}).parties || []).forEach(function (p) { partyNames[p.id] = p.name; });
+  var totals = {}, grand = 0;
+  lastExpenses.forEach(function (e) {
+    var c = e.category || "Uncategorised";
+    totals[c] = (totals[c] || 0) + e.amountPaisa;
+    grand += e.amountPaisa;
+  });
+  var cats = Object.keys(totals).sort();
+  $("expenseCats").innerHTML = "<h3 style='margin-top:0'>Categories</h3>" +
+    ['<button type="button" class="exp-cat' + (expCatFilter === "" ? " sel" : "") +
+      '" data-expcat=""><span>All Categories</span><strong>' + fmtRs(grand) + "</strong></button>"]
+      .concat(cats.map(function (c) {
+        return '<button type="button" class="exp-cat' + (expCatFilter === c ? " sel" : "") +
+          '" data-expcat="' + esc(c) + '"><span>' + esc(c) + "</span><strong>" +
+          fmtRs(totals[c]) + "</strong></button>";
+      })).join("");
+  $("expenseCats").querySelectorAll("[data-expcat]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      expCatFilter = b.getAttribute("data-expcat");
+      renderExpenses();
+    });
+  });
+  var list = lastExpenses.filter(function (e) {
+    return !expCatFilter || (e.category || "Uncategorised") === expCatFilter;
+  });
+  var body = $("expenseBody");
+  body.innerHTML = "";
+  $("expenseEmpty").classList.toggle("hidden", list.length > 0);
+  list.forEach(function (e) {
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + esc((e.createdAt || "").slice(0, 10)) + "</td>" +
+      "<td>" + esc(e.title) +
+        (e.expenseItem ? '<div class="sub">' + esc(e.expenseItem) + "</div>" : "") + "</td>" +
+      "<td>" + esc(e.partyId ? (partyNames[e.partyId] || "—") : "—") + "</td>" +
+      "<td>Cash</td>" +
+      '<td class="num">' + fmtRs(e.amountPaisa) + "</td>" +
+      '<td class="num">' + fmtRs(e.balancePaisa) + "</td>";
+    var td = document.createElement("td");
+    td.className = "row-actions";
+    td.appendChild(miniBtn("Delete", function () {
+      deleteRecord("expense '" + e.title + "' (" + fmtRs(e.amountPaisa) + ")",
+        "It moves to the Recycle Bin (Utilities) and stops counting in your totals until you restore it.",
+        "/api/expenses/" + e.id, function () { loadExpenses(); loadDashboard(); });
+    }));
+    tr.appendChild(td);
+    body.appendChild(tr);
+  });
 }
 $("expCategory").addEventListener("change", function () {
   var o = $("expCategory").options[$("expCategory").selectedIndex];
@@ -2789,10 +3403,16 @@ $("expenseForm").addEventListener("submit", function (ev) {
   }).then(function (r) {
     $("expenseForm").reset();
     $("expTaxWrap").classList.add("hidden");
+    hidePanel("expensePanel");
     setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Expense saved.");
     loadExpenses();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddExpense").addEventListener("click", function () {
+  showPanel("expensePanel");
+  $("expTitle").focus();
+});
+$("btnExpenseBack").addEventListener("click", function () { hidePanel("expensePanel"); });
 
 /* ----------------------------------------------------------- settings -- */
 function setSettingsCat(cat) {
@@ -2811,11 +3431,60 @@ function setSettingsCat(cat) {
 document.querySelectorAll(".set-cat").forEach(function (b) {
   b.addEventListener("click", function () { setSettingsCat(b.getAttribute("data-setcat")); });
 });
+/* Business identity (delta build #3, Fix 3): the account's OWN name
+   and logo drive the sidebar card, the top header, the bill PDFs and
+   the public store page. The logo <img> tags are fed from an authed
+   fetch (blob URL) because the logo endpoint needs the session. */
+var logoObjectUrl = null;
+function applyBusinessIdentity(b) {
+  if (!b) return;
+  if (b.name) {
+    $("sideBizName").textContent = b.name;
+    $("headBizName").textContent = b.name;
+  }
+  if (b.email) $("sideBizEmail").textContent = b.email;
+  refreshLogoImages(!!b.hasLogo);
+}
+function refreshLogoImages(hasLogo) {
+  var imgs = [$("sideBizLogo"), $("headBizLogo")];
+  if (!hasLogo) {
+    imgs.forEach(function (im) { if (im) im.classList.add("hidden"); });
+    return;
+  }
+  fetch("/api/business/logo", { headers: authHeaders() }).then(function (resp) {
+    if (!resp.ok) throw new Error("logo " + resp.status);
+    return resp.blob();
+  }).then(function (blob) {
+    if (logoObjectUrl) URL.revokeObjectURL(logoObjectUrl);
+    logoObjectUrl = URL.createObjectURL(blob);
+    imgs.forEach(function (im) {
+      if (im) { im.src = logoObjectUrl; im.classList.remove("hidden"); }
+    });
+    var prev = $("profLogoPreview");
+    if (prev) {
+      prev.src = logoObjectUrl;
+      prev.classList.remove("hidden");
+      $("profLogoEmpty").classList.add("hidden");
+      $("btnLogoRemove").classList.remove("hidden");
+    }
+  }).catch(function () {
+    imgs.forEach(function (im) { if (im) im.classList.add("hidden"); });
+  });
+}
+function openBusinessProfile() {
+  go("settings");
+  setSettingsCat("general");
+  loadProfile();
+}
+$("sideBrand").addEventListener("click", openBusinessProfile);
+$("headBrand").addEventListener("click", openBusinessProfile);
 function loadProfile() {
   apiGet("/api/business", "business").then(function (r) {
     var b = r.body.business || {};
     $("profName").value = b.name || "";
+    $("profOwner").value = b.ownerName || "";
     $("profAddress").value = b.address || "";
+    $("profCity").value = b.city || "";
     $("profPhone").value = b.phone || "";
     $("profEmail").value = b.email || "";
     $("profBizType").value = b.businessType || "";
@@ -2825,42 +3494,93 @@ function loadProfile() {
     $("profSignature").value = b.signatureText || "";
     $("profTaxNote").value = b.taxNote || "";
     $("profTerms").value = b.terms || "";
-    if (b.name) {
-      $("sideBizName").textContent = b.name;
-      $("headBizName").textContent = b.name;
-    }
-    if (b.email) $("sideBizEmail").textContent = b.email;
+    $("profLogoPreview").classList.toggle("hidden", !b.hasLogo);
+    $("profLogoEmpty").classList.toggle("hidden", !!b.hasLogo);
+    $("btnLogoRemove").classList.toggle("hidden", !b.hasLogo);
+    applyBusinessIdentity(b);
   }).catch(function () {});
 }
 $("profileForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   apiPut("/api/business", {
-    name: $("profName").value.trim(), address: $("profAddress").value.trim(),
+    name: $("profName").value.trim(), owner_name: $("profOwner").value.trim(),
+    address: $("profAddress").value.trim(), city: $("profCity").value.trim(),
     phone: $("profPhone").value.trim(), email: $("profEmail").value.trim(),
     business_type: $("profBizType").value.trim(),
     business_category: $("profBizCategory").value.trim(),
     pincode: $("profPincode").value.trim(),
     state: $("profState").value.trim(),
-    signature_text: $("profSignature").value.trim()
-  }).then(function (r) {
-    cacheSet("business", { business: r.business });
-    if (r.business && r.business.name) {
-      $("sideBizName").textContent = r.business.name;
-      $("headBizName").textContent = r.business.name;
-    }
-    if (r.business && r.business.email) $("sideBizEmail").textContent = r.business.email;
-    setMsg("appMsg", "Profile saved. It appears on your invoices and PDFs.");
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
-});
-$("transForm").addEventListener("submit", function (ev) {
-  ev.preventDefault();
-  apiPut("/api/business", {
+    signature_text: $("profSignature").value.trim(),
     tax_note: $("profTaxNote").value.trim(),
     terms: $("profTerms").value.trim()
   }).then(function (r) {
     cacheSet("business", { business: r.business });
-    setMsg("appMsg", "Transaction settings saved. They will print on new bill PDFs.");
+    applyBusinessIdentity(r.business);
+    setMsg("appMsg", "Profile saved. It appears on your invoices and PDFs.");
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
+});
+/* Logo upload is ONLINE-ONLY: the image goes straight to the server
+   (it is not queued in the offline outbox, which carries documents,
+   not images). Offline, the shopkeeper gets a clear message. */
+$("profLogoFile").addEventListener("change", function () {
+  var f = $("profLogoFile").files[0];
+  $("profLogoFile").value = "";
+  if (!f) return;
+  if (!navigator.onLine) {
+    $("logoMsg").textContent = "You are offline — logo upload needs an internet connection. Please try again when you are back online.";
+    return;
+  }
+  if (["image/png", "image/jpeg", "image/webp", "image/gif"].indexOf(f.type) < 0) {
+    $("logoMsg").textContent = "Please choose a PNG, JPG, WebP or GIF image.";
+    return;
+  }
+  if (f.size > 400 * 1024) {
+    $("logoMsg").textContent = "That image is too large — please use a logo under 400 KB.";
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function () {
+    fetch("/api/business/logo", {
+      method: "PUT", headers: authHeaders(),
+      body: JSON.stringify({ logo_data: reader.result })
+    }).then(function (resp) {
+      return resp.json().then(function (body) {
+        if (!resp.ok) throw new Error(body.error || "Logo upload failed.");
+        return body;
+      });
+    }).then(function (body) {
+      cacheSet("business", { business: body.business });
+      applyBusinessIdentity(body.business);
+      $("profLogoPreview").classList.remove("hidden");
+      $("profLogoEmpty").classList.add("hidden");
+      $("btnLogoRemove").classList.remove("hidden");
+      $("logoMsg").textContent = "Logo saved. It now shows in the header, the sidebar and on your bill PDFs.";
+      setMsg("appMsg", "Business logo saved.");
+    }).catch(function (e) { $("logoMsg").textContent = e.message; });
+  };
+  reader.readAsDataURL(f);
+});
+$("btnLogoRemove").addEventListener("click", function () {
+  if (!navigator.onLine) {
+    $("logoMsg").textContent = "You are offline — removing the logo needs an internet connection.";
+    return;
+  }
+  fetch("/api/business/logo", {
+    method: "PUT", headers: authHeaders(),
+    body: JSON.stringify({ logo_data: null })
+  }).then(function (resp) {
+    return resp.json().then(function (body) {
+      if (!resp.ok) throw new Error(body.error || "Could not remove the logo.");
+      return body;
+    });
+  }).then(function (body) {
+    cacheSet("business", { business: body.business });
+    applyBusinessIdentity(body.business);
+    $("profLogoPreview").classList.add("hidden");
+    $("profLogoEmpty").classList.remove("hidden");
+    $("btnLogoRemove").classList.add("hidden");
+    $("logoMsg").textContent = "Logo removed.";
+  }).catch(function (e) { $("logoMsg").textContent = e.message; });
 });
 
 /* ------------------------------------------- app settings document --- */
@@ -3166,12 +3886,18 @@ function loadTermsPicker() {
     });
   }).catch(function () {});
 }
+$("btnTermNew").addEventListener("click", function () {
+  showPanel("termAddPanel");
+  $("termHeader").focus();
+});
+$("btnTermCancel").addEventListener("click", function () { hidePanel("termAddPanel"); });
 $("btnTermAdd").addEventListener("click", function () {
   var header = $("termHeader").value.trim();
   if (!header) { setMsg("appMsg", "Give the terms a header.", true); return; }
   apiPost("/api/terms", { header: header, description: $("termDesc").value.trim(),
     applies: [$("termApplies").value] }).then(function () {
       $("termHeader").value = ""; $("termDesc").value = "";
+      hidePanel("termAddPanel");
       setMsg("appMsg", "Terms added to the library.");
       loadTermsList(); loadTermsPicker();
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -3331,8 +4057,8 @@ function megaAction(act) {
   if (act.indexOf("doc:") === 0) openDocForm(act.slice(4));
   else if (act === "payin") go("paymentin");
   else if (act === "payout") go("paymentout");
-  else if (act === "otherincome") go("otherincome");
-  else if (act === "expenses") go("expenses");
+  else if (act === "otherincome") { go("otherincome"); showPanel("incomePanel"); }
+  else if (act === "expenses") { go("expenses"); showPanel("expensePanel"); }
 }
 document.querySelectorAll(".mega-item").forEach(function (b) {
   b.addEventListener("click", function () { megaAction(b.getAttribute("data-act")); });
@@ -3432,6 +4158,18 @@ $("expiringRange").addEventListener("change", function () {
 });
 document.querySelectorAll("[data-report-link]").forEach(function (b) {
   b.addEventListener("click", function () { openReports(b.getAttribute("data-report-link")); });
+});
+/* Home > Most Used Reports (audit 2026-11-10, research §7): the strip
+   links the 2026 Vyapar set — Sale Report (the Sale book), Daybook
+   Report (the Day Book), Party Statement (Parties > Ledger), View All. */
+document.querySelectorAll("[data-most]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var k = b.getAttribute("data-most");
+    if (k === "sale") go("salebook");
+    else if (k === "daybook") go("daybook");
+    else if (k === "party") go("parties");
+    else openReports("all-transactions");
+  });
 });
 $("docBarcode").addEventListener("keydown", function (ev) {
   if (ev.key !== "Enter") return;
@@ -3729,8 +4467,17 @@ function loadGodowns() {
       return '<div class="row"><div><div class="main">' + esc(g.name) +
         (g.isMain ? " (Main)" : "") + '</div><div class="sub">' + esc(g.type || "Godown") +
         " · " + g.totalQty + ' units in stock</div></div>' +
-        '<button class="btn btn-mini" data-godown-stock="' + g.id + '">Stock Summary</button></div>';
+        '<button class="btn btn-mini" data-godown-stock="' + g.id + '">Stock Summary</button>' +
+        (g.isMain ? "" : '<button class="btn btn-mini" data-godown-del="' + g.id + '">Delete</button>') + '</div>';
     }).join("") || '<p class="empty">No godowns yet.</p>';
+    $("godownList").querySelectorAll("[data-godown-del]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var g = list.filter(function (x) { return String(x.id) === b.getAttribute("data-godown-del"); })[0];
+        deleteRecord("godown '" + (g ? g.name : "") + "'",
+          "A godown holding stock, or one named in past transfers, cannot be deleted - you will see the reason if it is refused.",
+          "/api/godowns/" + b.getAttribute("data-godown-del"), loadGodowns);
+      });
+    });
     $("godownList").querySelectorAll("[data-godown-stock]").forEach(function (b) {
       b.addEventListener("click", function () {
         var gid = b.getAttribute("data-godown-stock");
@@ -3751,10 +4498,16 @@ $("godownForm").addEventListener("submit", function (ev) {
   apiPost("/api/godowns", { name: $("godownName").value.trim(), type: $("godownType").value })
     .then(function () {
       $("godownForm").reset();
+      hidePanel("godownPanel");
       setMsg("appMsg", "Godown added.");
       loadGodowns();
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddGodown").addEventListener("click", function () {
+  showPanel("godownPanel");
+  $("godownName").focus();
+});
+$("btnGodownBack").addEventListener("click", function () { hidePanel("godownPanel"); });
 function loadTransfers() {
   Promise.all([apiGet("/api/godowns", null), apiGet("/api/items", "items"), apiGet("/api/stock-transfers", null)])
     .then(function (res) {
@@ -3783,10 +4536,13 @@ $("transferForm").addEventListener("submit", function (ev) {
     to_godown_id: parseInt($("trTo").value, 10),
     note: $("trNote").value.trim()
   }).then(function () {
+    hidePanel("transferPanel");
     setMsg("appMsg", "Stock transferred.");
     loadTransfers();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddTransfer").addEventListener("click", function () { showPanel("transferPanel"); });
+$("btnTransferBack").addEventListener("click", function () { hidePanel("transferPanel"); });
 
 /* --------------------------------------------------- item detail ----- */
 var detailItem = null;
@@ -3805,7 +4561,8 @@ function openItemDetail(item) {
   apiGet("/api/reports/item-detail?item_id=" + item.id, null).then(function (r) {
     $("itemTxBody").innerHTML = (r.body.rows || []).map(function (row) {
       return "<tr><td>" + esc((row.date || "").slice(0, 10)) + "</td><td>" + esc(row.kind || "") + "</td><td>" +
-        esc(row.ref || row.batchNo || "") + "</td><td>" + row.qty + "</td><td>" + esc(row.status || "") + "</td></tr>";
+        esc(row.ref || row.batchNo || "") + "</td><td>" + row.qty + "</td><td>" +
+        fmtRs(row.amountPaisa || 0) + "</td><td>" + esc(row.status || "") + "</td></tr>";
     }).join("");
     $("itemTxEmpty").classList.toggle("hidden", (r.body.rows || []).length > 0);
   }).catch(function () {});
@@ -3820,6 +4577,11 @@ function loadItemBatches() {
   }).catch(function () {});
 }
 $("btnItemBack").addEventListener("click", function () { showScreen("items"); });
+$("btnAddBatch").addEventListener("click", function () {
+  showPanel("batchAddPanel");
+  $("batchNo").focus();
+});
+$("btnBatchCancel").addEventListener("click", function () { hidePanel("batchAddPanel"); });
 $("btnBatchAdd").addEventListener("click", function () {
   if (!detailItem) return;
   var qty = parseInt($("batchQty").value || "0", 10);
@@ -3829,6 +4591,7 @@ $("btnBatchAdd").addEventListener("click", function () {
     exp_date: $("batchExp").value.trim(), mfg_date: $("batchMfg").value.trim()
   }).then(function () {
     $("batchNo").value = ""; $("batchQty").value = ""; $("batchExp").value = ""; $("batchMfg").value = "";
+    hidePanel("batchAddPanel");
     setMsg("appMsg", "Batch stock added.");
     loadItemBatches();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -3885,6 +4648,12 @@ function renderImportResult() {
   var valid = importRowsCache.valid || [], errors = importRowsCache.errors || [];
   $("importValidCount").textContent = valid.length;
   $("importErrorCount").textContent = errors.length;
+  var impNoun = $("importKind").value === "items" ? "Items" : "Parties";
+  document.querySelectorAll(".imp-noun").forEach(function (s) { s.textContent = impNoun; });
+  /* Audit 2026-11-10: btnImportGo carried class "hidden" in the markup
+     and nothing ever removed it — the built-in Bulk Import could never
+     be confirmed. It now appears whenever valid rows exist. */
+  $("btnImportGo").classList.toggle("hidden", !valid.length);
   if (importTab === "valid") {
     $("importResult").innerHTML = valid.slice(0, 50).map(function (d, i) {
       return '<div class="row">' + rowHtml("Row " + (i + 2) + " — " + (d.name || "Row"),
@@ -3987,6 +4756,14 @@ function loadOtherIncome() {
       div.innerHTML = rowHtml(inc.title,
         (inc.category ? inc.category + " · " : "") + (inc.createdAt || "").slice(0, 10),
         fmtRs(inc.amountPaisa), "pos");
+      var iacts = document.createElement("div");
+      iacts.className = "row-actions";
+      iacts.appendChild(miniBtn("Delete", function () {
+        deleteRecord("income '" + inc.title + "' (" + fmtRs(inc.amountPaisa) + ")",
+          "It moves to the Recycle Bin (Utilities) and stops counting in your totals until you restore it.",
+          "/api/other-income/" + inc.id, function () { loadOtherIncome(); loadDashboard(); });
+      }));
+      div.appendChild(iacts);
       $("incomeList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -4001,10 +4778,16 @@ $("incomeForm").addEventListener("submit", function (ev) {
     note: $("incNote").value.trim()
   }).then(function () {
     $("incomeForm").reset();
+    hidePanel("incomePanel");
     setMsg("appMsg", "Other income saved.");
     loadOtherIncome();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddIncome").addEventListener("click", function () {
+  showPanel("incomePanel");
+  $("incTitle").focus();
+});
+$("btnIncomeBack").addEventListener("click", function () { hidePanel("incomePanel"); });
 
 /* ------------------------------------------- cash & bank: sub-tabs --- */
 var selectedBankId = null;
@@ -4052,6 +4835,11 @@ function loadBankAccounts() {
         loadBankTransactions();
       });
       div.appendChild(btn);
+      div.appendChild(miniBtn("Delete", function () {
+        deleteRecord("bank account '" + a.displayName + "'",
+          "An account with entries cannot be deleted - you will see the reason if it is refused.",
+          "/api/bank-accounts/" + a.id, loadBankAccounts);
+      }));
       $("bankList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -4081,10 +4869,16 @@ $("bankForm").addEventListener("submit", function (ev) {
     print_qr: $("bankPrintQr").checked
   }).then(function () {
     $("bankForm").reset();
+    hidePanel("bankPanel");
     setMsg("appMsg", "Bank account added.");
     loadBankAccounts();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddBank").addEventListener("click", function () {
+  showPanel("bankPanel");
+  $("bankName1").focus();
+});
+$("btnBankBack").addEventListener("click", function () { hidePanel("bankPanel"); });
 function bankTransact(kind) {
   if (!selectedBankId) { setMsg("appMsg", "Open an account's Transactions first.", true); return; }
   var amt = rsToPaisa($("bankTxAmount").value);
@@ -4166,6 +4960,11 @@ function loadCheques() {
           div.appendChild(b);
         });
       }
+      div.appendChild(miniBtn("Delete", function () {
+        deleteRecord("cheque " + (c.chequeNo || "") + " (" + fmtRs(c.amountPaisa) + ")",
+          "This removes the cheque-book entry only.",
+          "/api/cheques/" + c.id, loadCheques);
+      }));
       $("chequeList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -4179,10 +4978,16 @@ $("chequeForm").addEventListener("submit", function (ev) {
     due_date: $("chqDue").value || null
   }).then(function () {
     $("chequeForm").reset();
+    hidePanel("chequePanel");
     setMsg("appMsg", "Cheque added.");
     loadCheques();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddCheque").addEventListener("click", function () {
+  showPanel("chequePanel");
+  $("chqNo").focus();
+});
+$("btnChequeBack").addEventListener("click", function () { hidePanel("chequePanel"); });
 function loadLoans() {
   apiGet("/api/loans", null).then(function (r) {
     var list = r.body.loans || [];
@@ -4205,6 +5010,11 @@ function loadLoans() {
         }).catch(function (e) { setMsg("appMsg", e.message, true); });
       });
       div.appendChild(btn);
+      div.appendChild(miniBtn("Delete", function () {
+        deleteRecord("loan account '" + l.name + "'",
+          "A loan with repayments recorded cannot be deleted - you will see the reason if it is refused.",
+          "/api/loans/" + l.id, loadLoans);
+      }));
       $("loanList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -4218,10 +5028,16 @@ $("loanForm").addEventListener("submit", function (ev) {
     start_date: $("loanStart").value || null, note: $("loanNote").value.trim()
   }).then(function () {
     $("loanForm").reset();
+    hidePanel("loanPanel");
     setMsg("appMsg", "Loan account added.");
     loadLoans();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddLoan").addEventListener("click", function () {
+  showPanel("loanPanel");
+  $("loanName").focus();
+});
+$("btnLoanBack").addEventListener("click", function () { hidePanel("loanPanel"); });
 
 /* ------------------------------------------------------ online store - */
 var storeTab = "orders";
@@ -4374,10 +5190,13 @@ $("loyaltyForm").addEventListener("submit", function (ev) {
     max_redeem_pct: parseInt($("loyMaxPct").value || "0", 10) || 0,
     min_invoice_redeem_paisa: rsToPaisa($("loyMinRedeem").value)
   } }).then(function () {
+    hidePanel("loyaltyPanel");
     setMsg("appMsg", "Loyalty setup saved.");
     loadLoyalty();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnLoyaltySetup").addEventListener("click", function () { showPanel("loyaltyPanel"); });
+$("btnLoyaltyBack").addEventListener("click", function () { hidePanel("loyaltyPanel"); });
 
 /* ------------------------------------------------------- accounting -- */
 var coaCache = [];
@@ -4471,10 +5290,18 @@ $("coaForm").addEventListener("submit", function (ev) {
   apiPost("/api/accounts", { name: $("coaName").value.trim(), group_name: $("coaGroup").value })
     .then(function () {
       $("coaForm").reset();
+      hidePanel("coaPanel");
       setMsg("appMsg", "Account added.");
       loadAccounting();
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddCoa").addEventListener("click", function () {
+  showPanel("coaPanel");
+  $("coaName").focus();
+});
+$("btnCoaCancel").addEventListener("click", function () { hidePanel("coaPanel"); });
+$("btnAddJournal").addEventListener("click", function () { showPanel("journalPanel"); });
+$("btnJournalBack").addEventListener("click", function () { hidePanel("journalPanel"); });
 $("journalForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var lines = [];
@@ -4493,6 +5320,7 @@ $("journalForm").addEventListener("submit", function (ev) {
     $("journalLines").innerHTML = "";
     addJournalRow(); addJournalRow();
     $("jrNarration").value = "";
+    hidePanel("journalPanel");
     setMsg("appMsg", "Journal entry saved.");
     loadAccounting();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -4581,10 +5409,16 @@ $("teamForm").addEventListener("submit", function (ev) {
     perms: perms
   }).then(function () {
     $("teamForm").reset();
+    hidePanel("teamPanel");
     setMsg("appMsg", "Team member added. They sign in with this email and open your business from Sync, Share & Backup.");
     loadTeam();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 });
+$("btnAddTeamUser").addEventListener("click", function () {
+  showPanel("teamPanel");
+  $("teamName").focus();
+});
+$("btnTeamBack").addEventListener("click", function () { hidePanel("teamPanel"); });
 $("btnBackupComputer").addEventListener("click", function () {
   apiGet("/api/backups", "backups").then(function (r) {
     var list = r.body.backups || [];
@@ -4615,35 +5449,75 @@ function loadUtilities() {
 }
 function renderRecycleBin() {
   apiGet("/api/recycle-bin", null).then(function (r) {
-    var list = (r.body.invoices || []).slice().reverse();
-    $("recycleList").innerHTML = list.length ? "" : '<p class="empty">The Recycle Bin is empty.</p>';
-    list.forEach(function (inv) {
-      var div = document.createElement("div");
-      div.className = "row";
-      div.innerHTML = rowHtml(inv.invoiceNo + " · " + (DOC_META[inv.type] || {}).title,
-        "Deleted " + (inv.deletedAt || "").slice(0, 10), fmtRs(inv.totalPaisa));
-      var acts = document.createElement("div");
-      acts.className = "row-actions";
-      var restore = document.createElement("button");
-      restore.className = "btn btn-mini btn-primary"; restore.type = "button"; restore.textContent = "Restore";
-      restore.addEventListener("click", function () {
-        apiPost("/api/recycle-bin/" + inv.id + "/restore", {}).then(function () {
-          setMsg("appMsg", "Transaction restored.");
-          renderRecycleBin(); loadDashboard();
-        }).catch(function (e) { setMsg("appMsg", e.message, true); });
+    var box = $("recycleList");
+    box.innerHTML = "";
+    var any = false;
+    function section(title, rows, label, sub, amount, restorePath, permPath) {
+      if (!rows.length) return;
+      any = true;
+      var h = document.createElement("p");
+      h.className = "bin-section"; h.textContent = title;
+      box.appendChild(h);
+      rows.forEach(function (row) {
+        var div = document.createElement("div");
+        div.className = "row";
+        div.innerHTML = rowHtml(label(row), sub(row), amount ? amount(row) : null);
+        var acts = document.createElement("div");
+        acts.className = "row-actions";
+        var restore = document.createElement("button");
+        restore.className = "btn btn-mini btn-primary"; restore.type = "button"; restore.textContent = "Restore";
+        restore.addEventListener("click", function () {
+          apiPost(restorePath(row), {}).then(function () {
+            setMsg("appMsg", "Restored.");
+            renderRecycleBin(); loadDashboard();
+          }).catch(function (e) { setMsg("appMsg", e.message, true); });
+        });
+        acts.appendChild(restore);
+        var perm = document.createElement("button");
+        perm.className = "btn btn-mini"; perm.type = "button"; perm.textContent = "Delete Forever";
+        perm.addEventListener("click", function () {
+          if (!confirm("Permanently delete " + label(row) + "? This cannot be undone.")) return;
+          apiDelete(permPath(row)).then(function () {
+            setMsg("appMsg", "Deleted forever.");
+            renderRecycleBin();
+          }).catch(function (e) { setMsg("appMsg", e.message, true); });
+        });
+        acts.appendChild(perm);
+        div.appendChild(acts);
+        box.appendChild(div);
       });
-      acts.appendChild(restore);
-      var perm = document.createElement("button");
-      perm.className = "btn btn-mini"; perm.type = "button"; perm.textContent = "Delete Forever";
-      perm.addEventListener("click", function () {
-        if (!confirm("Permanently delete " + inv.invoiceNo + "? This cannot be undone.")) return;
-        apiDelete("/api/recycle-bin/" + inv.id).then(renderRecycleBin)
-          .catch(function (e) { setMsg("appMsg", e.message, true); });
-      });
-      acts.appendChild(perm);
-      div.appendChild(acts);
-      $("recycleList").appendChild(div);
-    });
+    }
+    section("Transactions", (r.body.invoices || []).slice().reverse(),
+      function (inv) { return inv.invoiceNo + " - " + (DOC_META[inv.type] || {}).title; },
+      function (inv) { return "Deleted " + (inv.deletedAt || "").slice(0, 10); },
+      function (inv) { return fmtRs(inv.totalPaisa); },
+      function (inv) { return "/api/recycle-bin/" + inv.id + "/restore"; },
+      function (inv) { return "/api/recycle-bin/" + inv.id; });
+    section("Parties", r.body.parties || [],
+      function (p) { return p.name; },
+      function (p) { return "Deleted " + (p.deletedAt || "").slice(0, 10) + (p.phone ? " - " + p.phone : ""); },
+      function (p) { return fmtRs(p.balancePaisa || 0); },
+      function (p) { return "/api/recycle-bin/parties/" + p.id + "/restore"; },
+      function (p) { return "/api/recycle-bin/parties/" + p.id; });
+    section("Items", r.body.items || [],
+      function (i) { return i.name; },
+      function (i) { return "Deleted " + (i.deletedAt || "").slice(0, 10) + " - Stock " + i.stockQty; },
+      function (i) { return fmtRs(i.salePricePaisa || 0); },
+      function (i) { return "/api/recycle-bin/items/" + i.id + "/restore"; },
+      function (i) { return "/api/recycle-bin/items/" + i.id; });
+    section("Expenses", r.body.expenses || [],
+      function (e) { return e.title; },
+      function (e) { return "Deleted " + (e.deletedAt || "").slice(0, 10); },
+      function (e) { return fmtRs(e.amountPaisa); },
+      function (e) { return "/api/recycle-bin/expenses/" + e.id + "/restore"; },
+      function (e) { return "/api/recycle-bin/expenses/" + e.id; });
+    section("Other Income", r.body.incomes || [],
+      function (e) { return e.title; },
+      function (e) { return "Deleted " + (e.deletedAt || "").slice(0, 10); },
+      function (e) { return fmtRs(e.amountPaisa); },
+      function (e) { return "/api/recycle-bin/incomes/" + e.id + "/restore"; },
+      function (e) { return "/api/recycle-bin/incomes/" + e.id; });
+    if (!any) box.innerHTML = '<p class="empty">The Recycle Bin is empty.</p>';
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
 $("btnVerify").addEventListener("click", function () {
@@ -4662,6 +5536,166 @@ document.querySelectorAll("[data-export]").forEach(function (b) {
   });
 });
 $("btnSetupBusiness").addEventListener("click", function () { go("settings"); });
+
+/* ------------------------------------------- import wizard (Fix 5) -- */
+var WIZ_FIELDS = {
+  parties: [["name", "Party Name"], ["phone", "Phone"], ["address", "Address"],
+            ["opening_balance", "Opening Balance (Rs)"], ["email", "Email"],
+            ["group", "Group"]],
+  items: [["name", "Item Name"], ["item_code", "Item Code"],
+          ["sale_price", "Sale Price (Rs)"], ["purchase_price", "Purchase Price (Rs)"],
+          ["wholesale_price", "Wholesale Price (Rs)"], ["mrp", "MRP (Rs)"],
+          ["unit", "Unit"], ["stock_qty", "Stock Qty"], ["tax_pct", "Tax %"],
+          ["category", "Category"], ["min_stock", "Min Stock"]]
+};
+var wiz = { headers: [], rows: [], preview: null, units: [] };
+function openImportWizard(kind) {
+  go("utilities");
+  showPanel("importWizard");
+  if (kind) $("wizKind").value = kind;
+  wizSyncKind();
+}
+function wizSyncKind() {
+  $("wizDateWrap").classList.toggle("hidden", $("wizKind").value !== "parties");
+  $("lnkWizTemplate").setAttribute("href",
+    "/api/utilities/import-template?kind=" + $("wizKind").value);
+  if (!$("wizOpeningDate").value) {
+    $("wizOpeningDate").value = new Date().toISOString().slice(0, 10);
+  }
+}
+$("wizKind").addEventListener("change", wizSyncKind);
+$("btnUtilImportItems").addEventListener("click", function () { openImportWizard("items"); });
+$("btnUtilImportParties").addEventListener("click", function () { openImportWizard("parties"); });
+$("btnWizParties").addEventListener("click", function () { openImportWizard("parties"); });
+$("btnWizItems").addEventListener("click", function () { openImportWizard("items"); });
+$("btnWizClose").addEventListener("click", function () { hidePanel("importWizard"); });
+$("btnWizParse").addEventListener("click", function () {
+  var file = $("wizFile").files[0];
+  if (!file) { $("wizMsg").textContent = "Choose an Excel (.xlsx) or CSV file first."; return; }
+  var fd = new FormData();
+  fd.append("kind", $("wizKind").value);
+  fd.append("file", file);
+  var headers = authHeaders();
+  delete headers["Content-Type"];
+  $("wizMsg").textContent = "Reading the file...";
+  fetch("/api/utilities/import/parse", { method: "POST", headers: headers, body: fd })
+    .then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (body) {
+        if (!resp.ok) throw new Error(body.error || ("Request failed (" + resp.status + ")"));
+        return body;
+      });
+    })
+    .then(function (body) {
+      wiz.headers = body.headers || [];
+      wiz.rows = body.rows || [];
+      var fields = WIZ_FIELDS[$("wizKind").value];
+      $("wizMapRows").innerHTML = fields.map(function (f) {
+        var opts = '<option value="">- not imported -</option>' + wiz.headers.map(function (h) {
+          return '<option value="' + esc(h) + '"' +
+            ((body.mapping || {})[f[0]] === h ? " selected" : "") + ">" + esc(h) + "</option>";
+        }).join("");
+        return '<div class="wiz-map-row"><span>' + esc(f[1]) + '</span>' +
+          '<select data-wiz-field="' + f[0] + '">' + opts + "</select></div>";
+      }).join("");
+      showPanel("wizMapWrap");
+      hidePanel("wizPreviewWrap");
+      $("wizMsg").textContent = wiz.rows.length + " rows read. Check the column matches, then preview.";
+    })
+    .catch(function (e) { $("wizMsg").textContent = e.message; });
+});
+function wizMapping() {
+  var m = {};
+  document.querySelectorAll("[data-wiz-field]").forEach(function (sel) {
+    m[sel.getAttribute("data-wiz-field")] = sel.value;
+  });
+  return m;
+}
+$("btnWizValidate").addEventListener("click", function () {
+  $("wizMsg").textContent = "Checking the rows...";
+  apiPost("/api/utilities/import/wizard-validate", {
+    kind: $("wizKind").value, mapping: wizMapping(), rows: wiz.rows
+  }).then(function (r) {
+    wiz.preview = r.body.rows || [];
+    wiz.units = r.body.units || [];
+    var c = r.body.counts || {};
+    $("wizCounts").textContent = "New: " + (c.new || 0) + " - Already exists (skipped unless you choose Update): " +
+      (c.duplicate || 0) + " - Errors: " + (c.error || 0);
+    /* Preview wording (audit 2026-11-10, research §5): tabs read
+       "Valid Items : N" / "Items with Errors : N" and the action
+       button "Import N Valid Items" (the noun follows the kind). */
+    var wizNoun = $("wizKind").value === "items" ? "Items" : "Parties";
+    document.querySelector('[data-wiztab="new"]').textContent =
+      "Valid " + wizNoun + " : " + (c.new || 0);
+    document.querySelector('[data-wiztab="dup"]').textContent =
+      "Duplicates : " + (c.duplicate || 0);
+    document.querySelector('[data-wiztab="err"]').textContent =
+      wizNoun + " with Errors : " + (c.error || 0);
+    $("btnWizConfirm").textContent = "Import " + (c.new || 0) + " Valid " + wizNoun;
+    $("btnWizConfirm").disabled = !((c.new || 0) + (c.duplicate || 0));
+    function line(e, extra) {
+      var d = e.data || {};
+      return '<div class="row"><div><div class="main">' + esc(d.name || "(no name)") + '</div><div class="sub">' +
+        esc(extra || "") + '</div></div></div>';
+    }
+    $("wizRowsNew").innerHTML = wiz.preview.filter(function (e) { return e.status === "new"; })
+      .map(function (e) { return line(e, "Row " + (e.index + 2)); }).join("") ||
+      '<p class="empty">No new rows.</p>';
+    $("wizRowsDup").innerHTML = wiz.preview.filter(function (e) { return e.status === "duplicate"; })
+      .map(function (e) {
+        return '<div class="row"><div><div class="main">' + esc((e.data || {}).name || "") + '</div>' +
+          '<div class="sub">Already exists as "' + esc(e.existingName || "") + '"</div></div>' +
+          '<select data-wiz-dup="' + e.index + '"><option value="skip">Skip (keep mine)</option>' +
+          '<option value="update">Update with file values</option></select></div>';
+      }).join("") || '<p class="empty">No duplicates.</p>';
+    $("wizRowsErr").innerHTML = wiz.preview.filter(function (e) { return e.status === "error"; })
+      .map(function (e) { return line(e, "Row " + (e.index + 2) + ": " + (e.errors || []).join(" ")); }).join("") ||
+      '<p class="empty">No errors.</p>';
+    showPanel("wizPreviewWrap");
+    $("wizMsg").textContent = "Preview ready. Duplicates are skipped unless you change them to Update.";
+  }).catch(function (e) { $("wizMsg").textContent = e.message; });
+});
+document.querySelectorAll("[data-wiztab]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    document.querySelectorAll("[data-wiztab]").forEach(function (x) {
+      x.classList.toggle("active", x === b);
+    });
+    var t = b.getAttribute("data-wiztab");
+    $("wizRowsNew").classList.toggle("hidden", t !== "new");
+    $("wizRowsDup").classList.toggle("hidden", t !== "dup");
+    $("wizRowsErr").classList.toggle("hidden", t !== "err");
+  });
+});
+$("btnWizConfirm").addEventListener("click", function () {
+  if (!wiz.preview) return;
+  var rows = wiz.preview.filter(function (e) { return e.status !== "error"; }).map(function (e) {
+    var action = "create";
+    if (e.status === "duplicate") {
+      var sel = document.querySelector('[data-wiz-dup="' + e.index + '"]');
+      action = sel ? sel.value : "skip";
+    }
+    return { data: e.data, action: action };
+  });
+  $("wizMsg").textContent = "Importing...";
+  apiPost("/api/utilities/import/wizard-confirm", {
+    kind: $("wizKind").value, batch: "w" + Date.now(),
+    opening_date: $("wizKind").value === "parties" ? $("wizOpeningDate").value : "",
+    rows: rows
+  }).then(function (r) {
+    var b = r.body;
+    if (wiz.units.length) {
+      var have = itemUnits().map(function (u) { return u.name; });
+      var add = wiz.units.filter(function (u) { return have.indexOf(u) < 0; })
+        .map(function (u) { return { name: u, code: "", secondary: "", conversion: 0 }; });
+      if (add.length) setItemUnits(itemUnits().concat(add));
+    }
+    $("wizMsg").textContent = "Import done: " + b.created + " created, " + b.updated +
+      " updated, " + b.skipped + " skipped. " +
+      (wiz.units.length ? "Units from the file are now in your unit list." : "");
+    hidePanel("wizPreviewWrap");
+    wiz.preview = null;
+    loadDashboard();
+  }).catch(function (e) { $("wizMsg").textContent = e.message; });
+});
 function runSearchInto(input, box) {
   var q = input.value.trim();
   if (q.length < 2) { box.innerHTML = ""; return; }

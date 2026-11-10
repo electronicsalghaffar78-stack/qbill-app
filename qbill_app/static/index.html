@@ -13,7 +13,10 @@
 <header class="topbar">
   <button id="btnMenu" class="btn btn-menu" type="button" aria-label="Open menu">☰</button>
   <img class="brand-mark top-mark" src="/static/icons/icon-192.png" alt="">
-  <div class="head-brand" id="headBizName">QBill</div>
+  <div class="head-brand" id="headBrand" title="Business Profile — click to edit your business details">
+    <img id="headBizLogo" class="head-biz-logo hidden" alt="">
+    <span id="headBizName">QBill</span>
+  </div>
   <div class="view-title hidden" id="viewTitle">Home</div>
   <div class="head-search"><input id="searchTx" type="search" placeholder="Search Transactions" aria-label="Search Transactions"></div>
   <div class="head-contact">Owner: <strong>03273799008</strong> · <strong>abdulqudoos5581@gmail.com</strong></div>
@@ -56,7 +59,7 @@
 <div class="shell">
   <!-- Sidebar (wide screens): brand, main navigation, sync status. -->
   <aside class="sidebar" id="sidebar">
-    <div class="side-brand"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><div class="side-biz"><span id="sideBizName">QBill</span><span class="side-email" id="sideBizEmail"></span></div></div>
+    <div class="side-brand" id="sideBrand" title="Business Profile — click to edit your business details"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><img id="sideBizLogo" class="side-biz-logo hidden" alt=""><div class="side-biz"><span id="sideBizName">QBill</span><span class="side-email" id="sideBizEmail"></span></div></div>
     <nav class="sidenav" aria-label="Main">
       <button data-nav="dashboard" class="navbtn active" type="button">Home</button>
       <button data-nav="parties" class="navbtn" type="button">Parties</button>
@@ -157,7 +160,7 @@
           <div class="cards">
             <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
             <div class="stat"><span class="stat-label">You'll Receive</span><span class="stat-value pos" id="dReceivable">—</span><span class="note" id="dTopParty"></span></div>
-            <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span></div>
+            <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span><span class="note" id="dTopPayParty"></span></div>
             <div class="stat"><span class="stat-label">Purchase (This Month)</span><span class="stat-value" id="dPurchases">—</span><span class="note" id="dTopPurchaseParty"></span></div>
             <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span><svg id="dExpChart" width="100%" height="36" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Expenses, last 30 days"></svg></div>
             <div class="stat"><span class="stat-label">Profit (This Month)</span><span class="stat-value" id="dProfit">—</span></div>
@@ -165,12 +168,11 @@
           <div class="card">
             <h3 style="margin-top:0">Most Used Reports</h3>
             <div class="filter-chips" style="margin:0">
+              <button class="fchip" data-most="sale" type="button">Sale Report</button>
               <button class="fchip" data-report-link="all-transactions" type="button">All Transactions</button>
-              <button class="fchip" data-report-link="bill-wise-profit" type="button">Bill Wise Profit</button>
-              <button class="fchip" data-report-link="cash-flow" type="button">Cash Flow</button>
-              <button class="fchip" data-report-link="party-pnl" type="button">Party wise P&amp;L</button>
-              <button class="fchip" data-report-link="tax-report" type="button">Tax Report</button>
-              <button class="fchip" data-report-link="low-stock" type="button">Low Stock Summary</button>
+              <button class="fchip" data-most="daybook" type="button">Daybook Report</button>
+              <button class="fchip" data-most="party" type="button">Party Statement</button>
+              <button class="fchip" data-most="all" type="button">View All</button>
             </div>
           </div>
         </div>
@@ -219,6 +221,13 @@
 
     <!-- Parties -->
     <section id="screen-parties" class="screen hidden">
+      <div class="list-head">
+        <h2 class="list-title">Parties</h2>
+        <button class="btn btn-primary" id="btnAddParty" type="button">＋ Add Party</button>
+        <button class="btn" id="btnWizParties" type="button">Import from old software</button>
+      </div>
+      <div id="partyPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnPartyBack" type="button">← Back to parties</button>
       <form id="partyForm" class="card form-card">
         <h2 id="partyFormTitle">Add party</h2>
         <div class="grid2">
@@ -261,7 +270,9 @@
         <button class="btn btn-primary" type="submit" id="partySubmitBtn">Add party</button>
         <button class="btn" type="button" id="partySaveNew">Save &amp; New</button>
         <button class="btn btn-link hidden" id="partyCancelEdit" type="button">Cancel edit</button>
+        <button class="btn btn-danger hidden" id="partyDeleteBtn" type="button">Delete party</button>
       </form>
+      </div>
       <div class="card hidden" id="reminderCard">
         <h2>Payment Reminders</h2>
         <p class="note">Parties with money due. Send a reminder on WhatsApp — one tap per party, or open them one by one from the bulk list.</p>
@@ -269,6 +280,13 @@
         <div id="reminderList" class="list" style="margin-top:10px"></div>
       </div>
       <div class="filter-chips" id="partyGroupChips"></div>
+      <div class="filter-chips" id="partyStatusChips">
+        <button class="fchip active" data-pstatus="active" type="button">Active</button>
+        <button class="fchip" data-pstatus="inactive" type="button">Inactive</button>
+        <button class="fchip" data-pstatus="all" type="button">All</button>
+        <button class="btn btn-mini" id="btnBulkActivate" type="button">Mark shown Active</button>
+        <button class="btn btn-mini" id="btnBulkDeactivate" type="button">Mark shown Inactive</button>
+      </div>
       <div id="partyList" class="list"></div>
     </section>
 
@@ -277,6 +295,7 @@
       <button id="btnLedgerBack" class="btn btn-link" type="button">← All parties</button>
       <h2 id="ledgerTitle">Ledger</h2>
       <p id="ledgerBalance" class="ledger-balance"></p>
+      <p id="ledgerStatusRow" class="note">Party Status: <button id="ledgerStatusToggle" class="btn btn-mini" type="button">Active</button> <span>(tap to change — inactive parties are hidden from bill and payment lists)</span></p>
       <div id="ledgerList" class="list"></div>
     </section>
 
@@ -289,6 +308,8 @@
         <button class="fchip" data-itemtab="units" type="button">UNITS</button>
       </div>
       <div id="itemsMain">
+        <div id="itemPanel" class="hidden">
+        <button class="btn btn-link panel-back" id="btnItemFormBack" type="button">← Back to items</button>
         <form id="itemForm" class="card form-card">
           <h2 id="itemFormTitle">Add Item</h2>
           <div class="grid2">
@@ -333,11 +354,14 @@
           <button class="btn btn-primary" type="submit" id="itemSubmitBtn">Add Item</button>
           <button class="btn" type="button" id="itemSaveNew">Save &amp; New</button>
           <button class="btn btn-link hidden" id="itemCancelEdit" type="button">Cancel edit</button>
+          <button class="btn btn-danger hidden" id="itemDeleteBtn" type="button">Delete item</button>
         </form>
+        </div>
         <div class="card">
           <h3 style="margin-top:0">Bulk tools</h3>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
             <button id="btnBulkImport" class="btn" type="button">Bulk Import Items</button>
+            <button id="btnWizItems" class="btn" type="button">Import from Vyapar / another software</button>
             <button id="btnBulkUpdate" class="btn" type="button">Bulk Update Items</button>
             <button id="btnBulkSheet" class="btn" type="button">Add Items (bulk sheet)</button>
           </div>
@@ -349,8 +373,8 @@
             </label>
             <input id="importFile" type="file" accept=".csv,text/csv">
             <div class="filter-chips" style="margin-top:10px">
-              <button class="fchip active" data-importtab="valid" type="button">Valid (<span id="importValidCount">0</span>)</button>
-              <button class="fchip" data-importtab="errors" type="button">Errors (<span id="importErrorCount">0</span>)</button>
+              <button class="fchip active" data-importtab="valid" type="button">Valid <span class="imp-noun">Items</span> : <span id="importValidCount">0</span></button>
+              <button class="fchip" data-importtab="errors" type="button"><span class="imp-noun">Items</span> with Errors : <span id="importErrorCount">0</span></button>
             </div>
             <div id="importResult" class="list"></div>
             <button id="btnImportGo" class="btn btn-primary hidden" type="button">Import valid rows</button>
@@ -368,27 +392,47 @@
             <button id="btnBulkSheetSave" class="btn btn-primary" type="button">Save all items</button>
           </div>
         </div>
+        <div class="list-head">
+          <h2 class="list-title">Items</h2>
+          <button class="btn btn-primary" id="btnAddItem" type="button">＋ Add Item</button>
+        </div>
         <div id="itemList" class="list"></div>
       </div>
       <div id="itemsCategory" class="hidden">
         <div class="card">
-          <h2>Item Categories</h2>
+          <div class="list-head">
+            <h2 style="margin:0">Item Categories</h2>
+            <button class="btn btn-primary" id="btnAddCategory" type="button">＋ Add Category</button>
+          </div>
           <div id="categoryList" class="list"></div>
-          <div class="grid2" style="margin-top:10px">
-            <label>New category <input id="catNew" type="text"></label>
-            <button id="btnCatAdd" class="btn" type="button" style="align-self:end">Add Category</button>
+          <div id="catAddPanel" class="hidden">
+            <div class="grid2" style="margin-top:10px">
+              <label>New category <input id="catNew" type="text"></label>
+              <span style="align-self:end; display:flex; gap:8px">
+                <button id="btnCatAdd" class="btn btn-primary" type="button">Add Category</button>
+                <button id="btnCatCancel" class="btn" type="button">Cancel</button>
+              </span>
+            </div>
           </div>
         </div>
       </div>
       <div id="itemsUnits" class="hidden">
         <div class="card">
-          <h2>Units</h2>
+          <div class="list-head">
+            <h2 style="margin:0">Units</h2>
+            <button class="btn btn-primary" id="btnAddUnit" type="button">＋ Add Unit</button>
+          </div>
           <div id="unitList" class="list"></div>
-          <div class="grid2" style="margin-top:10px">
-            <label>Unit name <input id="unitNew" type="text" placeholder="e.g. Box"></label>
-            <label>Secondary unit <input id="unitNewSecondary" type="text" placeholder="e.g. Pcs"></label>
-            <label>Conversion (1 unit = ? secondary) <input id="unitNewConv" type="number" step="0.01" value="0"></label>
-            <button id="btnUnitAdd" class="btn" type="button" style="align-self:end">Add Unit</button>
+          <div id="unitAddPanel" class="hidden">
+            <div class="grid2" style="margin-top:10px">
+              <label>Unit name <input id="unitNew" type="text" placeholder="e.g. Box"></label>
+              <label>Secondary unit <input id="unitNewSecondary" type="text" placeholder="e.g. Pcs"></label>
+              <label>Conversion (1 unit = ? secondary) <input id="unitNewConv" type="number" step="0.01" value="0"></label>
+              <span style="align-self:end; display:flex; gap:8px">
+                <button id="btnUnitAdd" class="btn btn-primary" type="button">Add Unit</button>
+                <button id="btnUnitCancel" class="btn" type="button">Cancel</button>
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -400,14 +444,20 @@
       <h2 id="itemDetailTitle">Item</h2>
       <p id="itemDetailSub" class="sub"></p>
       <div class="card">
-        <h3 style="margin-top:0">Add Stock - Batches</h3>
-        <div class="grid2">
-          <label>Batch No. <input id="batchNo" type="text"></label>
-          <label>Quantity <input id="batchQty" type="number" step="1" min="1" value="1"></label>
-          <label>Exp Date (mm/yy) <input id="batchExp" type="text" placeholder="12/27"></label>
-          <label>Mfg Date <input id="batchMfg" type="text" placeholder="01/26"></label>
+        <div class="list-head">
+          <h3 style="margin:0">Stock Batches</h3>
+          <button id="btnAddBatch" class="btn btn-primary" type="button">＋ Add Batch Stock</button>
         </div>
-        <button id="btnBatchAdd" class="btn btn-primary" type="button">Add Batch Stock</button>
+        <div id="batchAddPanel" class="hidden">
+          <div class="grid2">
+            <label>Batch No. <input id="batchNo" type="text"></label>
+            <label>Quantity <input id="batchQty" type="number" step="1" min="1" value="1"></label>
+            <label>Exp Date (mm/yy) <input id="batchExp" type="text" placeholder="12/27"></label>
+            <label>Mfg Date <input id="batchMfg" type="text" placeholder="01/26"></label>
+          </div>
+          <button id="btnBatchAdd" class="btn btn-primary" type="button">Add Batch Stock</button>
+          <button id="btnBatchCancel" class="btn" type="button">Cancel</button>
+        </div>
         <div id="batchList" class="list" style="margin-top:10px"></div>
       </div>
       <div class="card table-card">
@@ -425,7 +475,7 @@
       <div class="doc-tabs" id="docTabs"></div>
       <form id="saleForm" class="card form-card doc-form">
         <div class="doc-head">
-          <h2 id="docTitle">Sale Invoice</h2>
+          <h2 id="docTitle">Sale</h2>
           <div class="doc-toggle" id="docToggleWrap">
             <span>Credit</span>
             <button id="docCashToggle" class="toggle" type="button" role="switch" aria-checked="false" aria-label="Cash payment"><span class="knob"></span></button>
@@ -433,44 +483,77 @@
           </div>
           <div class="doc-meta">
             <div><span>Invoice Number</span><strong id="docNumber">Auto</strong></div>
-            <div><span>Date</span><strong id="docDate">—</strong></div>
+            <div><span>Invoice Date</span><input id="docDateInput" type="date"></div>
           </div>
         </div>
-        <div class="grid2">
-          <label><span id="docPartyLabel">Customer</span>
-            <select id="saleParty"><option value="">Cash Sale</option></select>
-          </label>
-          <label>Phone No. <input id="docPhone" type="text" readonly placeholder="Party phone"></label>
+        <div class="grid2 doc-party-row">
+          <div class="doc-party-field">
+            <label><span id="docPartyLabel">Customer</span> *</label>
+            <div class="party-picker" id="docPartyPicker">
+              <button id="docPartyBtn" class="party-picker-btn" type="button">
+                <span id="docPartyBtnText">Cash Sale</span><span class="party-picker-caret">▾</span>
+              </button>
+              <div id="docPartyMenu" class="party-picker-menu hidden">
+                <input id="docPartySearch" type="text" placeholder="Search party…" autocomplete="off">
+                <button id="btnDocAddParty" class="party-picker-add" type="button">⊕ Add Party</button>
+                <div class="party-picker-head"><span>Party</span><span>Party Balance</span></div>
+                <div id="docPartyList" class="party-picker-list"></div>
+              </div>
+            </div>
+            <select id="saleParty" class="hidden"><option value="">Cash Sale</option></select>
+          </div>
+          <label>Phone No. <input id="docPhone" type="text" placeholder="Party phone"></label>
         </div>
         <div class="doc-party-extra">
           <span id="docPartyBalance" class="note"></span>
-          <button id="btnDocAddParty" class="btn btn-link" type="button">+ Add Party</button>
+        </div>
+        <div id="docBillingWrap" class="hidden" style="margin:2px 0 8px">
+          <label>Billing Address <textarea id="docBilling" rows="2"></textarea></label>
         </div>
         <div id="docAddParty" class="grid2 hidden">
           <label>New party name <input id="docNewPartyName" type="text"></label>
           <label>New party phone <input id="docNewPartyPhone" type="text"></label>
           <button id="btnDocPartySave" class="btn" type="button">Add party</button>
         </div>
-        <div class="doc-lines-head"><span>Item</span><span>Qty</span><span>Free</span><span>Unit</span><span>Price/Unit</span><span>Disc %</span><span>Tax %</span><span>Amount</span><span></span></div>
         <div id="docBarcodeRow" class="hidden" style="margin:6px 0">
           <label>Scan Barcode / Item Code <input id="docBarcode" type="text" placeholder="Scan or type a code, then press Enter"></label>
         </div>
-        <div id="saleLines"></div>
-        <button id="btnAddLine" class="btn btn-link" type="button">+ Add Row</button>
-        <div class="doc-totals">
-          <label id="docPaidWrap"><span id="docPaidLabel">Paid now (Rs)</span> <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
-          <label class="check-row"><input id="docRoundOff" type="checkbox"> <span>Round Off</span></label>
-          <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong><br><span class="note" id="docProfitHint"></span></p>
+        <div class="doc-grid">
+          <div class="doc-lines-head">
+            <span class="c-num">#</span><span class="c-item">ITEM</span><span class="c-qty">QTY</span><span class="c-unit">UNIT</span><span class="c-price">PRICE/UNIT<small>Without Tax</small></span><span class="c-disc">DISCOUNT<span class="sub-cols"><small>%</small><small>AMOUNT</small></span></span><span class="c-tax">TAX<span class="sub-cols"><small>%</small><small>AMOUNT</small></span></span><span class="c-amt">AMOUNT</span><span class="c-rm"></span>
+          </div>
+          <div id="saleLines"></div>
+          <div class="doc-lines-total">
+            <span class="c-num"></span><span class="c-item">TOTAL</span><span class="c-qty" id="docTotalQty">0</span><span class="c-unit"></span><span class="c-price"></span><span class="c-disc"><span class="sub-cols"><small></small><small id="docTotalDisc">Rs 0.00</small></span></span><span class="c-tax"><span class="sub-cols"><small></small><small id="docTotalTax">Rs 0.00</small></span></span><span class="c-amt" id="docTotalAmt">Rs 0.00</span><span class="c-rm"></span>
+          </div>
         </div>
-        <div id="docPayBlock">
-          <div id="docPayRows"></div>
-          <button id="btnAddPayRow" class="btn btn-link" type="button">+ Add Payment type</button>
-          <p class="note" id="docPayTotal" style="font-weight:700"></p>
+        <button id="btnAddLine" class="btn btn-outline" type="button">ADD ROW</button>
+        <div class="doc-foot">
+          <div class="doc-foot-left">
+            <button id="btnDocDesc" class="btn btn-outline" type="button">ADD DESCRIPTION</button>
+            <button id="btnDocImage" class="btn btn-outline" type="button">ADD IMAGE</button>
+            <button id="btnDocDoc" class="btn btn-outline" type="button">ADD DOCUMENT</button>
+            <div id="docDescWrap" class="hidden">
+              <label>Description <textarea id="docDescription" rows="2"></textarea></label>
+            </div>
+            <div id="docAttachWrap" class="hidden">
+              <label>Image / Document (file name note) <input id="docAttachment" type="text" placeholder="e.g. gate-pass.jpg"></label>
+            </div>
+          </div>
+          <div class="doc-foot-right">
+            <label id="docPaidWrap"><span id="docPaidLabel">Paid now (Rs)</span> <input id="salePaid" type="number" step="0.01" min="0" value="0"></label>
+            <div id="docPayBlock">
+              <div id="docPayRows"></div>
+              <button id="btnAddPayRow" class="btn btn-link" type="button">+ Add Payment type</button>
+              <p class="note" id="docPayTotal" style="font-weight:700"></p>
+            </div>
+            <label class="check-row"><input id="docRoundOff" type="checkbox"> <span>Round Off</span></label>
+            <p class="sale-total">Total <strong id="saleTotal" class="doc-total-box">Rs 0.00</strong><br><span class="note" id="docProfitHint"></span></p>
+          </div>
         </div>
         <div class="card" style="box-shadow:none; margin:10px 0">
           <h3 style="margin-top:0">More Details</h3>
           <div class="grid2">
-            <label>Billing Address <textarea id="docBilling" rows="2"></textarea></label>
             <label id="docShippingWrap">Shipping Address <textarea id="docShipping" rows="2"></textarea></label>
             <label id="docDueWrap">Due Date <input id="docDueDate" type="date"></label>
             <label id="docTermsWrap">Payment Terms
@@ -485,8 +568,6 @@
             <label>Delivery Date <input id="docDeliveryDate" type="date"></label>
             <label>Delivery Location <input id="docDeliveryLoc" type="text"></label>
           </div>
-          <label>ADD DESCRIPTION <textarea id="docDescription" rows="2"></textarea></label>
-          <label>ADD IMAGE / DOCUMENT (file name note) <input id="docAttachment" type="text" placeholder="e.g. gate-pass.jpg"></label>
           <h3>ADD TERMS AND CONDITIONS</h3>
           <div id="docTermsPicker" class="list"></div>
           <div id="docLoyaltyBlock" class="hidden">
@@ -495,8 +576,17 @@
             <label>Use points <input id="docLoyaltyUse" type="number" step="1" min="0" value="0"></label>
           </div>
         </div>
-        <button class="btn btn-primary btn-block" id="docSaveBtn" type="submit">Save</button>
-        <button class="btn btn-block" id="docSaveNewBtn" type="button">Save &amp; New</button>
+        <div class="doc-actions">
+          <div class="share-wrap">
+            <button id="btnDocShare" class="btn btn-outline" type="button">Share ▾</button>
+            <div id="docShareMenu" class="share-menu hidden">
+              <button id="btnDocSharePdf" type="button">Download PDF</button>
+              <button id="btnDocShareWhats" type="button">Share on WhatsApp</button>
+            </div>
+          </div>
+          <button class="btn" id="docSaveNewBtn" type="button">Save &amp; New</button>
+          <button class="btn btn-primary" id="docSaveBtn" type="submit">Save</button>
+        </div>
       </form>
     </section>
 
@@ -589,6 +679,12 @@
         <button class="fchip" data-payfilter="out" type="button">Payment Out</button>
       </div>
       <p id="paySettleNote" class="offline-note hidden"><span id="paySettleText"></span> <button id="btnPaySettleClear" class="btn btn-link" type="button">Clear</button></p>
+      <div class="list-head">
+        <h2 class="list-title">Payments</h2>
+        <button class="btn btn-primary" id="btnAddPayment" type="button">＋ Add Payment</button>
+      </div>
+      <div id="paymentPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnPaymentBack" type="button">← Back to payments</button>
       <form id="paymentForm" class="card form-card">
         <h2>Add payment</h2>
         <label>Party
@@ -618,6 +714,7 @@
         <label id="payDiscountWrap" class="hidden">Discount (Rs) <input id="payDiscount" type="number" step="0.01" min="0" value="0"></label>
         <button class="btn btn-primary" type="submit">Save payment</button>
       </form>
+      </div>
       <div class="card" id="allocateCard">
         <h2>Link Payments to Invoices</h2>
         <p class="note">One payment from a party, spread over their open bills — oldest bill first.</p>
@@ -636,6 +733,12 @@
 
     <!-- Expenses -->
     <section id="screen-expenses" class="screen hidden">
+      <div class="list-head">
+        <h2 class="list-title">Expenses</h2>
+        <button class="btn btn-primary" id="btnAddExpense" type="button">＋ Add Expense</button>
+      </div>
+      <div id="expensePanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnExpenseBack" type="button">← Back to expenses</button>
       <form id="expenseForm" class="card form-card">
         <h2>Add expense</h2>
         <label>Title <input id="expTitle" type="text" required></label>
@@ -663,11 +766,27 @@
         </div>
         <button class="btn btn-primary" type="submit">Save expense</button>
       </form>
-      <div id="expenseList" class="list"></div>
+      </div>
+      <div class="exp-layout">
+        <div class="card exp-cats" id="expenseCats"></div>
+        <div class="card table-card exp-table-card">
+          <table class="tx-table">
+            <thead><tr><th>Date</th><th>Expense</th><th>Party</th><th>Payment Type</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead>
+            <tbody id="expenseBody"></tbody>
+          </table>
+          <p id="expenseEmpty" class="empty hidden">No expenses yet.</p>
+        </div>
+      </div>
     </section>
 
     <!-- Other Income -->
     <section id="screen-otherincome" class="screen hidden">
+      <div class="list-head">
+        <h2 class="list-title">Other Income</h2>
+        <button class="btn btn-primary" id="btnAddIncome" type="button">＋ Add Income</button>
+      </div>
+      <div id="incomePanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnIncomeBack" type="button">← Back to income list</button>
       <form id="incomeForm" class="card form-card">
         <h2>Add Other Income</h2>
         <label>Title <input id="incTitle" type="text" required></label>
@@ -684,6 +803,7 @@
         <label>Note <input id="incNote" type="text"></label>
         <button class="btn btn-primary" type="submit">Save income</button>
       </form>
+      </div>
       <div id="incomeList" class="list"></div>
     </section>
 
@@ -708,12 +828,14 @@
         <div class="sum-card paid"><span>Paid</span><strong id="bookPaid">—</strong></div>
         <div class="sum-op">+</div>
         <div class="sum-card unpaid"><span>Unpaid</span><strong id="bookUnpaid">—</strong></div>
+        <div class="sum-op">+</div>
+        <div class="sum-card overdue"><span>Overdue</span><strong id="bookOverdue">—</strong></div>
         <div class="sum-op">=</div>
         <div class="sum-card total"><span>Total</span><strong id="bookTotal">—</strong></div>
       </div>
       <div class="card table-card">
         <table class="tx-table">
-          <thead><tr><th>Date</th><th>Invoice No.</th><th>Party Name</th><th>Type</th><th>Payment Type</th><th class="num">Amount</th><th class="num">Balance Due</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Invoice No.</th><th>Party Name</th><th>Transaction Type</th><th>Payment Type</th><th class="num">Amount</th><th class="num">Balance</th><th>Due Date</th><th>Status</th><th></th></tr></thead>
           <tbody id="bookBody"></tbody>
         </table>
         <p id="bookEmpty" class="empty hidden">No transactions in this period.</p>
@@ -748,6 +870,12 @@
         <button class="fchip" data-cbtab="loans" type="button">Loan Accounts</button>
       </div>
       <div id="cbAccounts">
+        <div class="list-head">
+          <h2 class="list-title">Bank Accounts</h2>
+          <button class="btn btn-primary" id="btnAddBank" type="button">＋ Add Bank Account</button>
+        </div>
+        <div id="bankPanel" class="hidden">
+        <button class="btn btn-link panel-back" id="btnBankBack" type="button">← Back to bank accounts</button>
         <form id="bankForm" class="card form-card">
           <h2>Add Bank Account</h2>
           <div class="grid2">
@@ -764,6 +892,7 @@
           <label class="check-row"><input id="bankPrintQr" type="checkbox"> <span>Print QR on Invoices</span></label>
           <button class="btn btn-primary" type="submit">Add Bank Account</button>
         </form>
+        </div>
         <div id="bankList" class="list"></div>
         <div class="card hidden" id="bankTxCard">
           <h3 id="bankTxTitle">Transactions</h3>
@@ -791,7 +920,13 @@
         </div>
         <div class="row-btns"><button class="btn btn-primary" id="btnAdjustCash" type="button">Adjust Cash</button></div>
         <h3>All payments</h3>
-        <div id="cashbankList" class="list"></div>
+        <div class="card table-card">
+          <table class="tx-table">
+            <thead><tr><th>Type</th><th>Name</th><th>Date</th><th class="num">Amount</th></tr></thead>
+            <tbody id="cashBody"></tbody>
+          </table>
+          <p id="cashEmpty" class="empty hidden">No payments yet.</p>
+        </div>
       </div>
       <div id="cbCheques" class="hidden">
         <div class="card">
@@ -801,6 +936,12 @@
           <h4>Paid Cheques</h4>
           <div id="chqPayOutList"><p class="note">Loading…</p></div>
         </div>
+        <div class="list-head">
+          <h2 class="list-title">Cheque Book</h2>
+          <button class="btn btn-primary" id="btnAddCheque" type="button">＋ Add Cheque</button>
+        </div>
+        <div id="chequePanel" class="hidden">
+        <button class="btn btn-link panel-back" id="btnChequeBack" type="button">← Back to cheques</button>
         <form id="chequeForm" class="card form-card">
           <h2>Add Cheque</h2>
           <div class="grid2">
@@ -812,9 +953,16 @@
           </div>
           <button class="btn btn-primary" type="submit">Add Cheque</button>
         </form>
+        </div>
         <div id="chequeList" class="list"></div>
       </div>
       <div id="cbLoans" class="hidden">
+        <div class="list-head">
+          <h2 class="list-title">Loan Accounts</h2>
+          <button class="btn btn-primary" id="btnAddLoan" type="button">＋ Add Loan Account</button>
+        </div>
+        <div id="loanPanel" class="hidden">
+        <button class="btn btn-link panel-back" id="btnLoanBack" type="button">← Back to loan accounts</button>
         <form id="loanForm" class="card form-card">
           <h2>Add Loan Account</h2>
           <div class="grid2">
@@ -827,6 +975,7 @@
           </div>
           <button class="btn btn-primary" type="submit">Add Loan Account</button>
         </form>
+        </div>
         <div id="loanList" class="list"></div>
       </div>
     </section>
@@ -941,8 +1090,11 @@
     <section id="screen-godowns" class="screen hidden">
       <div class="book-head">
         <h2>Manage Godowns</h2>
+        <button class="btn btn-primary" id="btnAddGodown" type="button">＋ Add Godown</button>
       </div>
       <div id="godownList" class="list" style="margin-bottom:14px"></div>
+      <div id="godownPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnGodownBack" type="button">← Back to godowns</button>
       <form id="godownForm" class="card form-card">
         <h2>Add Godown</h2>
         <div class="grid2">
@@ -953,6 +1105,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Add Godown</button>
       </form>
+      </div>
       <div class="card hidden" id="godownStockCard">
         <h3 id="godownStockTitle">Stock Summary</h3>
         <div id="godownStockList" class="list"></div>
@@ -961,6 +1114,12 @@
 
     <!-- Stock Transfer -->
     <section id="screen-stocktransfer" class="screen hidden">
+      <div class="list-head">
+        <h2 class="list-title">Stock Transfer</h2>
+        <button class="btn btn-primary" id="btnAddTransfer" type="button">＋ New Transfer</button>
+      </div>
+      <div id="transferPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnTransferBack" type="button">← Back to transfers</button>
       <form id="transferForm" class="card form-card">
         <h2>Stock Transfer</h2>
         <div class="grid2">
@@ -972,6 +1131,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Transfer Stock</button>
       </form>
+      </div>
       <h3>Stock Transfer Transactions</h3>
       <div id="transferList" class="list"></div>
     </section>
@@ -1011,6 +1171,12 @@
 
     <!-- Loyalty Points -->
     <section id="screen-loyalty" class="screen hidden">
+      <div class="list-head">
+        <h2 class="list-title">Loyalty Points</h2>
+        <button class="btn btn-primary" id="btnLoyaltySetup" type="button">Loyalty Setup</button>
+      </div>
+      <div id="loyaltyPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnLoyaltyBack" type="button">← Back to loyalty points</button>
       <form id="loyaltyForm" class="card form-card">
         <h2>Loyalty Points — Setup</h2>
         <label class="check-row"><input id="loyEnabled" type="checkbox"> <span>Enable Loyalty Points</span></label>
@@ -1028,6 +1194,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Save Loyalty Setup</button>
       </form>
+      </div>
       <div class="card table-card">
         <h3 style="padding:10px 14px 0">Loyalty Points Dashboard</h3>
         <table class="tx-table">
@@ -1047,8 +1214,12 @@
       </div>
       <div id="accountingMain">
         <div class="card">
-          <h2>Chart Of Accounts</h2>
+          <div class="list-head">
+            <h2 style="margin:0">Chart Of Accounts</h2>
+            <button class="btn btn-primary" id="btnAddCoa" type="button">＋ Add Account</button>
+          </div>
           <div id="coaList" class="list"></div>
+          <div id="coaPanel" class="hidden">
           <form id="coaForm" style="margin-top:10px">
             <div class="grid2">
               <label>Account Name <input id="coaName" type="text" required></label>
@@ -1057,8 +1228,16 @@
               </label>
             </div>
             <button class="btn btn-primary" type="submit">Add Account</button>
+            <button class="btn" id="btnCoaCancel" type="button">Cancel</button>
           </form>
+          </div>
         </div>
+        <div class="list-head">
+          <h2 class="list-title">Journal Entry</h2>
+          <button class="btn btn-primary" id="btnAddJournal" type="button">＋ New Journal Entry</button>
+        </div>
+        <div id="journalPanel" class="hidden">
+        <button class="btn btn-link panel-back" id="btnJournalBack" type="button">← Back to accounting</button>
         <form id="journalForm" class="card form-card">
           <h2>Journal Entry</h2>
           <div class="grid2">
@@ -1071,6 +1250,7 @@
           <button class="btn btn-primary btn-block" id="jrSave" type="submit" disabled>Save Journal Entry</button>
           <p class="note">Save stays off until Total Debit equals Total Credit.</p>
         </form>
+        </div>
         <div class="card">
           <h3 style="margin-top:0">Journal Entries</h3>
           <div id="journalList" class="list"></div>
@@ -1098,6 +1278,12 @@
           <p id="teamEmpty" class="empty hidden">No team members yet.</p>
         </div>
       </div>
+      <div class="list-head">
+        <h2 class="list-title">Add a team member</h2>
+        <button class="btn btn-primary" id="btnAddTeamUser" type="button">＋ Add User</button>
+      </div>
+      <div id="teamPanel" class="hidden">
+      <button class="btn btn-link panel-back" id="btnTeamBack" type="button">← Back to team</button>
       <form id="teamForm" class="card form-card">
         <h2>Add User</h2>
         <div class="grid2">
@@ -1117,6 +1303,7 @@
         </div>
         <button class="btn btn-primary" type="submit">Add User</button>
       </form>
+      </div>
       <div class="card">
         <h2>Companies Shared with Me</h2>
         <div id="sharedList" class="list"></div>
@@ -1144,8 +1331,55 @@
         <div id="utilSearchResults" class="list"></div>
       </div>
       <div class="card">
+        <h2>Import from Vyapar / another software</h2>
+        <p class="note">Coming from Vyapar or any other billing software? In that software, export your Parties or Items to Excel/CSV (every billing app has an Export option), then bring the file here. QBill matches the columns, shows you a full preview, and imports — duplicates are skipped unless you choose to update them.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button id="btnUtilImportItems" class="btn btn-primary" type="button">Import Items</button>
+          <button id="btnUtilImportParties" class="btn btn-primary" type="button">Import Parties</button>
+        </div>
+        <div id="importWizard" class="hidden" style="margin-top:14px">
+          <div class="grid2">
+            <label>What are you importing?
+              <select id="wizKind">
+                <option value="parties">Parties</option>
+                <option value="items">Items</option>
+              </select>
+            </label>
+            <label>Excel (.xlsx) or CSV file <input id="wizFile" type="file" accept=".xlsx,.csv,.txt"></label>
+          </div>
+          <div class="wiz-template-box">
+            <p>Download .xls/.xlsx (excel sheet) template file to enter Data</p>
+            <a href="#" id="lnkWizTemplate" class="btn" role="button">Download</a>
+          </div>
+          <p class="note">For a mixed import, run the wizard twice: once for Parties, once for Items.</p>
+          <button id="btnWizParse" class="btn" type="button">1 · Read the file</button>
+          <div id="wizMapWrap" class="hidden" style="margin-top:12px">
+            <h3>Match the columns</h3>
+            <p class="note">QBill has already matched the columns it recognises (Vyapar exports match automatically). Change any match, or leave a field unimported.</p>
+            <div id="wizMapRows"></div>
+            <label id="wizDateWrap" class="hidden">Opening balances are as of this date <input id="wizOpeningDate" type="date"></label>
+            <button id="btnWizValidate" class="btn" type="button" style="margin-top:10px">2 · Preview the import</button>
+          </div>
+          <div id="wizPreviewWrap" class="hidden" style="margin-top:12px">
+            <h3>Preview</h3>
+            <p id="wizCounts" class="note"></p>
+            <div class="filter-chips" id="wizTabs">
+              <button class="fchip active" type="button" data-wiztab="new">Valid Items : 0</button>
+              <button class="fchip" type="button" data-wiztab="dup">Duplicates : 0</button>
+              <button class="fchip" type="button" data-wiztab="err">Items with Errors : 0</button>
+            </div>
+            <div id="wizRowsNew" class="list"></div>
+            <div id="wizRowsDup" class="list hidden"></div>
+            <div id="wizRowsErr" class="list hidden"></div>
+            <button id="btnWizConfirm" class="btn btn-primary" type="button" style="margin-top:10px" disabled>Import 0 Valid Items</button>
+          </div>
+          <p id="wizMsg" class="note" style="margin-top:10px"></p>
+          <button id="btnWizClose" class="btn btn-link" type="button">Close</button>
+        </div>
+      </div>
+      <div class="card">
         <h2>Recycle Bin</h2>
-        <p class="note">Deleted transactions live here. Restore brings a transaction back exactly as it was; permanent delete removes it for good.</p>
+        <p class="note">Deleted transactions, parties, items, expenses and income entries live here. Restore brings a record back exactly as it was; permanent delete removes it for good.</p>
         <div id="recycleList" class="list"></div>
       </div>
       <div class="card">
@@ -1207,16 +1441,38 @@
         <button class="set-cat hidden" data-setcat="accounts" id="setCatAccounts" type="button">CUSTOMER ACCOUNTS</button>
       </div>
       <form id="profileForm" class="card form-card" data-setcard="general">
-        <h2>Business profile</h2>
-        <label>Business name <input id="profName" type="text" required></label>
-        <label>Address <input id="profAddress" type="text"></label>
-        <label>Phone <input id="profPhone" type="text"></label>
-        <label>Email <input id="profEmail" type="email"></label>
-        <label>Business Type <input id="profBizType" type="text" placeholder="e.g. Retail, Wholesale, Services"></label>
-        <label>Business Category <input id="profBizCategory" type="text" placeholder="e.g. Electronics &amp; Solar"></label>
-        <label>Pincode <input id="profPincode" type="text"></label>
-        <label>State / Province <input id="profState" type="text" placeholder="e.g. Sindh"></label>
+        <h2>Business Profile</h2>
+        <p class="note">Your own business details. They appear in the sidebar, the header, on your bill PDFs and on your Online Store page — and only on YOUR account.</p>
+        <div class="logo-row">
+          <img id="profLogoPreview" class="prof-logo hidden" alt="Business logo">
+          <div id="profLogoEmpty" class="prof-logo-empty">No logo set</div>
+          <div class="logo-actions">
+            <label class="btn" for="profLogoFile">Upload Logo</label>
+            <input id="profLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+            <button class="btn btn-link hidden" id="btnLogoRemove" type="button">Remove logo</button>
+            <p class="note" id="logoMsg">PNG, JPG, WebP or GIF, up to 400 KB. Logo upload needs an internet connection.</p>
+          </div>
+        </div>
+        <label>Business Name <input id="profName" type="text" required></label>
+        <label>Owner Name <input id="profOwner" type="text" placeholder="Your full name"></label>
+        <div class="grid2">
+          <label>Business Type <input id="profBizType" type="text" placeholder="e.g. Retail, Wholesale, Services"></label>
+          <label>Business Category <input id="profBizCategory" type="text" placeholder="e.g. Electronics &amp; Solar"></label>
+        </div>
+        <label>Address <textarea id="profAddress" rows="3" placeholder="Shop / office address, one line per line"></textarea></label>
+        <div class="grid2">
+          <label>City / Location <input id="profCity" type="text" placeholder="e.g. Larkana"></label>
+          <label>Pincode <input id="profPincode" type="text"></label>
+          <label>State / Province <input id="profState" type="text" placeholder="e.g. Sindh"></label>
+          <label>Phone / WhatsApp <input id="profPhone" type="text"></label>
+          <label>Email <input id="profEmail" type="email"></label>
+        </div>
         <label>Signature Text <input id="profSignature" type="text" placeholder="Printed above Authorised Signatory on bills"></label>
+        <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
+        <label>Terms &amp; Conditions (one per line)
+          <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
+        </label>
+        <p class="note">Tax Note and Terms &amp; Conditions print on every bill PDF. Leave empty to use the standard wording.</p>
         <button class="btn btn-primary" type="submit">Save profile</button>
       </form>
 
@@ -1239,16 +1495,6 @@
         <label class="check-row"><input type="checkbox" data-setting="audit_trail"> <span>Audit Trail (Edit History on transactions)</span></label>
         <p class="note">Auto Backup: <strong id="generalAutoBackup">ON</strong> — change it in BACKUPS.</p>
       </div>
-
-      <form id="transForm" class="card form-card hidden" data-setcard="transaction">
-        <h2>Transaction settings</h2>
-        <p class="note">These print on every bill PDF. Leave empty to use the standard wording.</p>
-        <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
-        <label>Terms &amp; Conditions (one per line)
-          <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
-        </label>
-        <button class="btn btn-primary" type="submit">Save transaction settings</button>
-      </form>
 
       <div class="card form-card hidden" data-setcard="transaction">
         <h2>Transaction options</h2>
@@ -1277,17 +1523,23 @@
       </div>
 
       <div class="card form-card hidden" data-setcard="transaction">
-        <h2>Terms &amp; Conditions Library</h2>
+        <div class="list-head">
+          <h2 style="margin:0">Terms &amp; Conditions Library</h2>
+          <button class="btn btn-primary" id="btnTermNew" type="button">＋ Add Terms</button>
+        </div>
         <p class="note">Named terms, picked on the bill form with ADD TERMS AND CONDITIONS and printed on the PDF.</p>
         <div id="termsList" class="list"></div>
-        <div class="grid2" style="margin-top:10px">
-          <label>Header <input id="termHeader" type="text"></label>
-          <label>Applicable for
-            <select id="termApplies"><option value="sale">Sale Invoice</option><option value="purchase">Purchase Bill</option><option value="estimate">Estimate/Quotation</option><option value="proforma">Proforma Invoice</option><option value="sale_order">Sale Order</option><option value="challan">Delivery Challan</option></select>
-          </label>
+        <div id="termAddPanel" class="hidden">
+          <div class="grid2" style="margin-top:10px">
+            <label>Header <input id="termHeader" type="text"></label>
+            <label>Applicable for
+              <select id="termApplies"><option value="sale">Sale Invoice</option><option value="purchase">Purchase Bill</option><option value="estimate">Estimate/Quotation</option><option value="proforma">Proforma Invoice</option><option value="sale_order">Sale Order</option><option value="challan">Delivery Challan</option></select>
+            </label>
+          </div>
+          <label>Description <textarea id="termDesc" rows="2"></textarea></label>
+          <button class="btn btn-primary" id="btnTermAdd" type="button">Add Terms</button>
+          <button class="btn" id="btnTermCancel" type="button">Cancel</button>
         </div>
-        <label>Description <textarea id="termDesc" rows="2"></textarea></label>
-        <button class="btn btn-primary" id="btnTermAdd" type="button">Add Terms</button>
       </div>
 
       <div class="card form-card hidden" data-setcard="print">

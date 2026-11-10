@@ -5,9 +5,11 @@ Dates: created_at is an ISO-8601 UTC string, so day/month bucketing is a
 string prefix match (substr) — "today" and "this month" are UTC, the same
 clock the rows were written with.
 """
+import base64
+import binascii
 from datetime import datetime, timezone
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
 
 from . import db
 from .auth import require_approved, require_session, require_unlocked
@@ -64,12 +66,12 @@ def compute_dashboard(tx, business_id):
         (business_id,),
     )["s"]
     expenses = tx.query_one(
-        "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM expenses WHERE business_id = ?",
+        "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM expenses WHERE business_id = ? AND deleted_at IS NULL",
         (business_id,),
     )["s"]
     stock_value = tx.query_one(
         "SELECT COALESCE(SUM(stock_qty * purchase_price_paisa), 0) AS s "
-        "FROM items WHERE business_id = ?",
+        "FROM items WHERE business_id = ? AND deleted_at IS NULL",
         (business_id,),
     )["s"]
     # Total Sale graph: daily sale totals for the last 30 days, plus
@@ -113,6 +115,19 @@ def compute_dashboard(tx, business_id):
                 "name": (prow or {}).get("name") or "",
                 "amountPaisa": balances[top_id],
             }
+    # You'll Pay: the party we owe the most (audit 2026-11-10 — the Home
+    # card names the top party, like You'll Receive does).
+    top_payable = None
+    if balances:
+        low_id = min(balances, key=lambda pid: balances[pid])
+        if balances[low_id] < 0:
+            prow = tx.query_one(
+                "SELECT name FROM parties WHERE id = ?", (low_id,)
+            )
+            top_payable = {
+                "name": (prow or {}).get("name") or "",
+                "amountPaisa": -balances[low_id],
+            }
     # Expiring stock: batches expiring within 30 days that still hold stock.
     horizon = (now + timedelta(days=30)).strftime("%Y-%m")
     expiring = tx.query_all(
@@ -123,7 +138,7 @@ def compute_dashboard(tx, business_id):
         (business_id, horizon),
     )
     low_stock = tx.query_one(
-        "SELECT COUNT(*) AS c FROM items WHERE business_id = ? AND "
+        "SELECT COUNT(*) AS c FROM items WHERE business_id = ? AND deleted_at IS NULL AND "
         "((min_stock > 0 AND stock_qty < min_stock) OR "
         " (min_stock = 0 AND stock_qty <= 0))",
         (business_id,),
@@ -164,7 +179,7 @@ def compute_dashboard(tx, business_id):
         day = (now - timedelta(days=back)).strftime("%Y-%m-%d")
         amount = tx.query_one(
             "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM expenses "
-            "WHERE business_id = ? AND substr(created_at, 1, 10) = ?",
+            "WHERE business_id = ? AND deleted_at IS NULL AND substr(created_at, 1, 10) = ?",
             (business_id, day),
         )["s"]
         expenses_series.append({"date": day, "amountPaisa": amount})
@@ -197,6 +212,7 @@ def compute_dashboard(tx, business_id):
         "salesVsLastMonthPct": pct,
         "lastMonthSalesPaisa": last_month_sales,
         "topReceivableParty": top_party,
+        "topPayableParty": top_payable,
         "expiringItems": [
             {
                 "itemName": r["item_name"],
@@ -230,13 +246,13 @@ def compute_pnl(tx, business_id, date_from, date_to):
     )["s"]
     expenses = tx.query_one(
         "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM expenses "
-        "WHERE business_id = ? "
+        "WHERE business_id = ? AND deleted_at IS NULL "
         "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?",
         (business_id, date_from, date_to),
     )["s"]
     other_income = tx.query_one(
         "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM other_incomes "
-        "WHERE business_id = ? "
+        "WHERE business_id = ? AND deleted_at IS NULL "
         "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?",
         (business_id, date_from, date_to),
     )["s"]
@@ -260,7 +276,9 @@ def _profile_dict(row):
     return {
         "id": row["id"],
         "name": row["name"],
+        "ownerName": row.get("owner_name") or "",
         "address": row.get("address") or "",
+        "city": row.get("city") or "",
         "phone": row.get("phone") or "",
         "email": row.get("email") or "",
         "taxNote": row.get("tax_note") or "",
@@ -270,6 +288,11 @@ def _profile_dict(row):
         "pincode": row.get("pincode") or "",
         "state": row.get("state") or "",
         "signatureText": row.get("signature_text") or "",
+        # The logo image itself is served from /api/business/logo; the
+        # profile only carries the flag + URL so the (possibly large)
+        # base64 never rides along with every profile fetch.
+        "hasLogo": bool(row.get("logo_data")),
+        "logoUrl": "/api/business/logo" if row.get("logo_data") else "",
     }
 
 
@@ -296,12 +319,15 @@ def update_business():
         biz = _business_id(tx)
         row = _business_row(tx, biz)
         tx.execute(
-            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ?, "
+            "UPDATE businesses SET name = ?, owner_name = ?, address = ?, "
+            "city = ?, phone = ?, email = ?, "
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
             "pincode = ?, state = ?, signature_text = ? WHERE id = ?",
             (
                 name if "name" in data else row["name"],
+                str(data.get("owner_name", row.get("owner_name") or "") or "").strip(),
                 str(data.get("address", row.get("address") or "") or "").strip() or None,
+                str(data.get("city", row.get("city") or "") or "").strip(),
                 str(data.get("phone", row.get("phone") or "") or "").strip() or None,
                 str(data.get("email", row.get("email") or "") or "").strip() or None,
                 str(data.get("tax_note", row.get("tax_note") or "") or "").strip() or None,
@@ -314,6 +340,73 @@ def update_business():
                 biz,
             ),
         )
+        row = _business_row(tx, biz)
+    return jsonify(ok=True, business=_profile_dict(row))
+
+
+# ------------------------------------------------------- business logo --
+LOGO_MIMES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+LOGO_MAX_BYTES = 400 * 1024
+
+
+def _logo_response(row):
+    if not row or not row.get("logo_data"):
+        raise ApiError("No logo is set for this business.", status=404)
+    try:
+        raw = base64.b64decode(row["logo_data"], validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError("The stored logo is damaged.", status=500)
+    resp = Response(raw, mimetype=row.get("logo_mime") or "image/png")
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
+@bp.get("/business/logo")
+@require_session
+@require_approved
+@require_unlocked
+def get_business_logo():
+    with db.transaction() as tx:
+        row = _business_row(tx, _business_id(tx))
+    return _logo_response(row)
+
+
+@bp.put("/business/logo")
+@require_session
+@require_approved
+@require_unlocked
+def set_business_logo():
+    """Upload (or remove) THIS account's business logo. The image is
+    sent as a data URL in JSON so it rides the normal API; it is
+    stored on the business row itself — per account, never shared."""
+    data = _body()
+    logo = data.get("logo_data")
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        if logo is None or logo == "":
+            tx.execute(
+                "UPDATE businesses SET logo_mime = '', logo_data = NULL WHERE id = ?",
+                (biz,),
+            )
+        else:
+            if not isinstance(logo, str) or not logo.startswith("data:"):
+                raise ApiError("Logo must be an image file (PNG, JPG, WebP or GIF).")
+            header, _, payload = logo.partition(",")
+            mime = header[5:].split(";")[0].strip().lower()
+            if mime not in LOGO_MIMES or ";base64" not in header:
+                raise ApiError("Logo must be a PNG, JPG, WebP or GIF image.")
+            try:
+                raw = base64.b64decode(payload, validate=True)
+            except (binascii.Error, ValueError):
+                raise ApiError("The logo image could not be read.")
+            if not raw:
+                raise ApiError("The logo image is empty.")
+            if len(raw) > LOGO_MAX_BYTES:
+                raise ApiError("Logo is too large — please use an image under 400 KB.")
+            tx.execute(
+                "UPDATE businesses SET logo_mime = ?, logo_data = ? WHERE id = ?",
+                (mime, payload, biz),
+            )
         row = _business_row(tx, biz)
     return jsonify(ok=True, business=_profile_dict(row))
 
@@ -416,9 +509,32 @@ def list_expenses():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM expenses WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM expenses WHERE business_id = ? AND deleted_at IS NULL ORDER BY id", (biz,)
         )
     return jsonify(ok=True, expenses=[_expense_dict(r) for r in rows])
+
+
+@bp.delete("/expenses/<int:expense_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_expense(expense_id):
+    """Delete moves an expense to the Recycle Bin (Utilities): it stops
+    counting in the dashboard, P&L and Day Book until restored."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM expenses WHERE id = ? AND business_id = ? "
+            "AND deleted_at IS NULL",
+            (expense_id, biz),
+        )
+        if row is None:
+            raise ApiError("Expense not found.", status=404)
+        tx.execute(
+            "UPDATE expenses SET deleted_at = ? WHERE id = ?",
+            (now_iso(), expense_id),
+        )
+    return jsonify(ok=True)
 
 
 # --------------------------------------------------------------- payments --
@@ -521,6 +637,45 @@ def create_payment():
             )
         row = tx.query_one("SELECT * FROM payments WHERE id = ?", (pid,))
     return jsonify(ok=True, payment=_payment_dict(row)), 201
+
+
+@bp.delete("/payments/<int:payment_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_payment(payment_id):
+    """Delete a standalone payment. Two kinds are refused with a clear
+    reason instead of corrupting the books: a payment recorded against
+    a bill (it settled that bill — remove it by editing or deleting
+    the bill, which reverses its payments exactly), and a payment made
+    through a bank account (its bank entry has no separate reversal
+    link, so deleting here would leave the bank balance wrong). Plain
+    cash payments and cash adjustments delete cleanly: every balance
+    is computed from the payments table, so totals stay exact."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM payments WHERE id = ? AND business_id = ?",
+            (payment_id, biz),
+        )
+        if row is None:
+            raise ApiError("Payment not found.", status=404)
+        if row.get("invoice_id") is not None:
+            inv = tx.query_one(
+                "SELECT invoice_no FROM invoices WHERE id = ?",
+                (row["invoice_id"],),
+            )
+            raise ApiError(
+                "This payment is recorded against bill {} — delete or "
+                "edit that bill to remove it, so the bill's balance "
+                "stays correct.".format(
+                    (inv or {}).get("invoice_no") or ""))
+        if row.get("bank_account_id") is not None:
+            raise ApiError(
+                "This payment went through a bank account, so it cannot "
+                "be deleted here without breaking the bank balance.")
+        tx.execute("DELETE FROM payments WHERE id = ?", (payment_id,))
+    return jsonify(ok=True)
 
 
 @bp.post("/payments/allocate")
@@ -653,7 +808,8 @@ def party_ledger(party_id):
     with db.transaction() as tx:
         biz = _business_id(tx)
         party = tx.query_one(
-            "SELECT * FROM parties WHERE id = ? AND business_id = ?",
+            "SELECT * FROM parties WHERE id = ? AND business_id = ? "
+            "AND deleted_at IS NULL",
             (party_id, biz),
         )
         if party is None:
@@ -777,12 +933,12 @@ def day_book():
         )
         exps = tx.query_all(
             "SELECT * FROM expenses WHERE business_id = ? "
-            "AND substr(created_at, 1, 10) = ? ORDER BY id",
+            "AND deleted_at IS NULL AND substr(created_at, 1, 10) = ? ORDER BY id",
             (biz, date),
         )
         incs = tx.query_all(
             "SELECT * FROM other_incomes WHERE business_id = ? "
-            "AND substr(created_at, 1, 10) = ? ORDER BY id",
+            "AND deleted_at IS NULL AND substr(created_at, 1, 10) = ? ORDER BY id",
             (biz, date),
         )
     entries = []
@@ -870,7 +1026,7 @@ def stock_summary():
     with db.transaction() as tx:
         biz = _business_id(tx)
         items = tx.query_all(
-            "SELECT * FROM items WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM items WHERE business_id = ? AND deleted_at IS NULL ORDER BY id", (biz,)
         )
         in_rows = tx.query_all(
             "SELECT l.item_id AS iid, COALESCE(SUM(l.qty + l.free_qty), 0) AS q "

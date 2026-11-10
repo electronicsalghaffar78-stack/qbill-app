@@ -333,6 +333,29 @@ def update_member(member_id):
     return jsonify(ok=True, member=_member_dict(row))
 
 
+@bp.delete("/team/<int:member_id>")
+@require_session
+@require_approved
+@require_unlocked
+def remove_member(member_id):
+    """Remove = the member's access ends (status 'removed', the same
+    end state the update route offers). The record itself is kept so
+    the activity history stays readable."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM team_members WHERE id = ? AND business_id = ?",
+            (member_id, biz),
+        )
+        if row is None:
+            raise ApiError("Team member not found.", status=404)
+        tx.execute(
+            "UPDATE team_members SET status = 'removed' WHERE id = ?",
+            (member_id,),
+        )
+    return jsonify(ok=True)
+
+
 @bp.post("/team/switch")
 @require_session
 @require_approved

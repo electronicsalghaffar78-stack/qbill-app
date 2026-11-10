@@ -144,6 +144,40 @@ def update_bank_account(account_id):
     return jsonify(ok=True, bankAccount=result)
 
 
+@bp.delete("/bank-accounts/<int:account_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_bank_account(account_id):
+    """An unused bank account deletes cleanly. One with entries or
+    linked payments is refused with the reason: removing it would
+    orphan its statement and break the balances built on it."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM bank_accounts WHERE id = ? AND business_id = ?",
+            (account_id, biz),
+        )
+        if row is None:
+            raise ApiError("Bank account not found.", status=404)
+        entries = tx.query_one(
+            "SELECT COUNT(*) AS c FROM bank_transactions "
+            "WHERE business_id = ? AND bank_account_id = ?",
+            (biz, account_id),
+        )["c"]
+        linked = tx.query_one(
+            "SELECT COUNT(*) AS c FROM payments "
+            "WHERE business_id = ? AND bank_account_id = ?",
+            (biz, account_id),
+        )["c"]
+        if entries or linked:
+            raise ApiError(
+                "This bank account has entries, so it cannot be "
+                "deleted — its statement is part of your books.")
+        tx.execute("DELETE FROM bank_accounts WHERE id = ?", (account_id,))
+    return jsonify(ok=True)
+
+
 @bp.post("/bank-accounts/<int:account_id>/transact")
 @require_session
 @require_approved
@@ -398,6 +432,26 @@ def list_cheques():
     return jsonify(ok=True, cheques=[_cheque_dict(r, names) for r in rows])
 
 
+@bp.delete("/cheques/<int:cheque_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_cheque(cheque_id):
+    """Manual cheque-book entries are standalone records: deleting one
+    removes only the book entry (bill cheques live on their payments
+    and are untouched)."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM cheques WHERE id = ? AND business_id = ?",
+            (cheque_id, biz),
+        )
+        if row is None:
+            raise ApiError("Cheque not found.", status=404)
+        tx.execute("DELETE FROM cheques WHERE id = ?", (cheque_id,))
+    return jsonify(ok=True)
+
+
 # -------------------------------------------------------- cash adjust ----
 @bp.post("/cash-adjustments")
 @require_session
@@ -583,6 +637,29 @@ def list_loans():
     return jsonify(ok=True, loans=[_loan_dict(r) for r in rows])
 
 
+@bp.delete("/loans/<int:loan_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_loan(loan_id):
+    """A loan with no repayments deletes cleanly; once money has been
+    paid against it, the record is part of the books and stays."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM loan_accounts WHERE id = ? AND business_id = ?",
+            (loan_id, biz),
+        )
+        if row is None:
+            raise ApiError("Loan account not found.", status=404)
+        if (row["paid_paisa"] or 0) > 0:
+            raise ApiError(
+                "This loan already has repayments recorded, so it "
+                "cannot be deleted.")
+        tx.execute("DELETE FROM loan_accounts WHERE id = ?", (loan_id,))
+    return jsonify(ok=True)
+
+
 @bp.post("/loans/<int:loan_id>/pay")
 @require_session
 @require_approved
@@ -753,7 +830,7 @@ def list_other_income():
     with db.transaction() as tx:
         biz = _business_id(tx)
         rows = tx.query_all(
-            "SELECT * FROM other_incomes WHERE business_id = ? ORDER BY id", (biz,)
+            "SELECT * FROM other_incomes WHERE business_id = ? AND deleted_at IS NULL ORDER BY id", (biz,)
         )
         cats = tx.query_all(
             "SELECT name FROM income_categories WHERE business_id = ? ORDER BY name",
@@ -764,3 +841,26 @@ def list_other_income():
         incomes=[_income_dict(r) for r in rows],
         categories=[c["name"] for c in cats],
     )
+
+
+@bp.delete("/other-income/<int:income_id>")
+@require_session
+@require_approved
+@require_unlocked
+def delete_other_income(income_id):
+    """Delete moves an income entry to the Recycle Bin (Utilities): it
+    stops counting in the dashboard, P&L and Day Book until restored."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM other_incomes WHERE id = ? AND business_id = ? "
+            "AND deleted_at IS NULL",
+            (income_id, biz),
+        )
+        if row is None:
+            raise ApiError("Income entry not found.", status=404)
+        tx.execute(
+            "UPDATE other_incomes SET deleted_at = ? WHERE id = ?",
+            (now_iso(), income_id),
+        )
+    return jsonify(ok=True)

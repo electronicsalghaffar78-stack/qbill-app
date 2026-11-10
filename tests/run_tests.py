@@ -1790,6 +1790,594 @@ check("delta: POS screen, Adjust Cash, USER MANAGEMENT and Credit & Balance mark
       and "Save &amp; Print Bill" in html and "payment_in" in js
       and "Show working trial balance" in html)
 
+# ============ 12j. delta build #3 (list-first + Vyapar sale form + profile)
+# Owner complaints 2026-11-10: (1) every Add form sat permanently open —
+# screens are now LIST-FIRST, the form lives in a hidden panel opened by
+# Add/Edit; (2) the Sale/document form is rebuilt to his Vyapar photo;
+# (3) Business Profile is complete + findable and strictly per-account:
+# a new account starts EMPTY ("My Business") and never inherits the
+# owner's shop details; logos are per-account and print on PDFs.
+html = client.get("/").get_data(as_text=True)
+js = client.get("/static/app.js").get_data(as_text=True)
+_panels = ["partyPanel", "itemPanel", "paymentPanel", "expensePanel",
+           "incomePanel", "bankPanel", "chequePanel", "loanPanel",
+           "godownPanel", "transferPanel", "teamPanel", "termAddPanel",
+           "catAddPanel", "unitAddPanel", "coaPanel", "journalPanel",
+           "loyaltyPanel", "batchAddPanel"]
+check(
+    "delta3: every add/edit form lives in a hidden list-first panel",
+    all('id="%s" class="hidden"' % p in html for p in _panels)
+    and all(b in html for b in [
+        'id="btnAddParty"', 'id="btnAddItem"', 'id="btnAddPayment"',
+        'id="btnAddExpense"', 'id="btnAddIncome"', 'id="btnAddBank"',
+        'id="btnAddCheque"', 'id="btnAddLoan"', 'id="btnAddGodown"',
+        'id="btnAddTransfer"', 'id="btnAddTeamUser"', 'id="btnTermNew"',
+        'id="btnAddCategory"', 'id="btnAddUnit"', 'id="btnAddCoa"',
+        'id="btnAddJournal"', 'id="btnAddBatch"'])
+    and "function showPanel" in js and 'showPanel("partyPanel")' in js
+    and 'hidePanel("itemPanel")' in js,
+)
+_head = html[html.find('class="doc-lines-head"'):html.find('id="saleLines"')]
+_pos = [_head.find(w) for w in
+        ("ITEM", "QTY", "UNIT", "PRICE/UNIT", "DISCOUNT", "TAX")]
+check(
+    "delta3: doc grid columns in the Vyapar order with Without Tax caption",
+    all(p >= 0 for p in _pos) and _pos == sorted(_pos)
+    and "Without Tax" in _head and _head.find(">AMOUNT<", _pos[-1]) > _pos[-1],
+    _head[:300],
+)
+check(
+    "delta3: doc form = party picker + balances, date input, totals row, "
+    "description/image/document buttons, Share + Save",
+    all(s in html for s in [
+        'id="docPartyBtn"', 'id="docPartyMenu"', "Party Balance",
+        'id="docDateInput"', 'id="docTotalQty"', 'id="docTotalDisc"',
+        'id="docTotalTax"', 'id="docTotalAmt"', "ADD ROW",
+        "ADD DESCRIPTION", "ADD IMAGE", "ADD DOCUMENT",
+        'id="btnDocShare"', 'id="docShareMenu"', 'id="docSaveNewBtn"',
+        'id="btnAddPayRow"'])
+    and "renderDocPartyMenu" in js and "sl-disc-amt" in js
+    and "sl-unit-sel" in js,
+)
+check(
+    "delta3: Business Profile has logo upload + owner/city fields and the "
+    "version/cache moved to vyapar5/v14 (audit build)",
+    'id="profLogoFile"' in html and 'id="profOwner"' in html
+    and 'id="profCity"' in html
+    and client.get("/healthz").get_json().get("version")
+    == "2026-11-10.16-vyapar5"
+    and "qbill-shell-v14" in client.get("/sw.js").get_data(as_text=True),
+)
+_LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
+           "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+_LOGO_B = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
+           "FcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+tok_a3 = _signup_from_ip("shopa3@example.com", "198.51.100.201", "shop-a3")
+tok_b3 = _signup_from_ip("shopb3@example.com", "198.51.100.202", "shop-b3")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shopa3@example.com"})
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shopb3@example.com"})
+HA3, HB3 = H(tok_a3), H(tok_b3)
+prof_b = client.get("/api/business", headers=HB3).get_json()["business"]
+check(
+    "delta3: a NEW account's profile is EMPTY (neutral placeholder only)",
+    prof_b.get("name") == "My Business" and prof_b.get("hasLogo") is False
+    and prof_b.get("ownerName") == "" and prof_b.get("phone") == ""
+    and prof_b.get("email") == ""
+    and not any(s in json.dumps(prof_b) for s in
+                ("AL-GHAFFAR", "03273799008", "electronicsalghaffar78",
+                 "abdulqudoos5581")),
+    json.dumps(prof_b),
+)
+r = client.get("/api/business/logo", headers=HB3)
+check("delta3: no logo yet -> logo endpoint 404", r.status_code == 404)
+client.put("/api/business", headers=HA3, json={
+    "name": "Alpha Traders", "owner_name": "Alpha Owner", "city": "Karachi",
+    "address": "Shop 1, Alpha Market", "phone": "03001234567",
+    "email": "alpha@example.com"})
+r = client.put("/api/business/logo", headers=HA3, json={"logo_data": _LOGO_A})
+prof_a = client.get("/api/business", headers=HA3).get_json()["business"]
+logo_a = client.get("/api/business/logo", headers=HA3)
+check(
+    "delta3: account A profile + logo round-trip (own details only)",
+    r.status_code == 200 and prof_a.get("name") == "Alpha Traders"
+    and prof_a.get("ownerName") == "Alpha Owner"
+    and prof_a.get("city") == "Karachi" and prof_a.get("hasLogo") is True
+    and logo_a.status_code == 200
+    and logo_a.get_data().startswith(b"\x89PNG"),
+    json.dumps(prof_a),
+)
+client.put("/api/business", headers=HB3, json={
+    "name": "Beta Mart", "owner_name": "Beta Owner", "city": "Hyderabad",
+    "address": "Beta Plaza", "phone": "03339998877",
+    "email": "beta@example.com"})
+
+
+def _mk_inv3(tok):
+    p = client.post("/api/parties", headers=H(tok),
+                    json={"name": "Walk-in"}).get_json()["party"]["id"]
+    i = client.post("/api/items", headers=H(tok), json={
+        "name": "Thing", "sale_price_paisa": 10000,
+        "stock_qty": 5}).get_json()["item"]["id"]
+    v = client.post("/api/invoices", headers=H(tok), json={
+        "type": "sale", "party_id": p,
+        "lines": [{"item_id": i, "qty": 1, "rate_paisa": 10000}]})
+    return v.get_json()["invoice"]["id"]
+
+
+pdf_b = client.get("/api/invoices/{}/pdf".format(_mk_inv3(tok_b3)),
+                   headers=HB3).get_data()
+check(
+    "delta3: B's PDF carries ONLY B's details (no logo image, no A data)",
+    b"Beta Mart" in pdf_b and b"Alpha Traders" not in pdf_b
+    and b"AL-GHAFFAR" not in pdf_b and b"/Subtype /Image" not in pdf_b,
+)
+pdf_a = client.get("/api/invoices/{}/pdf".format(_mk_inv3(tok_a3)),
+                   headers=HA3).get_data()
+check(
+    "delta3: A's PDF carries A's name AND its embedded logo image",
+    b"Alpha Traders" in pdf_a and b"/Subtype /Image" in pdf_a
+    and b"Beta Mart" not in pdf_a and b"AL-GHAFFAR" not in pdf_a,
+)
+client.put("/api/business/logo", headers=HB3, json={"logo_data": _LOGO_B})
+logo_b = client.get("/api/business/logo", headers=HB3).get_data()
+logo_a2 = client.get("/api/business/logo", headers=HA3).get_data()
+check(
+    "delta3: B's different logo never touches A's logo",
+    logo_b.startswith(b"\x89PNG") and logo_b != logo_a2
+    and logo_a2 == logo_a.get_data(),
+)
+r = client.put("/api/business/logo", headers=HB3, json={
+    "logo_data": "data:text/html;base64,"
+                 "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="})
+check("delta3: a non-image logo upload is refused (400)",
+      r.status_code == 400)
+client.put("/api/business/logo", headers=HB3, json={"logo_data": None})
+prof_b = client.get("/api/business", headers=HB3).get_json()["business"]
+r = client.get("/api/business/logo", headers=HB3)
+check("delta3: logo removal clears hasLogo and the endpoint 404s",
+      prof_b.get("hasLogo") is False and r.status_code == 404)
+store_b = client.get("/api/store/settings", headers=HB3).get_json()
+biz_b = store_b["businessId"]
+client.put("/api/store/settings", headers=HB3,
+           json={"store": {"enabled": True, "accept_orders": True}})
+items_b = client.get("/api/items", headers=HB3).get_json()["items"]
+client.put("/api/store/items/{}".format(items_b[0]["id"]), headers=HB3,
+           json={"listed": True, "store_price_paisa": 10000,
+                 "in_stock": True})
+pub_b = client.get("/api/public/store/{}".format(biz_b)).get_json()
+check(
+    "delta3: B's public store shows B's own business name, never A's",
+    pub_b["store"]["name"] == "Beta Mart"
+    and "Alpha" not in json.dumps(pub_b),
+    json.dumps(pub_b.get("store")),
+)
+client.put("/api/store/settings", headers=HB3,
+           json={"store": {"enabled": False}})
+
+# ============ 12k. delta build #3 Fix 4 — delete everywhere ============
+# Every creatable record gets a Delete. Parties / items / expenses /
+# income soft-delete into the Recycle Bin (totals stay exact because
+# every query filters deleted_at); documents already did. Payments,
+# bank accounts, loans and godowns delete only when it cannot corrupt
+# the books — otherwise the API refuses with the reason.
+HU = H(user_token)
+dp = client.post("/api/parties", headers=HU,
+                 json={"name": "Delete Me Traders"}).get_json()["party"]
+di = client.post("/api/items", headers=HU, json={
+    "name": "Delete Me Widget", "sale_price_paisa": 20000,
+    "purchase_price_paisa": 12000, "stock_qty": 10}).get_json()["item"]
+dv = client.post("/api/invoices", headers=HU, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": di["id"], "qty": 2, "rate_paisa": 20000}]})
+dinv = dv.get_json()["invoice"]
+
+
+def _party_bal(pid):
+    rows = client.get("/api/parties", headers=HU).get_json()["parties"]
+    return {p["id"]: p["balancePaisa"] for p in rows}.get(pid)
+
+
+def _item_stock(iid):
+    rows = client.get("/api/items", headers=HU).get_json()["items"]
+    return {i["id"]: i["stockQty"] for i in rows}.get(iid)
+
+
+check("fix4: setup — balance 40000, stock 8 after the sale",
+      _party_bal(dp["id"]) == 40000 and _item_stock(di["id"]) == 8)
+r = client.delete("/api/parties/{}".format(dp["id"]), headers=HU)
+led = client.get("/api/parties/{}/ledger".format(dp["id"]), headers=HU)
+bin_r = client.get("/api/recycle-bin", headers=HU).get_json()
+bin_p = [p for p in bin_r.get("parties", []) if p["id"] == dp["id"]]
+check(
+    "fix4: party delete -> bin (balance kept), list + ledger closed",
+    r.status_code == 200 and _party_bal(dp["id"]) is None
+    and led.status_code == 404 and len(bin_p) == 1
+    and bin_p[0]["balancePaisa"] == 40000,
+    json.dumps(bin_r.get("parties"))[:200],
+)
+r = client.post("/api/invoices", headers=HU, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": di["id"], "qty": 1, "rate_paisa": 20000}]})
+check("fix4: a deleted party cannot take a new bill (400)",
+      r.status_code == 400)
+r = client.delete("/api/recycle-bin/parties/{}".format(dp["id"]),
+                  headers=HU)
+check("fix4: permanent delete of a party WITH bills is refused (400)",
+      r.status_code == 400 and "bills or payments" in
+      (r.get_json() or {}).get("error", ""))
+r = client.post("/api/recycle-bin/parties/{}/restore".format(dp["id"]),
+                headers=HU, json={})
+check("fix4: party restore brings the exact balance back",
+      r.status_code == 200 and _party_bal(dp["id"]) == 40000)
+r = client.delete("/api/items/{}".format(di["id"]), headers=HU)
+dash = client.get("/api/dashboard", headers=HU).get_json()
+bin_i = [i for i in client.get("/api/recycle-bin", headers=HU)
+         .get_json().get("items", []) if i["id"] == di["id"]]
+check(
+    "fix4: item delete -> bin with its stock figure kept (8)",
+    r.status_code == 200 and _item_stock(di["id"]) is None
+    and len(bin_i) == 1 and bin_i[0]["stockQty"] == 8,
+)
+r = client.post("/api/invoices", headers=HU, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": di["id"], "qty": 1, "rate_paisa": 20000}]})
+check("fix4: a deleted item cannot be billed (400)", r.status_code == 400)
+client.post("/api/recycle-bin/items/{}/restore".format(di["id"]),
+            headers=HU, json={})
+check("fix4: item restore returns it with stock still 8",
+      _item_stock(di["id"]) == 8)
+ni = client.post("/api/items", headers=HU, json={
+    "name": "Never Billed", "sale_price_paisa": 100,
+    "stock_qty": 1}).get_json()["item"]
+client.delete("/api/items/{}".format(ni["id"]), headers=HU)
+r = client.delete("/api/recycle-bin/items/{}".format(ni["id"]),
+                  headers=HU)
+bin_ids = [i["id"] for i in client.get("/api/recycle-bin", headers=HU)
+           .get_json().get("items", [])]
+check("fix4: an unreferenced item deletes forever from the bin",
+      r.status_code == 200 and ni["id"] not in bin_ids)
+# invoice delete from the list endpoint: stock reversal both ways
+si = client.post("/api/items", headers=HU, json={
+    "name": "Stock Flow", "sale_price_paisa": 5000,
+    "purchase_price_paisa": 3000, "stock_qty": 10}).get_json()["item"]
+sv = client.post("/api/invoices", headers=HU, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": si["id"], "qty": 3, "rate_paisa": 5000}]})
+sid = sv.get_json()["invoice"]["id"]
+client.delete("/api/invoices/{}".format(sid), headers=HU)
+after_del = _item_stock(si["id"])
+client.post("/api/recycle-bin/{}/restore".format(sid), headers=HU,
+            json={})
+check("fix4: list delete reverses stock (7->10), restore re-applies (7)",
+      after_del == 10 and _item_stock(si["id"]) == 7)
+# expenses + income: soft delete, totals move, restore
+pnl0 = client.get("/api/pnl", headers=HU).get_json()["pnl"]
+ex = client.post("/api/expenses", headers=HU, json={
+    "title": "Delete Me Expense", "amount_paisa": 50000,
+    "paid_paisa": 50000}).get_json()["expense"]
+client.delete("/api/expenses/{}".format(ex["id"]), headers=HU)
+pnl1 = client.get("/api/pnl", headers=HU).get_json()["pnl"]
+bin_e = [e for e in client.get("/api/recycle-bin", headers=HU)
+         .get_json().get("expenses", []) if e["id"] == ex["id"]]
+client.post("/api/recycle-bin/expenses/{}/restore".format(ex["id"]),
+            headers=HU, json={})
+pnl2 = client.get("/api/pnl", headers=HU).get_json()["pnl"]
+check(
+    "fix4: expense delete drops it from P&L, bin holds it, restore exact",
+    pnl1["expensesPaisa"] == pnl0["expensesPaisa"]
+    and len(bin_e) == 1
+    and pnl2["expensesPaisa"] == pnl0["expensesPaisa"] + 50000,
+    "{} {} {}".format(pnl0["expensesPaisa"], pnl1["expensesPaisa"],
+                      pnl2["expensesPaisa"]),
+)
+inc = client.post("/api/other-income", headers=HU, json={
+    "title": "Delete Me Income", "amount_paisa": 70000}
+    ).get_json()["income"]
+client.delete("/api/other-income/{}".format(inc["id"]), headers=HU)
+bin_n = [e for e in client.get("/api/recycle-bin", headers=HU)
+         .get_json().get("incomes", []) if e["id"] == inc["id"]]
+client.post("/api/recycle-bin/incomes/{}/restore".format(inc["id"]),
+            headers=HU, json={})
+inc_list = client.get("/api/other-income", headers=HU).get_json()
+check(
+    "fix4: income delete -> bin -> restore returns it to the list",
+    len(bin_n) == 1 and any(i["id"] == inc["id"]
+                             for i in inc_list["incomes"]),
+)
+# payments: standalone cash deletes; bill-linked and bank refuse
+pay = client.post("/api/payments", headers=HU, json={
+    "direction": "in", "party_id": dp["id"], "amount_paisa": 15000,
+    "mode": "cash"}).get_json()["payment"]
+bal_before = _party_bal(dp["id"])
+r = client.delete("/api/payments/{}".format(pay["id"]), headers=HU)
+check("fix4: standalone cash payment deletes, balance reverses exactly",
+      r.status_code == 200 and _party_bal(dp["id"]) == bal_before + 15000)
+pv = client.post("/api/invoices", headers=HU, json={
+    "type": "sale", "party_id": dp["id"], "paid_paisa": 5000,
+    "lines": [{"item_id": si["id"], "qty": 1, "rate_paisa": 5000}]})
+pinv = pv.get_json()["invoice"]
+pays = client.get("/api/payments", headers=HU).get_json()["payments"]
+linked = [p for p in pays if p.get("invoiceId") == pinv["id"]]
+r = client.delete("/api/payments/{}".format(linked[0]["id"]), headers=HU) \
+    if linked else None
+check("fix4: a bill's own payment refuses standalone delete (400+reason)",
+      bool(linked) and r.status_code == 400
+      and "recorded against bill" in (r.get_json() or {}).get("error", ""))
+bank = client.post("/api/bank-accounts", headers=HU, json={
+    "display_name": "Delete Test Bank"}).get_json()["bankAccount"]
+bpay = client.post("/api/payments", headers=HU, json={
+    "direction": "in", "party_id": dp["id"], "amount_paisa": 5000,
+    "mode": "bank", "bank_account_id": bank["id"]}).get_json()["payment"]
+r = client.delete("/api/payments/{}".format(bpay["id"]), headers=HU)
+r2 = client.delete("/api/bank-accounts/{}".format(bank["id"]), headers=HU)
+check("fix4: bank payment + used bank account both refuse delete (400)",
+      r.status_code == 400 and r2.status_code == 400)
+bank2 = client.post("/api/bank-accounts", headers=HU, json={
+    "display_name": "Empty Bank"}).get_json()["bankAccount"]
+r = client.delete("/api/bank-accounts/{}".format(bank2["id"]), headers=HU)
+banks = client.get("/api/bank-accounts", headers=HU).get_json()
+check("fix4: an unused bank account deletes cleanly",
+      r.status_code == 200 and not any(
+          a["id"] == bank2["id"] for a in banks["bankAccounts"]))
+chq = client.post("/api/cheques", headers=HU, json={
+    "cheque_no": "DEL-1", "bank_name": "Test Bank",
+    "amount_paisa": 9000}).get_json()["cheque"]
+r = client.delete("/api/cheques/{}".format(chq["id"]), headers=HU)
+chqs = client.get("/api/cheques", headers=HU).get_json()["cheques"]
+check("fix4: a cheque-book entry deletes",
+      r.status_code == 200
+      and not any(c["id"] == chq["id"] for c in chqs))
+loan = client.post("/api/loans", headers=HU, json={
+    "name": "Delete Loan", "principal_paisa": 100000}).get_json()["loan"]
+r = client.delete("/api/loans/{}".format(loan["id"]), headers=HU)
+loan2 = client.post("/api/loans", headers=HU, json={
+    "name": "Paid Loan", "principal_paisa": 100000}).get_json()["loan"]
+client.post("/api/loans/{}/pay".format(loan2["id"]), headers=HU,
+            json={"amount_paisa": 1000})
+r2 = client.delete("/api/loans/{}".format(loan2["id"]), headers=HU)
+check("fix4: untouched loan deletes; a loan with repayments refuses",
+      r.status_code == 200 and r2.status_code == 400)
+gd = client.post("/api/godowns", headers=HU, json={
+    "name": "Delete Godown", "type": "Godown"}).get_json()["godown"]
+r = client.delete("/api/godowns/{}".format(gd["id"]), headers=HU)
+gds = client.get("/api/godowns", headers=HU).get_json()["godowns"]
+main_g = [g for g in gds if g["isMain"]][0]
+r2 = client.delete("/api/godowns/{}".format(main_g["id"]), headers=HU)
+check("fix4: empty godown deletes; the Main Godown refuses",
+      r.status_code == 200 and r2.status_code == 400
+      and not any(g["id"] == gd["id"] for g in gds))
+tm = client.post("/api/team", headers=HU, json={
+    "name": "Delete Member", "contact": "del@example.com",
+    "role": "Biller"}).get_json()["member"]
+r = client.delete("/api/team/{}".format(tm["id"]), headers=HU)
+members = client.get("/api/team", headers=HU).get_json()["members"]
+gone = [m for m in members if m["id"] == tm["id"]]
+check("fix4: team Remove now works (member marked removed)",
+      r.status_code == 200 and (not gone or gone[0]["status"] == "removed"))
+
+# ============ 12l. delta build #3 Fix 5 — import wizard ================
+# "Bring your old data": Vyapar-shaped exports auto-map; generic files
+# map by hand; duplicates (phone+name / code+name) default to SKIP;
+# error rows never block the valid ones.
+tok_w = _signup_from_ip("wizard@example.com", "198.51.100.210", "wiz-1234")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "wizard@example.com"})
+HW = H(tok_w)
+PARTY_CSV = (
+    "Party Name,Phone Number,Address,Opening Balance,Email\n"
+    "Wizard Customer,0300-1112223,Main Bazaar,5000,wc@example.com\n"
+    "Wizard Supplier,0321-4445556,Old City,-2500,ws@example.com\n"
+    "Broken Row,0300-0000000,Nowhere,notanumber,bad@example.com\n"
+    ",0300-9999999,No Name,100,noname@example.com\n"
+)
+r = client.post("/api/utilities/import/parse", headers=HW,
+                data={"kind": "parties",
+                      "file": (io.BytesIO(PARTY_CSV.encode()),
+                               "parties.csv")},
+                content_type="multipart/form-data")
+parsed = r.get_json() or {}
+check(
+    "fix5: Vyapar party headers auto-map (name/phone/address/balance)",
+    r.status_code == 200 and parsed.get("mapping", {}).get("name")
+    == "Party Name" and parsed["mapping"].get("phone") == "Phone Number"
+    and parsed["mapping"].get("opening_balance") == "Opening Balance"
+    and len(parsed.get("rows", [])) == 4,
+    json.dumps(parsed.get("mapping")),
+)
+r = client.post("/api/utilities/import/wizard-validate", headers=HW,
+                json={"kind": "parties", "mapping": parsed["mapping"],
+                      "rows": parsed["rows"]})
+val = r.get_json()
+check("fix5: validate splits rows into new (2) and errors (2)",
+      val["counts"] == {"new": 2, "duplicate": 0, "error": 2},
+      json.dumps(val["counts"]))
+rows_ok = [{"data": e["data"], "action": "create"}
+           for e in val["rows"] if e["status"] == "new"]
+r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
+                json={"kind": "parties", "batch": "wizbatch1",
+                      "opening_date": "2026-01-15", "rows": rows_ok})
+plist = client.get("/api/parties", headers=HW).get_json()["parties"]
+by_name = {p["name"]: p for p in plist}
+check(
+    "fix5: parties land with opening balances + the chosen as-of date",
+    r.status_code == 201 and r.get_json()["created"] == 2
+    and by_name["Wizard Customer"]["balancePaisa"] == 500000
+    and by_name["Wizard Supplier"]["balancePaisa"] == -250000
+    and by_name["Wizard Customer"]["openingDate"] == "2026-01-15",
+    json.dumps(r.get_json()),
+)
+r = client.post("/api/utilities/import/wizard-validate", headers=HW,
+                json={"kind": "parties", "mapping": parsed["mapping"],
+                      "rows": parsed["rows"][:2]})
+check("fix5: re-import detects duplicates by phone+name",
+      r.get_json()["counts"]["duplicate"] == 2)
+dup_rows = r.get_json()["rows"]
+r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
+                json={"kind": "parties", "batch": "wizbatch2",
+                      "rows": [{"data": e["data"], "action": "create"}
+                               for e in dup_rows]})
+n_after = len(client.get("/api/parties", headers=HW).get_json()
+              ["parties"])
+check("fix5: duplicates default to SKIP even if 'create' is sent",
+      r.get_json()["created"] == 0 and r.get_json()["skipped"] == 2
+      and n_after == 2)
+upd = [{"data": dict(e["data"], address="New Address Road"),
+        "action": "update"} for e in dup_rows[:1]]
+r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
+                json={"kind": "parties", "batch": "wizbatch3",
+                      "rows": upd})
+plist = client.get("/api/parties", headers=HW).get_json()["parties"]
+wc = {p["name"]: p for p in plist}["Wizard Customer"]
+check("fix5: choosing Update overwrites the matched party's fields",
+      r.get_json()["updated"] == 1
+      and wc["billingAddress"] == "New Address Road")
+ITEM_CSV = (
+    "Item Name,Item Code,Sale Price,Purchase Price,MRP,Unit,Stock,Tax %\n"
+    "Wizard Panel,WP-550,1500.50,1400,1800,Crate,25,5\n"
+    "Wizard Cable,,300,250,,Pcs,100,\n"
+)
+r = client.post("/api/utilities/import/parse", headers=HW,
+                data={"kind": "items",
+                      "file": (io.BytesIO(ITEM_CSV.encode()),
+                               "items.csv")},
+                content_type="multipart/form-data")
+iparsed = r.get_json() or {}
+r = client.post("/api/utilities/import/wizard-validate", headers=HW,
+                json={"kind": "items", "mapping": iparsed["mapping"],
+                      "rows": iparsed["rows"]})
+ival = r.get_json()
+r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
+                json={"kind": "items", "batch": "wizbatch4",
+                      "rows": [{"data": e["data"], "action": "create"}
+                               for e in ival["rows"]]})
+ilist = client.get("/api/items", headers=HW).get_json()["items"]
+panel = {i["name"]: i for i in ilist}["Wizard Panel"]
+check(
+    "fix5: items land with prices, MRP, stock, tax (5% -> 500bp), unit",
+    r.get_json()["created"] == 2
+    and panel["salePricePaisa"] == 150050
+    and panel["purchasePricePaisa"] == 140000
+    and panel["mrpPaisa"] == 180000 and panel["stockQty"] == 25
+    and panel["taxBp"] == 500 and panel["unit"] == "Crate"
+    and "Crate" in ival["units"],
+    json.dumps(panel),
+)
+GEN_CSV = "Title,Cost,Rates\nGeneric Thing,40,55.5\n"
+r = client.post("/api/utilities/import/parse", headers=HW,
+                data={"kind": "items",
+                      "file": (io.BytesIO(GEN_CSV.encode()), "gen.csv")},
+                content_type="multipart/form-data")
+grows = r.get_json()["rows"]
+r = client.post("/api/utilities/import/wizard-validate", headers=HW,
+                json={"kind": "items",
+                      "mapping": {"name": "Title",
+                                  "purchase_price": "Cost",
+                                  "sale_price": "Rates"},
+                      "rows": grows})
+gval = r.get_json()
+r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
+                json={"kind": "items", "batch": "wizbatch5",
+                      "rows": [{"data": e["data"], "action": "create"}
+                               for e in gval["rows"]]})
+ilist = client.get("/api/items", headers=HW).get_json()["items"]
+gen = {i["name"]: i for i in ilist}.get("Generic Thing", {})
+check("fix5: a generic CSV imports through a hand-made mapping",
+      r.get_json()["created"] == 1
+      and gen.get("salePricePaisa") == 5550
+      and gen.get("purchasePricePaisa") == 4000)
+import zipfile as _zip
+
+_buf = io.BytesIO()
+with _zip.ZipFile(_buf, "w") as z:
+    z.writestr("xl/sharedStrings.xml",
+               '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+               '<sst xmlns="http://schemas.openxmlformats.org/'
+               'spreadsheetml/2006/main" count="4" uniqueCount="4">'
+               "<si><t>Party Name</t></si><si><t>Phone Number</t></si>"
+               "<si><t>Xlsx Party</t></si><si><t>0300-1212121</t></si>"
+               "</sst>")
+    z.writestr("xl/worksheets/sheet1.xml",
+               '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+               '<worksheet xmlns="http://schemas.openxmlformats.org/'
+               'spreadsheetml/2006/main"><sheetData>'
+               '<row r="1"><c r="A1" t="s"><v>0</v></c>'
+               '<c r="B1" t="s"><v>1</v></c></row>'
+               '<row r="2"><c r="A2" t="s"><v>2</v></c>'
+               '<c r="B2" t="s"><v>3</v></c></row>'
+               "</sheetData></worksheet>")
+_buf.seek(0)
+r = client.post("/api/utilities/import/parse", headers=HW,
+                data={"kind": "parties",
+                      "file": (_buf, "book.xlsx")},
+                content_type="multipart/form-data")
+xparsed = r.get_json() or {}
+check("fix5: a real .xlsx file parses (headers + rows, stdlib reader)",
+      r.status_code == 200
+      and xparsed.get("headers") == ["Party Name", "Phone Number"]
+      and xparsed["rows"][0]["Party Name"] == "Xlsx Party",
+      json.dumps(xparsed)[:200])
+html = client.get("/").get_data(as_text=True)
+js = client.get("/static/app.js").get_data(as_text=True)
+check("fix5: wizard UI is served (Utilities card + Items/Parties entries)",
+      'id="importWizard"' in html and 'id="btnWizParties"' in html
+      and 'id="btnWizItems"' in html and "wizard-validate" in js
+      and "Import from Vyapar / another software" in html)
+
+# --------------------------------- 12m. full-site audit fixes (2026-11-10) --
+# Research-driven parity repairs: Party Status round-trip, the Home
+# You'll Pay top party, and the audited shell (wording + new screens).
+r = client.post("/api/parties", headers=HW,
+                json={"name": "Audit Status Party", "status": "inactive"})
+audit_pid = (r.get_json() or {}).get("party", {}).get("id")
+r = client.get("/api/parties", headers=HW)
+audit_row = {p["id"]: p for p in r.get_json()["parties"]}.get(audit_pid, {})
+r = client.put("/api/parties/{}".format(audit_pid), headers=HW,
+               json={"status": "active"})
+audit_put = (r.get_json() or {}).get("party", {})
+check("audit: party status stores inactive, a status-only PUT reactivates",
+      audit_row.get("status") == "inactive"
+      and audit_put.get("status") == "active",
+      json.dumps({"row": audit_row, "put": audit_put})[:200])
+r = client.post("/api/parties", headers=HW, json={"name": "Audit Supplier"})
+audit_sup = (r.get_json() or {}).get("party", {}).get("id")
+r = client.post("/api/invoices", headers=HW,
+                json={"type": "purchase", "party_id": audit_sup,
+                      "lines": [{"qty": 1, "rate_paisa": 99999900,
+                                 "description": "Audit purchase"}]})
+r = client.get("/api/dashboard", headers=HW)
+audit_top = (r.get_json() or {}).get("dashboard", {}).get("topPayableParty") or {}
+check("audit: dashboard names the top You'll Pay party with its amount",
+      audit_top.get("name") == "Audit Supplier"
+      and audit_top.get("amountPaisa") == 99999900,
+      json.dumps(audit_top))
+audit_html = client.get("/").get_data(as_text=True)
+audit_js = client.get("/static/app.js").get_data(as_text=True)
+check("audit: shell carries the research fixes (billing box, overdue card, "
+      "Most Used Reports, import entries + template box, cash/expenses "
+      "tables, party status UI)",
+      'id="docBillingWrap"' in audit_html and 'id="bookOverdue"' in audit_html
+      and "Sale Report" in audit_html and "Daybook Report" in audit_html
+      and "Party Statement" in audit_html and "View All" in audit_html
+      and 'id="btnUtilImportItems"' in audit_html
+      and 'id="btnUtilImportParties"' in audit_html
+      and "Download .xls/.xlsx (excel sheet) template file to enter Data"
+      in audit_html
+      and 'id="cashBody"' in audit_html and 'id="expenseBody"' in audit_html
+      and 'id="expenseCats"' in audit_html
+      and 'id="partyStatusChips"' in audit_html
+      and 'id="ledgerStatusToggle"' in audit_html
+      and 'id="dTopPayParty"' in audit_html)
+check("audit: app.js carries Vyapar's verified wording + the new flows",
+      "Do you really want to delete this item?" in audit_js
+      and "Do you really want to delete this transaction?" in audit_js
+      and "Your stock for following item is not sufficient to fulfil "
+          "the sale." in audit_js
+      and "SALE PRICE" in audit_js and "Last purchase prices:" in audit_js
+      and "topPayableParty" in audit_js
+      and "Valid " in audit_js and "with Errors : " in audit_js)
+
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
 r = client.get("/api/auth/me", headers=H(owner_token))
