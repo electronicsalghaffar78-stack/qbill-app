@@ -1973,11 +1973,12 @@ function addSaleLine(itemId, preset) {
       ((s.tax_enabled && s.default_tax_bp) ? (s.default_tax_bp / 100) : 0) + '"><span class="sl-tax-amt">Rs 0.00</span></span>' +
     '<span class="sl-amt">Rs 0.00</span>' +
     '<button class="rm" type="button" title="Remove line">×</button>' +
+    /* Per-line Description / Batch No. / Serial No. / Exp inputs were
+       removed from the bill form on Qudoos's phone-check order
+       (2026-11-10): the form no longer shows or collects them. The
+       server still accepts the fields (defaulting empty) and the
+       item-side batch features are untouched. */
     '<div class="sl-sub">' +
-      '<input class="sl-desc" placeholder="Description">' +
-      '<input class="sl-batch" placeholder="Batch No.">' +
-      '<input class="sl-serial" placeholder="Serial No./IMEI">' +
-      '<input class="sl-exp" placeholder="Exp (mm/yy)">' +
       '<span class="sl-lpp"></span>' +
     "</div>";
   wrap.innerHTML = html;
@@ -2096,15 +2097,6 @@ function addSaleLine(itemId, preset) {
         wrap.querySelector(".sl-disc").value = it.discountBp / 100;
       }
       if (it.taxBp != null && s.tax_enabled) wrap.querySelector(".sl-tax").value = it.taxBp / 100;
-      if (it.description && s.item_description_enabled) wrap.querySelector(".sl-desc").value = it.description;
-      apiGet("/api/items/" + it.id + "/batches", null).then(function (r) {
-        var bs = (r.body.batches || []).filter(function (b) { return b.qty > 0; });
-        if (bs.length) {
-          bs.sort(function (a, b) { return (a.expDate || "99/99") < (b.expDate || "99/99") ? -1 : 1; });
-          wrap.querySelector(".sl-batch").value = bs[0].batchNo || "";
-          wrap.querySelector(".sl-exp").value = bs[0].expDate || "";
-        }
-      }).catch(function () {});
       var pid = $("saleParty").value;
       if (s.party_wise_item_rate && pid) {
         apiGet("/api/parties/" + pid + "/item-rate/" + it.id, null).then(function (r) {
@@ -2161,10 +2153,9 @@ function addSaleLine(itemId, preset) {
       var net2 = preset.qty * preset.ratePaisa - (preset.discountPaisa || 0);
       wrap.querySelector(".sl-tax").value = net2 ? (preset.taxPaisa / net2 * 100).toFixed(2) : 0;
     }
-    if (preset.description) wrap.querySelector(".sl-desc").value = preset.description;
-    if (preset.batchNo) wrap.querySelector(".sl-batch").value = preset.batchNo;
-    if (preset.serialNo) wrap.querySelector(".sl-serial").value = preset.serialNo;
-    if (preset.expDate) wrap.querySelector(".sl-exp").value = preset.expDate;
+    /* preset.description / batchNo / serialNo / expDate are ignored:
+       the bill form no longer collects per-line values for them
+       (Qudoos phone-check order, 2026-11-10). */
   }
   if (itemId) { sel.value = itemId; fillFromItem(); }
   $("saleLines").appendChild(wrap);
@@ -2208,10 +2199,9 @@ function saleLinesData() {
       tax_paisa: tax
     };
     if (itemId) line.item_id = parseInt(itemId, 10);
-    var d = w.querySelector(".sl-desc").value.trim(); if (d) line.description = d;
-    var b = w.querySelector(".sl-batch").value.trim(); if (b) line.batch_no = b;
-    var sn = w.querySelector(".sl-serial").value.trim(); if (sn) line.serial_no = sn;
-    var ex = w.querySelector(".sl-exp").value.trim(); if (ex) line.exp_date = ex;
+    /* No per-line description/batch/serial/exp: the form no longer
+       collects them, so saved lines simply omit the fields and the
+       server defaults them empty. */
     if (line.qty > 0) lines.push(line);
   });
   return lines;
@@ -2376,6 +2366,8 @@ function captureDocState() {
     party: $("saleParty").value, phone: $("docPhone").value,
     paid: $("salePaid").value, roundOff: $("docRoundOff").checked,
     cashMode: docCashMode, termsId: docTermsSelected,
+    moreOpen: !$("docMoreBody").classList.contains("hidden"),
+    termsOpen: !$("docTermsBody").classList.contains("hidden"),
     due: $("docDueDate").value, terms: $("docPayTerms").value,
     billing: $("docBilling").value, shipping: $("docShipping").value,
     po: $("docPoNumber").value, transport: $("docTransport").value,
@@ -2387,9 +2379,7 @@ function captureDocState() {
         itemId: w.querySelector(".sl-item").value,
         qty: w.querySelector(".sl-qty").value, free: w.querySelector(".sl-free").value,
         rate: w.querySelector(".sl-rate").value, disc: w.querySelector(".sl-disc").value,
-        tax: w.querySelector(".sl-tax").value, desc: w.querySelector(".sl-desc").value,
-        batch: w.querySelector(".sl-batch").value, serial: w.querySelector(".sl-serial").value,
-        exp: w.querySelector(".sl-exp").value
+        tax: w.querySelector(".sl-tax").value
       };
     }),
     payRows: Array.prototype.map.call(document.querySelectorAll("#docPayRows .pay-row"), function (row) {
@@ -2412,10 +2402,6 @@ function restoreDocState(st) {
     w.querySelector(".sl-rate").value = L.rate;
     w.querySelector(".sl-disc").value = L.disc;
     w.querySelector(".sl-tax").value = L.tax;
-    w.querySelector(".sl-desc").value = L.desc;
-    w.querySelector(".sl-batch").value = L.batch;
-    w.querySelector(".sl-serial").value = L.serial;
-    w.querySelector(".sl-exp").value = L.exp;
   });
   if (!st.lines.length) addSaleLine();
   $("docPayRows").innerHTML = "";
@@ -2435,6 +2421,11 @@ function restoreDocState(st) {
   $("docLoyaltyUse").value = st.loyalty; $("docRepeat").value = st.repeat;
   $("docRoundOff").checked = !!st.roundOff;
   applyDocType();
+  /* Collapsible sections: restore the tab's own open state, and
+     never leave saved values hidden — a section holding any value
+     starts expanded. */
+  docSectionSet("more", !!st.moreOpen || docMoreHasContent());
+  docSectionSet("terms", !!st.termsOpen || !!docTermsSelected);
   docCashMode = !!st.cashMode;
   $("docCashToggle").classList.toggle("on", docCashMode);
   $("docCashToggle").setAttribute("aria-checked", docCashMode ? "true" : "false");
@@ -2544,6 +2535,36 @@ $("btnDocImage").addEventListener("click", function () {
 });
 $("btnDocDoc").addEventListener("click", function () {
   $("docAttachWrap").classList.toggle("hidden");
+});
+/* "More Details" and "ADD TERMS AND CONDITIONS" collapsibles
+   (Qudoos phone-check order, 2026-11-10): each is ONE tappable row;
+   its fields show only after a tap. Default = collapsed. When a
+   form opens holding values inside a section (editing a bill, or
+   returning to a tab), that section starts EXPANDED so no saved
+   value is ever hidden from the user. */
+function docSectionSet(which, open) {
+  var body = $(which === "more" ? "docMoreBody" : "docTermsBody");
+  var btn = $(which === "more" ? "btnDocMore" : "btnDocTerms");
+  if (!body || !btn) return;
+  body.classList.toggle("hidden", !open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  var caret = btn.querySelector(".dc-caret");
+  if (caret) caret.textContent = open ? "▴" : "▾";
+}
+function docMoreHasContent() {
+  var ids = ["docShipping", "docDueDate", "docPayTerms", "docPoNumber",
+             "docRepeat", "docTransport", "docVehicle", "docDeliveryDate",
+             "docDeliveryLoc"];
+  return ids.some(function (id) {
+    var el = $(id);
+    return el && String(el.value || "").trim() !== "";
+  });
+}
+$("btnDocMore").addEventListener("click", function () {
+  docSectionSet("more", $("docMoreBody").classList.contains("hidden"));
+});
+$("btnDocTerms").addEventListener("click", function () {
+  docSectionSet("terms", $("docTermsBody").classList.contains("hidden"));
 });
 $("btnDocShare").addEventListener("click", function () {
   $("docShareMenu").classList.toggle("hidden");
@@ -2736,6 +2757,9 @@ function resetDocForm() {
    "docDeliveryLoc", "docDescription", "docLoyaltyUse"].forEach(function (id) { $(id).value = ""; });
   $("docDueDate").value = ""; $("docDeliveryDate").value = "";
   $("docRepeat").value = "";
+  /* Fresh form: both collapsible sections start closed. */
+  docSectionSet("more", false);
+  docSectionSet("terms", false);
   applyDocType();
 }
 $("btnSaleNew").addEventListener("click", function () {
@@ -2988,9 +3012,17 @@ function startEditInvoice(inv) {
     $("docDeliveryDate").value = full.deliveryDate || "";
     $("docDeliveryLoc").value = full.deliveryLocation || "";
     $("docDescription").value = full.description || "";
+    /* Restore the bill's terms selection too — it lives inside the
+       Terms collapsible, and an edit must not silently drop it. */
+    docTermsSelected = full.termsId || null;
+    loadTermsPicker();
     if (full.description) showPanel("docDescWrap");
     if (full.attachmentName) { $("docAttachment").value = full.attachmentName; showPanel("docAttachWrap"); }
     $("docNumber").textContent = full.invoiceNo;
+    /* Editing: expand a collapsible section when the saved bill
+       holds values inside it, so nothing is hidden. */
+    docSectionSet("more", docMoreHasContent());
+    docSectionSet("terms", !!docTermsSelected);
     updateDocPartyInfo();
     calcSaleTotal();
     if ((full.payments || []).length > 1) {

@@ -1841,12 +1841,12 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar5/v14 (audit build)",
+    "version/cache moved to vyapar6/v15 (sale-form cleanup build)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-10.16-vyapar5"
-    and "qbill-shell-v14" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-10.17-vyapar6"
+    and "qbill-shell-v15" in client.get("/sw.js").get_data(as_text=True),
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -2377,6 +2377,59 @@ check("audit: app.js carries Vyapar's verified wording + the new flows",
       and "SALE PRICE" in audit_js and "Last purchase prices:" in audit_js
       and "topPayableParty" in audit_js
       and "Valid " in audit_js and "with Errors : " in audit_js)
+
+# ----------------------- 12n. sale-form cleanup (Qudoos phone check) --
+# His marked screenshot of .16 ordered: (1) the per-line Description /
+# Batch No. / Serial No. / Exp inputs under every bill line are GONE
+# from the doc form, (2) "More Details" is ONE collapsed option, (3)
+# "ADD TERMS AND CONDITIONS" is its own collapsed option. The fields
+# inside keep saving exactly as before.
+sf_html = client.get("/").get_data(as_text=True)
+sf_js = client.get("/static/app.js").get_data(as_text=True)
+check("cleanup: doc form has NO per-line Description/Batch/Serial/Exp "
+      "inputs (form-level ADD DESCRIPTION stays)",
+      "sl-desc" not in sf_js and "sl-batch" not in sf_js
+      and "sl-serial" not in sf_js and "sl-exp" not in sf_js
+      and 'id="btnDocDesc"' in sf_html and 'id="btnDocImage"' in sf_html
+      and 'id="btnDocDoc"' in sf_html)
+check("cleanup: More Details + Terms are collapsed-by-default toggles "
+      "(hidden bodies, expand-on-tap wiring in app.js)",
+      'id="btnDocMore"' in sf_html and 'id="btnDocTerms"' in sf_html
+      and 'id="docMoreBody" class="hidden"' in sf_html
+      and 'id="docTermsBody" class="hidden"' in sf_html
+      and sf_html.count('aria-expanded="false"') >= 2
+      and "docSectionSet" in sf_js and "docMoreHasContent" in sf_js
+      and "moreOpen" in sf_js and "termsOpen" in sf_js)
+r = client.post("/api/terms", headers=HW,
+                json={"header": "Cleanup Terms", "description": "Net due.",
+                      "applies": ["sale"]})
+sf_term_id = (r.get_json() or {}).get("term", {}).get("id")
+r = client.post("/api/invoices", headers=HW,
+                json={"type": "sale",
+                      "lines": [{"qty": 1, "rate_paisa": 50000,
+                                 "description": "Cleanup line"}],
+                      "due_date": "2026-12-01", "payment_terms": "Net 15",
+                      "shipping_address": "Warehouse 9, Lahore",
+                      "po_number": "PO-77", "transport_name": "Bilal Goods",
+                      "vehicle_no": "LEA-1234", "delivery_date": "2026-11-20",
+                      "delivery_location": "Karachi",
+                      "repeat_freq": "monthly", "terms_id": sf_term_id})
+sf_inv_id = (r.get_json() or {}).get("invoice", {}).get("id")
+r = client.get("/api/invoices/{}".format(sf_inv_id), headers=HW)
+sf_inv = (r.get_json() or {}).get("invoice", {})
+check("cleanup: values inside More Details + the Terms selection still "
+      "save and read back exact",
+      sf_inv.get("dueDate") == "2026-12-01"
+      and sf_inv.get("paymentTerms") == "Net 15"
+      and sf_inv.get("shippingAddress") == "Warehouse 9, Lahore"
+      and sf_inv.get("poNumber") == "PO-77"
+      and sf_inv.get("transportName") == "Bilal Goods"
+      and sf_inv.get("vehicleNo") == "LEA-1234"
+      and sf_inv.get("deliveryDate") == "2026-11-20"
+      and sf_inv.get("deliveryLocation") == "Karachi"
+      and sf_inv.get("repeatFreq") == "monthly"
+      and sf_inv.get("termsId") == sf_term_id,
+      json.dumps(sf_inv)[:240])
 
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))

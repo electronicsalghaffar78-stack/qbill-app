@@ -332,7 +332,6 @@ button.row:hover { border-color: #c3ccd6; background: #fbfcfe; }
 .sale-line .sl-sub {
   grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px;
 }
-.sale-line .sl-sub input, .sale-line .sl-sub select { width: auto; flex: 1; min-width: 110px; margin-top: 0; font-size: 13.5px; padding: 7px 9px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
 .swatch {
   width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff;
@@ -410,6 +409,14 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
 .panel-back { margin-bottom: 8px; padding-left: 0; }
 .btn-outline { background: #fff; border: 1px solid #b6c2d2; color: var(--navy); letter-spacing: .02em; }
 .btn-outline:hover { background: #f2f6fb; border-color: var(--blue); color: var(--blue); }
+
+/* Doc-form collapsibles (2026-11-10.17): "More Details" and
+   "ADD TERMS AND CONDITIONS" are tappable rows in the same outline
+   style as ADD DESCRIPTION; their fields stay hidden until tapped. */
+.doc-collapse-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 0 0 10px; font-weight: 600; text-align: left; }
+.doc-collapse-toggle .dc-caret { font-weight: 400; }
+#docMoreBody { margin-bottom: 4px; }
+#docTermsBody { margin-bottom: 4px; }
 
 /* Business identity: the account's own logo in header + sidebar. */
 .head-brand { display: flex; align-items: center; gap: 8px; cursor: pointer; }

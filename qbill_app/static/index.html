@@ -552,7 +552,8 @@
           </div>
         </div>
         <div class="card" style="box-shadow:none; margin:10px 0">
-          <h3 style="margin-top:0">More Details</h3>
+          <button id="btnDocMore" class="btn btn-outline doc-collapse-toggle" type="button" aria-expanded="false" aria-controls="docMoreBody"><span>More Details</span><span class="dc-caret">▾</span></button>
+          <div id="docMoreBody" class="hidden">
           <div class="grid2">
             <label id="docShippingWrap">Shipping Address <textarea id="docShipping" rows="2"></textarea></label>
             <label id="docDueWrap">Due Date <input id="docDueDate" type="date"></label>
@@ -568,8 +569,11 @@
             <label>Delivery Date <input id="docDeliveryDate" type="date"></label>
             <label>Delivery Location <input id="docDeliveryLoc" type="text"></label>
           </div>
-          <h3>ADD TERMS AND CONDITIONS</h3>
+          </div>
+          <button id="btnDocTerms" class="btn btn-outline doc-collapse-toggle" type="button" aria-expanded="false" aria-controls="docTermsBody"><span>ADD TERMS AND CONDITIONS</span><span class="dc-caret">▾</span></button>
+          <div id="docTermsBody" class="hidden">
           <div id="docTermsPicker" class="list"></div>
+          </div>
           <div id="docLoyaltyBlock" class="hidden">
             <h3>Loyalty Points</h3>
             <p class="note" id="docLoyaltyInfo"></p>
