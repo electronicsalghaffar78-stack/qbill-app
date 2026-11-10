@@ -298,54 +298,78 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
     pdf.line(left, y, right, y)
     y -= 18
 
-    # Item Table Customization (Settings > PRINT): chosen columns only.
-    columns = settings.get("print_item_columns") or [
-        "item", "qty", "unit", "price", "discount", "tax", "amount"]
-    col_defs = {
-        "item": ("Item", 0.34, "left"),
-        "qty": ("Qty", 0.07, "right"),
-        "unit": ("Unit", 0.07, "left"),
-        "price": ("Rate", 0.11, "right"),
-        "discount": ("Discount", 0.10, "right"),
-        "tax": ("Tax", 0.10, "right"),
-        "amount": ("Amount", 0.13, "right"),
-        "batch": ("Batch No.", 0.10, "left"),
-        "serial": ("Serial No.", 0.10, "left"),
-        "mrp": ("MRP", 0.09, "right"),
-        "exp": ("Exp Date", 0.09, "left"),
-    }
+    # Item table — FIXED columns (round-3 fix, 2026-11-10). The old
+    # Settings-driven picker stored print_item_columns as a boolean
+    # dict ({qty: true, batch: false, ...}) which this renderer then
+    # iterated as a column LIST: every dict key it recognised printed —
+    # including unchecked Batch/Serial/MRP/Exp columns — while Item,
+    # Price and Amount, not being picker options at all, vanished from
+    # real bills (Qudoos's S-1 showed only the qty "2"). The printed
+    # table is now always the columns a customer reads, and the
+    # batch/serial/MRP/exp columns are gone from the PDF entirely (the
+    # bill form no longer collects them):
+    # # | Item | Qty | Unit | Price/Unit | Discount | Tax | Amount.
+    col_defs = [
+        ("num", "#", 0.05, "right"),
+        ("item", "Item", 0.31, "left"),
+        ("qty", "Qty", 0.08, "right"),
+        ("unit", "Unit", 0.08, "left"),
+        ("price", "Price/Unit", 0.13, "right"),
+        ("discount", "Discount", 0.10, "right"),
+        ("tax", "Tax", 0.10, "right"),
+        ("amount", "Amount", 0.15, "right"),
+    ]
+    col_align = {c[0]: c[3] for c in col_defs}
     table_w = right - left
-    total_frac = sum(col_defs[c][1] for c in columns if c in col_defs) or 1
     xs = {}
     x = left
-    for col in columns:
-        if col not in col_defs:
-            continue
-        w = table_w * col_defs[col][1] / total_frac
-        xs[col] = (x, x + w)
+    for key, _label, frac, _align in col_defs:
+        w = table_w * frac
+        xs[key] = (x, x + w)
         x += w
 
-    def draw_cell(col, text, bold=False, size=10):
+    def draw_cell(col, text, bold=False, size=10, dy=0):
         x0, x1 = xs[col]
         pdf.setFont("Helvetica-Bold" if bold else "Helvetica", size)
-        if col_defs[col][2] == "right":
-            pdf.drawRightString(x1 - 2, y, str(text))
+        if col_align[col] == "right":
+            pdf.drawRightString(x1 - 2, y + dy, str(text))
         else:
-            pdf.drawString(x0 + 2, y, str(text))
+            pdf.drawString(x0 + 2, y + dy, str(text))
 
-    for col in columns:
-        if col in col_defs:
-            draw_cell(col, col_defs[col][0], bold=True)
+    def wrap_item_name(text):
+        """Word-wrap an item name inside its column: long names print
+        in full on extra lines instead of overflowing the row."""
+        max_w = xs["item"][1] - xs["item"][0] - 4
+        words = str(text).split()
+        if not words:
+            return [""]
+        lines, cur = [], ""
+        for word in words:
+            trial = (cur + " " + word).strip()
+            if pdf.stringWidth(trial, "Helvetica", 9) <= max_w or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        if cur:
+            lines.append(cur)
+        return lines
+
+    for key, label, _frac, _align in col_defs:
+        draw_cell(key, label, bold=True)
     y -= 6
     pdf.line(left, y, right, y)
     y -= 16
-    for line in invoice["lines"]:
-        if y < 170:
+    for row_no, line in enumerate(invoice["lines"], start=1):
+        item = item_map.get(line.get("itemId")) or {}
+        name = str(line["description"] or item.get("name") or "")
+        name_lines = wrap_item_name(name)
+        row_h = max(15, 11 * len(name_lines) + 4)
+        if y - row_h < 170:
             pdf.showPage()
             y = height - 50
-        item = item_map.get(line.get("itemId")) or {}
         values = {
-            "item": str(line["description"])[:46],
+            "num": str(row_no),
             "qty": _qty_text(line),
             "unit": item.get("unit") or "",
             "price": fmt(line["ratePaisa"]),
@@ -353,15 +377,12 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
             "tax": fmt(line.get("taxPaisa") or 0) if line.get("taxPaisa") else "",
             "amount": fmt(line["amountPaisa"] - (line.get("discountPaisa") or 0)
                           + (line.get("taxPaisa") or 0)),
-            "batch": line.get("batchNo") or "",
-            "serial": line.get("serialNo") or "",
-            "mrp": fmt(item.get("mrpPaisa") or 0) if item.get("mrpPaisa") else "",
-            "exp": line.get("expDate") or "",
         }
-        for col in columns:
-            if col in values:
-                draw_cell(col, values[col], size=9 if col == "item" else 10)
-        y -= 15
+        for col, val in values.items():
+            draw_cell(col, val)
+        for j, part in enumerate(name_lines):
+            draw_cell("item", part, size=9, dy=-(11 * j))
+        y -= row_h
     y -= 4
     pdf.line(left, y, right, y)
     y -= 18
@@ -630,13 +651,13 @@ def invoice_pdf(invoice_id):
         for line in invoice["lines"]:
             if line.get("itemId") is not None and line["itemId"] not in item_map:
                 item = tx.query_one(
-                    "SELECT unit, mrp_paisa FROM items WHERE id = ?",
+                    "SELECT name, unit FROM items WHERE id = ?",
                     (line["itemId"],),
                 )
                 if item:
                     item_map[line["itemId"]] = {
+                        "name": item.get("name") or "",
                         "unit": item.get("unit") or "",
-                        "mrpPaisa": item.get("mrp_paisa") or 0,
                     }
         bank = tx.query_one(
             "SELECT * FROM bank_accounts WHERE business_id = ? "

@@ -356,15 +356,19 @@ check(
     dash.get("todaySalesPaisa") == 650000 and dash.get("monthSalesPaisa") == 650000
     and dash.get("totalReceivablePaisa") == 450000
     and dash.get("cashInHandPaisa") == 120000
-    and dash.get("stockValuePaisa") == 13980000,
+    and dash.get("stockValuePaisa") == 13980000
+    and dash.get("monthProfitPaisa") == 180000
+    and dash.get("monthExpensesPaisa") == 50000,
     json.dumps(dash),
 )
 r = client.get("/api/pnl", headers=H(user_token))
 pnl = r.get_json().get("pnl", {})
 check(
-    "P&L exact (650000 - 400000 - 50000 = 200000)",
+    "P&L exact (margin: sales 650000 - COGS 420000 - expenses 50000 = 180000; "
+    "purchases 400000 reported, not subtracted)",
     pnl.get("salesPaisa") == 650000 and pnl.get("purchasesPaisa") == 400000
-    and pnl.get("expensesPaisa") == 50000 and pnl.get("profitPaisa") == 200000,
+    and pnl.get("cogsPaisa") == 420000
+    and pnl.get("expensesPaisa") == 50000 and pnl.get("profitPaisa") == 180000,
     json.dumps(pnl),
 )
 
@@ -1841,12 +1845,12 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar7/v16 (type-to-search build)",
+    "version/cache moved to vyapar8/v17 (round-3 build)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-10.18-vyapar7"
-    and "qbill-shell-v16" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-10.19-vyapar8"
+    and "qbill-shell-v17" in client.get("/sw.js").get_data(as_text=True),
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -2495,6 +2499,94 @@ check("typetosearch: a free-text line (no item id) saves and reloads "
       ft_line.get("description") == "Hand Typed Gadget"
       and ft_line.get("itemId") is None and ft_line.get("qty") == 3,
       json.dumps(ft_inv)[:240])
+
+# ---------------- 12p. round-3: Home numbers agree + PDF item table -----
+# Qudoos's phone check of .18 (2026-11-10): Home showed PROFIT (THIS
+# MONTH) Rs 800 beside TODAY'S SALES Rs 0.00, and his printed bill S-1
+# carried no item name, price or amount — only the qty. Fresh account,
+# controlled data: item purchase price Rs 40 with opening stock 10;
+# one cash sale TODAY, 2 x Rs 50 -> T = 10000, COGS = 8000, M = 2000.
+tok_r3 = _signup_from_ip("round3@example.com", "198.51.100.77", "r3pass")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "round3@example.com"})
+HR3 = H(tok_r3)
+r = client.post("/api/items", headers=HR3, json={
+    "name": "Round3 Widget", "sale_price_paisa": 5000,
+    "purchase_price_paisa": 4000, "stock_qty": 10})
+r3_item = r.get_json()["item"]["id"]
+r = client.post("/api/invoices", headers=HR3, json={
+    "type": "sale", "paid_paisa": 10000,
+    "lines": [{"item_id": r3_item, "qty": 2, "rate_paisa": 5000}]})
+r3_inv = r.get_json().get("invoice", {})
+dash3 = client.get("/api/dashboard", headers=HR3).get_json()["dashboard"]
+series3 = {p["date"]: p["amountPaisa"] for p in dash3["salesSeries"]}
+today3 = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+check(
+    "round3 A: one sale today counts the same everywhere on Home "
+    "(today = month = graph point = 10000)",
+    dash3["todaySalesPaisa"] == 10000 and dash3["monthSalesPaisa"] == 10000
+    and series3.get(today3) == 10000,
+    json.dumps(dash3)[:300],
+)
+pnl3 = client.get("/api/pnl", headers=HR3).get_json()["pnl"]
+check(
+    "round3 A: Home PROFIT is the sale's margin and equals P&L net "
+    "(profit 2000, cogs 8000; figures ride in the dashboard payload)",
+    dash3["monthProfitPaisa"] == 2000 and dash3["monthExpensesPaisa"] == 0
+    and pnl3["profitPaisa"] == 2000 and pnl3["cogsPaisa"] == 8000
+    and pnl3["salesPaisa"] == 10000,
+    "dash_profit={} pnl={}".format(dash3.get("monthProfitPaisa"),
+                                   json.dumps(pnl3)),
+)
+bwp3 = client.get("/api/reports/bill-wise-profit", headers=HR3).get_json()
+check(
+    "round3 A: Bill Wise Profit tells the same story (total 2000)",
+    bwp3.get("totalProfitPaisa") == 2000,
+    json.dumps(bwp3)[:200],
+)
+
+# Defect B: the printed bill always carries the fixed customer columns.
+r = client.post("/api/invoices", headers=HR3, json={
+    "type": "sale", "paid_paisa": 1500,
+    "lines": [{"description": "Freight and handling charges", "qty": 1,
+               "rate_paisa": 1500}]})
+r3_inv2 = r.get_json().get("invoice", {})
+pdf3 = client.get("/api/invoices/{}/pdf".format(r3_inv["id"]),
+                  headers=HR3).get_data()
+txt3 = pdf3.decode("latin-1")
+check(
+    "round3 B: sale PDF prints item name, Price/Unit, rate and amount; "
+    "Batch/Serial/Exp columns are gone",
+    "Round3 Widget" in txt3 and "Price/Unit" in txt3
+    and "Rs 50.00" in txt3 and "Rs 100.00" in txt3
+    and "Batch No" not in txt3 and "Serial No" not in txt3
+    and "Exp Date" not in txt3,
+    txt3[:400],
+)
+pdf3b = client.get("/api/invoices/{}/pdf".format(r3_inv2["id"]),
+                   headers=HR3).get_data()
+txt3b = pdf3b.decode("latin-1")
+check(
+    "round3 B: a free-text line prints its typed name and amount",
+    "Freight and handling charges" in txt3b and "Rs 15.00" in txt3b,
+    txt3b[:300],
+)
+r = client.post("/api/items", headers=HR3, json={
+    "name": "Super Deluxe Refrigerator Double Door Frost Free 260 Litre",
+    "sale_price_paisa": 700, "purchase_price_paisa": 500, "stock_qty": 3})
+r3_long = r.get_json()["item"]["id"]
+r = client.post("/api/invoices", headers=HR3, json={
+    "type": "sale", "paid_paisa": 700,
+    "lines": [{"item_id": r3_long, "qty": 1, "rate_paisa": 700}]})
+r3_inv3 = r.get_json().get("invoice", {})
+pdf3c = client.get("/api/invoices/{}/pdf".format(r3_inv3["id"]),
+                   headers=HR3).get_data()
+txt3c = pdf3c.decode("latin-1")
+check(
+    "round3 B: a long item name wraps and prints in FULL (tail visible)",
+    "Super Deluxe Refrigerator" in txt3c and "260 Litre" in txt3c,
+    txt3c[:300],
+)
 
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))

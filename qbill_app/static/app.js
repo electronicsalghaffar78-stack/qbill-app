@@ -951,10 +951,12 @@ function loadDashboard() {
     }).join("") : '<p class="empty">No stock is expiring soon.</p>';
     renderSaleGraph();
     applyWidgets();
-  }).catch(function () {});
-  apiGet("/api/pnl", "pnl").then(function (r) {
-    $("dProfit").textContent = fmtRs(r.body.pnl.profitPaisa);
-    $("dExpenses").textContent = fmtRs(r.body.pnl.expensesPaisa);
+    /* PROFIT / EXPENSES (THIS MONTH) come from the SAME dashboard
+       payload as every other Home figure (round-3 fix): a separate
+       /api/pnl fetch let live profit render beside a stale cached
+       all-zero dashboard, so the screen disagreed with itself. */
+    $("dProfit").textContent = fmtRs(d.monthProfitPaisa || 0);
+    $("dExpenses").textContent = fmtRs(d.monthExpensesPaisa || 0);
   }).catch(function () {});
   apiGet("/api/parties", "parties").then(function (r) {
     var pay = 0;
@@ -3249,6 +3251,7 @@ function loadPnl() {
     var p = r.body.pnl;
     $("pnlSales").textContent = fmtRs(p.salesPaisa);
     $("pnlPurchases").textContent = fmtRs(p.purchasesPaisa);
+    if ($("pnlCogs")) $("pnlCogs").textContent = fmtRs(p.cogsPaisa || 0);
     $("pnlOtherIncome").textContent = fmtRs(p.otherIncomePaisa || 0);
     $("pnlExpenses").textContent = fmtRs(p.expensesPaisa);
     $("pnlProfit").textContent = fmtRs(p.profitPaisa);
@@ -3917,8 +3920,7 @@ $("btnItemTableCustom").addEventListener("click", function () {
   var s = QB.settings || {};
   var cols = s.print_item_columns || {};
   var labels = { qty: "Quantity", free_qty: "Free Quantity",
-    batch: "Batch No.", exp: "Expiry Date", mfg: "Mfg Date", serial: "Serial No./IMEI",
-    mrp: "MRP", discount: "Discount", tax: "Tax" };
+    discount: "Discount", tax: "Tax" };
   var html = "<p>Choose the columns printed in the bill's item table.</p>" +
     Object.keys(labels).map(function (k) {
       return '<label class="check-row"><input type="checkbox" data-col="' + k + '"' +

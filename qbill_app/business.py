@@ -202,9 +202,18 @@ def compute_dashboard(tx, business_id):
         else:
             open_cheques["paidCount"] = r["c"]
             open_cheques["paidPaisa"] = r["s"]
+    # Home's PROFIT / EXPENSES (THIS MONTH) cards ride in THIS payload
+    # (round-3 fix): they used to come from a second /api/pnl fetch, so
+    # on a slow connection a stale cached dashboard (all zeros from the
+    # empty account) rendered beside live P&L numbers and the screen
+    # disagreed with itself. One fetch = one consistent snapshot; the
+    # figures come from compute_pnl over the same month window.
+    month_pnl = compute_pnl(tx, business_id, month + "-01", today)
     return {
         "todaySalesPaisa": today_sales,
         "monthSalesPaisa": month_sales,
+        "monthExpensesPaisa": month_pnl["expensesPaisa"],
+        "monthProfitPaisa": month_pnl["profitPaisa"],
         "totalReceivablePaisa": receivable,
         "cashInHandPaisa": cash_in - cash_out - expenses,
         "stockValuePaisa": stock_value,
@@ -231,6 +240,26 @@ def compute_dashboard(tx, business_id):
     }
 
 
+def _sales_cogs(tx, business_id, date_from, date_to):
+    """Cost of the goods actually sold in the window: for every line of
+    every sale invoice, (qty + free qty) x the item's purchase price —
+    the same cost rule as the Bill Wise Profit report, so every profit
+    figure in the app tells the same story. Free-text lines and lines
+    whose item is gone cost 0."""
+    return tx.query_one(
+        "SELECT COALESCE(SUM((l.qty + COALESCE(l.free_qty, 0)) * "
+        "COALESCE(i.purchase_price_paisa, 0)), 0) AS s "
+        "FROM invoice_lines l "
+        "JOIN invoices inv ON inv.id = l.invoice_id "
+        "LEFT JOIN items i ON i.id = l.item_id "
+        "WHERE inv.business_id = ? AND inv.type = 'sale' "
+        "AND inv.deleted_at IS NULL "
+        "AND substr(inv.created_at, 1, 10) >= ? "
+        "AND substr(inv.created_at, 1, 10) <= ?",
+        (business_id, date_from, date_to),
+    )["s"]
+
+
 def compute_pnl(tx, business_id, date_from, date_to):
     sales = tx.query_one(
         "SELECT COALESCE(SUM(total_paisa), 0) AS s FROM invoices "
@@ -238,6 +267,7 @@ def compute_pnl(tx, business_id, date_from, date_to):
         "AND substr(created_at, 1, 10) >= ? AND substr(created_at, 1, 10) <= ?",
         (business_id, date_from, date_to),
     )["s"]
+    cogs = _sales_cogs(tx, business_id, date_from, date_to)
     purchases = tx.query_one(
         "SELECT COALESCE(SUM(total_paisa), 0) AS s FROM invoices "
         "WHERE business_id = ? AND type = 'purchase' AND deleted_at IS NULL "
@@ -261,9 +291,16 @@ def compute_pnl(tx, business_id, date_from, date_to):
         "to": date_to,
         "salesPaisa": sales,
         "purchasesPaisa": purchases,
+        "cogsPaisa": cogs,
         "expensesPaisa": expenses,
         "otherIncomePaisa": other_income,
-        "profitPaisa": sales - purchases - expenses + other_income,
+        # Profit is the MARGIN story (round-3 fix, 2026-11-10): what the
+        # sales earned above the cost of the goods sold, minus expenses,
+        # plus other income. Purchases of stock still on the shelf are
+        # NOT an expense here — they enter profit only when sold, via
+        # COGS. (The old formula subtracted ALL purchases in the window,
+        # so Home's PROFIT never matched the sales beside it.)
+        "profitPaisa": sales - cogs - expenses + other_income,
     }
 
 
