@@ -1583,6 +1583,213 @@ check("v2 frontend: graph, widgets, store, preview and print settings markup ser
       and 'data-setcard="print"' in html and 'id="screen-accounting"' in html
       and 'id="screen-utilities"' in html and 'id="screen-grow"' in html)
 
+# ------------------------------------- 12i. delta build #2 (Vyapar v3) --
+# Party credit limit + opening date round-trip.
+r = client.post("/api/parties", headers=UH, json={
+    "name": "Delta Credit Party", "opening_balance_paisa": 1000,
+    "opening_date": "2026-11-01", "credit_limit_type": "custom",
+    "credit_limit_paisa": 250000})
+dp = (r.get_json() or {}).get("party") or {}
+check("delta: party stores credit limit + opening date",
+      r.status_code == 201 and dp.get("creditLimitType") == "custom"
+      and dp.get("creditLimitPaisa") == 250000
+      and dp.get("openingDate") == "2026-11-01", json.dumps(dp))
+r = client.put("/api/parties/{}".format(dp["id"]), headers=UH, json={
+    "credit_limit_type": "none", "credit_limit_paisa": 999})
+dp2 = (r.get_json() or {}).get("party") or {}
+check("delta: switching credit limit to No Limit zeroes the amount",
+      dp2.get("creditLimitType") == "none" and dp2.get("creditLimitPaisa") == 0,
+      json.dumps(dp2))
+
+# Business profile: new fields + signature text reaches the PDF.
+r = client.put("/api/business", headers=UH, json={
+    "business_type": "Retail", "business_category": "Electronics",
+    "pincode": "77150", "state": "Sindh",
+    "signature_text": "For Delta Signature Co"})
+prof = (client.get("/api/business", headers=UH).get_json() or {}).get("business") or {}
+check("delta: business profile stores type/category/pincode/state/signature",
+      prof.get("businessType") == "Retail"
+      and prof.get("businessCategory") == "Electronics"
+      and prof.get("pincode") == "77150" and prof.get("state") == "Sindh"
+      and prof.get("signatureText") == "For Delta Signature Co", json.dumps(prof))
+
+# Item: amount-type sale discount + minimum wholesale qty round-trip.
+r = client.post("/api/items", headers=UH, json={
+    "name": "Delta Widget", "sale_price_paisa": 10000, "stock_qty": 100,
+    "discount_type": "amount", "discount_amount_paisa": 250,
+    "min_wholesale_qty": 12})
+ditem = (r.get_json() or {}).get("item") or {}
+check("delta: item stores amount discount + min wholesale qty",
+      r.status_code == 201 and ditem.get("discountType") == "amount"
+      and ditem.get("discountAmountPaisa") == 250
+      and ditem.get("minWholesaleQty") == 12, json.dumps(ditem))
+
+# Split payments: cash + bank rows become real linked payments; the
+# bank balance moves; editing replaces them and reverses the bank row.
+r = client.post("/api/bank-accounts", headers=UH, json={
+    "display_name": "Delta Bank", "opening_balance_paisa": 0})
+dbank = (r.get_json() or {}).get("bankAccount") or {}
+r = client.post("/api/invoices", headers=UH, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": ditem["id"], "qty": 2, "rate_paisa": 10000}],
+    "payments": [{"mode": "cash", "amount_paisa": 5000},
+                 {"mode": "bank", "bank_account_id": dbank["id"],
+                  "amount_paisa": 15000, "reference_no": "TRX-D1"}]})
+sinv = (r.get_json() or {}).get("invoice") or {}
+bank_now = (client.get("/api/bank-accounts", headers=UH).get_json() or {}).get("bankAccounts") or []
+bank_bal = [a["balancePaisa"] for a in bank_now if a["id"] == dbank["id"]]
+check("delta: split payments save as linked rows and move the bank balance",
+      r.status_code == 201 and sinv.get("paidPaisa") == 20000
+      and sinv.get("balancePaisa") == 0 and len(sinv.get("payments") or []) == 2
+      and bank_bal == [15000], json.dumps({"inv": sinv, "bank": bank_bal}))
+pdf_bytes = client.get("/api/invoices/{}/pdf".format(sinv["id"]), headers=UH).get_data()
+check("delta: profile signature text prints on the invoice PDF",
+      b"For Delta Signature Co" in pdf_bytes)
+r = client.put("/api/invoices/{}".format(sinv["id"]), headers=UH, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": ditem["id"], "qty": 2, "rate_paisa": 10000}],
+    "payments": [{"mode": "cheque", "amount_paisa": 20000, "cheque_no": "CHQ-D1"}]})
+sinv2 = (r.get_json() or {}).get("invoice") or {}
+bank_now = (client.get("/api/bank-accounts", headers=UH).get_json() or {}).get("bankAccounts") or []
+bank_bal = [a["balancePaisa"] for a in bank_now if a["id"] == dbank["id"]]
+chq = client.get("/api/cheque-payments", headers=UH).get_json() or {}
+dash = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard") or {}
+check("delta: editing split payments replaces rows, reverses bank, feeds cheques page + Home card",
+      r.status_code == 200 and len(sinv2.get("payments") or []) == 1
+      and (sinv2["payments"][0]).get("mode") == "cheque"
+      and bank_bal == [0]
+      and any(c["refNo"] == "CHQ-D1" and c["amountPaisa"] == 20000
+              for c in chq.get("received", []))
+      and (dash.get("openCheques") or {}).get("receivedCount", 0) >= 1,
+      json.dumps({"inv": sinv2, "bank": bank_bal, "chq": chq}))
+
+# Cash adjustment: moves Cash in Hand and lands in the Day Book.
+before = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard", {}).get("cashInHandPaisa", 0)
+r = client.post("/api/cash-adjustments", headers=UH, json={
+    "direction": "in", "amount_paisa": 7000, "description": "Owner top-up",
+    "client_ref": "test-adj-1"})
+r2 = client.post("/api/cash-adjustments", headers=UH, json={
+    "direction": "in", "amount_paisa": 7000, "description": "Owner top-up",
+    "client_ref": "test-adj-1"})
+after = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard", {}).get("cashInHandPaisa", 0)
+daybook = client.get("/api/reports/day-book", headers=UH).get_json() or {}
+check("delta: cash adjustment moves Cash in Hand once (idempotent) and shows in Day Book",
+      r.status_code == 201 and r2.status_code == 200 and after == before + 7000
+      and any("Cash Adjustment" in (e.get("description") or "")
+              for e in daybook.get("entries", [])),
+      json.dumps({"before": before, "after": after}))
+
+# Bank transfers: all four actions move real balances.
+r = client.post("/api/bank-accounts", headers=UH, json={
+    "display_name": "Delta Bank 2", "opening_balance_paisa": 0})
+dbank2 = (r.get_json() or {}).get("bankAccount") or {}
+def _bal(aid):
+    rows = (client.get("/api/bank-accounts", headers=UH).get_json() or {}).get("bankAccounts") or []
+    return [a["balancePaisa"] for a in rows if a["id"] == aid][0]
+client.post("/api/bank-accounts/{}/transfer".format(dbank["id"]), headers=UH,
+            json={"kind": "cash_to_bank", "amount_paisa": 40000, "client_ref": "t-ctb"})
+client.post("/api/bank-accounts/{}/transfer".format(dbank["id"]), headers=UH,
+            json={"kind": "bank_to_bank", "amount_paisa": 15000,
+                  "to_account_id": dbank2["id"], "client_ref": "t-btb"})
+cash_before = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard", {}).get("cashInHandPaisa", 0)
+client.post("/api/bank-accounts/{}/transfer".format(dbank["id"]), headers=UH,
+            json={"kind": "bank_to_cash", "amount_paisa": 5000, "client_ref": "t-btc"})
+cash_after = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard", {}).get("cashInHandPaisa", 0)
+client.post("/api/bank-accounts/{}/transfer".format(dbank2["id"]), headers=UH,
+            json={"kind": "adjust", "adjust_to_paisa": 21000, "client_ref": "t-adj"})
+check("delta: bank transfers (cash->bank, bank->bank, bank->cash, adjust) move real balances",
+      _bal(dbank["id"]) == 20000 and _bal(dbank2["id"]) == 21000
+      and cash_after == cash_before + 5000,
+      json.dumps({"b1": _bal(dbank["id"]), "b2": _bal(dbank2["id"])}))
+
+# Home: purchase card data + expenses series.
+r = client.post("/api/parties", headers=UH, json={"name": "Delta Big Supplier"})
+dsup = (r.get_json() or {}).get("party") or {}
+client.post("/api/invoices", headers=UH, json={
+    "type": "purchase", "party_id": dsup["id"],
+    "lines": [{"item_id": ditem["id"], "qty": 1, "rate_paisa": 99999900}]})
+dash = (client.get("/api/dashboard", headers=UH).get_json() or {}).get("dashboard") or {}
+check("delta: dashboard carries month purchases, top purchase party, 30-day expense series",
+      dash.get("monthPurchasesPaisa", 0) >= 99999900
+      and (dash.get("topPurchaseParty") or {}).get("name") == "Delta Big Supplier"
+      and len(dash.get("expensesSeries") or []) == 30, json.dumps(dash)[:300])
+
+# Transaction-wise gates: with both OFF, line tax is forced to 0 and
+# the line discount falls back to the item default.
+cur = (client.get("/api/settings", headers=UH).get_json() or {}).get("settings") or {}
+client.put("/api/settings", headers=UH, json={"settings": {
+    "txn_wise_tax": False, "txn_wise_discount": False}})
+r = client.post("/api/items", headers=UH, json={
+    "name": "Delta Gate Item", "sale_price_paisa": 10000, "stock_qty": 10,
+    "discount_bp": 1000})
+gitem = (r.get_json() or {}).get("item") or {}
+r = client.post("/api/invoices", headers=UH, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": gitem["id"], "qty": 1, "rate_paisa": 10000,
+               "discount_paisa": 9999, "tax_paisa": 5000}]})
+ginv = (r.get_json() or {}).get("invoice") or {}
+client.put("/api/settings", headers=UH, json={"settings": {
+    "txn_wise_tax": True, "txn_wise_discount": True}})
+check("delta: txn-wise OFF forces tax 0 and the item-default discount",
+      ginv.get("discountPaisa") == 1000 and ginv.get("taxPaisa") == 0
+      and ginv.get("totalPaisa") == 9000, json.dumps(ginv))
+
+# Payment In prefix + Add Time on Transactions in the PDF.
+prefixes = dict(cur.get("prefixes") or {})
+prefixes["payment_in"] = "RCPT"
+client.put("/api/settings", headers=UH, json={"settings": {
+    "prefixes": prefixes, "txn_add_time": True}})
+r = client.post("/api/payments", headers=UH, json={
+    "party_id": dp["id"], "direction": "in", "amount_paisa": 100})
+pays = (client.get("/api/payments", headers=UH).get_json() or {}).get("payments") or []
+newest = [p for p in pays if p["id"] == (r.get_json() or {}).get("payment", {}).get("id")]
+pdf_bytes = client.get("/api/invoices/{}/pdf".format(sinv["id"]), headers=UH).get_data()
+prefixes["payment_in"] = "PIN"
+client.put("/api/settings", headers=UH, json={"settings": {
+    "prefixes": prefixes, "txn_add_time": False}})
+check("delta: Payment In prefix used on payment refs; bill time prints when enabled",
+      bool(newest) and (newest[0].get("ref") or "").startswith("RCPT-")
+      and re.search(rb"Date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}", pdf_bytes) is not None,
+      json.dumps(newest))
+
+# Reports: item serial, sale orders, sale order items, trial balance options.
+client.post("/api/invoices", headers=UH, json={
+    "type": "sale", "party_id": dp["id"],
+    "lines": [{"item_id": ditem["id"], "qty": 1, "rate_paisa": 10000,
+               "serial_no": "IMEI-D1"}]})
+r = client.post("/api/invoices", headers=UH, json={
+    "type": "sale_order", "party_id": dp["id"],
+    "lines": [{"item_id": ditem["id"], "qty": 3, "rate_paisa": 10000}]})
+so_no = ((r.get_json() or {}).get("invoice") or {}).get("invoiceNo")
+serial = client.get("/api/reports/item-serial", headers=UH).get_json() or {}
+orders = client.get("/api/reports/sale-orders", headers=UH).get_json() or {}
+oitems = client.get("/api/reports/sale-order-items", headers=UH).get_json() or {}
+tb_all = client.get("/api/reports/trial-balance", headers=UH).get_json() or {}
+tb_nozero = client.get("/api/reports/trial-balance?zero=0", headers=UH).get_json() or {}
+tb_work = client.get("/api/reports/trial-balance?working=1", headers=UH).get_json() or {}
+check("delta: item serial + sale order reports return rows",
+      any(x.get("serialNo") == "IMEI-D1" for x in serial.get("rows", []))
+      and any(x.get("invoiceNo") == so_no and x.get("status") == "Open"
+              for x in orders.get("rows", []))
+      and any(x.get("invoiceNo") == so_no and x.get("qty") == 3
+              for x in oitems.get("rows", [])), json.dumps(orders)[:200])
+check("delta: trial balance zero/working options behave and totals stay balanced",
+      any(x.get("debitPaisa") == 0 and x.get("creditPaisa") == 0 for x in tb_all.get("rows", []))
+      and all(not (x.get("debitPaisa") == 0 and x.get("creditPaisa") == 0)
+              for x in tb_nozero.get("rows", []))
+      and tb_nozero.get("totalDebitPaisa") == tb_nozero.get("totalCreditPaisa")
+      and bool(tb_work.get("rows")) and "journalDebitPaisa" in tb_work["rows"][0],
+      json.dumps({"all": len(tb_all.get("rows", [])), "nozero": len(tb_nozero.get("rows", []))}))
+
+# Frontend: POS screen, settings entries and party tabs are served.
+html = client.get("/").get_data(as_text=True)
+js = client.get("/static/app.js").get_data(as_text=True)
+check("delta: POS screen, Adjust Cash, USER MANAGEMENT and Credit & Balance markup served",
+      'id="screen-quick"' in html and "Adjust Cash" in html
+      and "USER MANAGEMENT" in html and "Credit &amp; Balance" in html
+      and "Save &amp; Print Bill" in html and "payment_in" in js
+      and "Show working trial balance" in html)
+
 # ---------------------------------------------------------- 13. logout --
 r = client.post("/api/auth/logout", headers=H(owner_token))
 r = client.get("/api/auth/me", headers=H(owner_token))

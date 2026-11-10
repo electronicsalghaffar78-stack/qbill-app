@@ -122,6 +122,9 @@ def _party_dict(row, balance=None):
         "name": row["name"],
         "phone": row["phone"],
         "openingBalancePaisa": row["opening_balance_paisa"],
+        "openingDate": row.get("opening_date") or "",
+        "creditLimitType": row.get("credit_limit_type") or "none",
+        "creditLimitPaisa": row.get("credit_limit_paisa") or 0,
         # A brand-new party's balance is exactly its opening balance.
         "balancePaisa": row["opening_balance_paisa"] if balance is None else balance,
         "group": row.get("group_name") or "",
@@ -148,18 +151,41 @@ def _item_dict(row):
         "secondaryUnit": row.get("secondary_unit") or "",
         "conversion": row.get("conversion") or 0,
         "wholesalePricePaisa": row.get("wholesale_price_paisa") or 0,
+        "minWholesaleQty": row.get("min_wholesale_qty") or 0,
         "mrpPaisa": row.get("mrp_paisa") or 0,
         "taxBp": row.get("tax_bp") or 0,
         "discountBp": row.get("discount_bp") or 0,
+        "discountType": row.get("discount_type") or "percentage",
+        "discountAmountPaisa": row.get("discount_amount_paisa") or 0,
         "minStock": row.get("min_stock") or 0,
         "location": row.get("location") or "",
         "description": row.get("description") or "",
     }
 
 
+def _payment_row_dict(r):
+    return {
+        "id": r["id"],
+        "partyId": r["party_id"],
+        "invoiceId": r["invoice_id"],
+        "direction": r["direction"],
+        "amountPaisa": r["amount_paisa"],
+        "createdAt": r["created_at"],
+        "mode": r.get("mode") or "cash",
+        "bankAccountId": r.get("bank_account_id"),
+        "chequeNo": r.get("cheque_no") or "",
+        "referenceNo": r.get("reference_no") or "",
+        "note": r.get("note") or "",
+    }
+
+
 def _invoice_dict(tx, row):
     lines = tx.query_all(
         "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY id",
+        (row["id"],),
+    )
+    pay_rows = tx.query_all(
+        "SELECT * FROM payments WHERE invoice_id = ? ORDER BY id",
         (row["id"],),
     )
     return {
@@ -218,10 +244,24 @@ def _invoice_dict(tx, row):
             }
             for line in lines
         ],
+        "payments": [_payment_row_dict(r) for r in pay_rows],
     }
 
 
 # -------------------------------------------------------------- parties ----
+def _credit_limit(data, row=None):
+    """Party Credit & Balance tab: (type, paisa). 'none' = No Limit."""
+    ctype = str(data.get(
+        "credit_limit_type",
+        (row or {}).get("credit_limit_type") or "none") or "none").strip().lower()
+    if ctype not in ("none", "custom"):
+        raise ApiError("Credit limit type must be 'none' or 'custom'.")
+    amount = _int_field(
+        data, "credit_limit_paisa",
+        default=(row or {}).get("credit_limit_paisa") or 0, min_value=0)
+    return ctype, (amount if ctype == "custom" else 0)
+
+
 @bp.post("/parties")
 @require_session
 @require_approved
@@ -233,6 +273,7 @@ def create_party():
         raise ApiError("Party name is required.")
     opening = _int_field(data, "opening_balance_paisa", default=0)
     client_ref = _client_ref(data)
+    cl_type, cl_amount = _credit_limit(data)
     with db.transaction() as tx:
         biz = _business_id(tx)
         if client_ref:
@@ -244,8 +285,9 @@ def create_party():
                 return jsonify(ok=True, party=_party_dict(existing)), 200
         pid = tx.insert(
             "INSERT INTO parties (business_id, name, phone, opening_balance_paisa, client_ref, created_at, "
-            "group_name, status, billing_address, shipping_address, email, extras, loyalty_points) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            "group_name, status, billing_address, shipping_address, email, extras, loyalty_points, "
+            "opening_date, credit_limit_type, credit_limit_paisa) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (biz, name, str(data.get("phone") or "").strip() or None, opening,
              client_ref, now_iso(),
              str(data.get("group") or "").strip(),
@@ -254,7 +296,9 @@ def create_party():
              str(data.get("shipping_address") or "").strip(),
              str(data.get("email") or "").strip(),
              _extras_json(data.get("extras")),
-             _int_field(data, "loyalty_points", default=0, min_value=0)),
+             _int_field(data, "loyalty_points", default=0, min_value=0),
+             str(data.get("opening_date") or "").strip(),
+             cl_type, cl_amount),
         )
         row = tx.query_one("SELECT * FROM parties WHERE id = ?", (pid,))
     return jsonify(ok=True, party=_party_dict(row)), 201
@@ -285,9 +329,12 @@ def update_party(party_id):
         name = str(data.get("name", row["name"]) or "").strip()
         if not name:
             raise ApiError("Party name is required.")
+        cl_type, cl_amount = _credit_limit(data, row)
         tx.execute(
             "UPDATE parties SET name = ?, phone = ?, group_name = ?, status = ?, "
-            "billing_address = ?, shipping_address = ?, email = ?, extras = ? "
+            "billing_address = ?, shipping_address = ?, email = ?, extras = ?, "
+            "opening_balance_paisa = ?, opening_date = ?, "
+            "credit_limit_type = ?, credit_limit_paisa = ? "
             "WHERE id = ?",
             (
                 name,
@@ -298,6 +345,10 @@ def update_party(party_id):
                 str(data.get("shipping_address", row.get("shipping_address") or "") or "").strip(),
                 str(data.get("email", row.get("email") or "") or "").strip(),
                 _extras_json(data["extras"]) if "extras" in data else (row.get("extras") or "{}"),
+                _int_field(data, "opening_balance_paisa",
+                           default=row["opening_balance_paisa"]),
+                str(data.get("opening_date", row.get("opening_date") or "") or "").strip(),
+                cl_type, cl_amount,
                 party_id,
             ),
         )
@@ -355,8 +406,9 @@ def create_item():
             "INSERT INTO items (business_id, name, sale_price_paisa, purchase_price_paisa, "
             "stock_qty, client_ref, created_at, item_type, item_code, category, unit, "
             "secondary_unit, conversion, wholesale_price_paisa, mrp_paisa, tax_bp, "
-            "discount_bp, min_stock, location, description) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            "discount_bp, min_stock, location, description, min_wholesale_qty, "
+            "discount_type, discount_amount_paisa) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (biz, name, sale, purchase, stock, client_ref, now_iso(),
              str(data.get("item_type") or "product").strip() or "product",
              str(data.get("item_code") or "").strip(),
@@ -370,7 +422,10 @@ def create_item():
              _int_field(data, "discount_bp", default=0, min_value=0),
              _int_field(data, "min_stock", default=0, min_value=0),
              str(data.get("location") or "").strip(),
-             str(data.get("description") or "").strip()),
+             str(data.get("description") or "").strip(),
+             _int_field(data, "min_wholesale_qty", default=0, min_value=0),
+             _discount_type(data),
+             _int_field(data, "discount_amount_paisa", default=0, min_value=0)),
         )
         for b in batches:
             if isinstance(b, dict) and (b.get("batch_no") or b.get("qty")):
@@ -385,6 +440,16 @@ def create_item():
         _sync_main_godown(tx, biz, iid)
         row = tx.query_one("SELECT * FROM items WHERE id = ?", (iid,))
     return jsonify(ok=True, item=_item_dict(row)), 201
+
+
+def _discount_type(data, row=None):
+    """Item 'Disc. On Sale Price' basis: a percentage or a flat amount."""
+    value = str(data.get(
+        "discount_type", (row or {}).get("discount_type") or "percentage"
+    ) or "percentage").strip().lower()
+    if value not in ("percentage", "amount"):
+        raise ApiError("Discount type must be 'percentage' or 'amount'.")
+    return value
 
 
 def _num_field(data, name, default=0):
@@ -414,7 +479,9 @@ def update_item(item_id):
             "UPDATE items SET name = ?, sale_price_paisa = ?, purchase_price_paisa = ?, "
             "item_type = ?, item_code = ?, category = ?, unit = ?, secondary_unit = ?, "
             "conversion = ?, wholesale_price_paisa = ?, mrp_paisa = ?, tax_bp = ?, "
-            "discount_bp = ?, min_stock = ?, location = ?, description = ? WHERE id = ?",
+            "discount_bp = ?, min_stock = ?, location = ?, description = ?, "
+            "min_wholesale_qty = ?, discount_type = ?, discount_amount_paisa = ? "
+            "WHERE id = ?",
             (
                 name,
                 _int_field(data, "sale_price_paisa", default=row["sale_price_paisa"], min_value=0),
@@ -432,6 +499,9 @@ def update_item(item_id):
                 _int_field(data, "min_stock", default=row.get("min_stock") or 0, min_value=0),
                 str(data.get("location", row.get("location") or "") or "").strip(),
                 str(data.get("description", row.get("description") or "") or "").strip(),
+                _int_field(data, "min_wholesale_qty", default=row.get("min_wholesale_qty") or 0, min_value=0),
+                _discount_type(data, row),
+                _int_field(data, "discount_amount_paisa", default=row.get("discount_amount_paisa") or 0, min_value=0),
                 item_id,
             ),
         )
@@ -649,23 +719,44 @@ def _pct_of(amount, bp):
     return int(round(amount * bp / 10000.0))
 
 
-def _line_money(raw, qty, rate, settings):
+def _item_default_discount(item, qty, gross):
+    """An item's own 'Disc. On Sale Price' as a paisa amount for a line:
+    the flat amount per unit, or the percentage of the line gross."""
+    if item is None:
+        return 0
+    if (item.get("discount_type") or "percentage") == "amount":
+        return (item.get("discount_amount_paisa") or 0) * qty
+    return _pct_of(gross, item.get("discount_bp") or 0)
+
+
+def _line_money(raw, qty, rate, settings, item=None):
     """Per-line Discount %/Amount and Tax %/Amount (Vyapar columns).
 
     Accepts discount_paisa / tax_paisa directly, or discount_bp /
     tax_bp (percent x 100). Line amount stays qty * rate (gross); the
-    invoice totals fold the line discount/tax in."""
+    invoice totals fold the line discount/tax in.
+
+    Settings > TRANSACTION gates: with "Transaction wise Discount" OFF
+    the caller's per-line discount is ignored and the ITEM's default
+    sale discount applies instead; with "Transaction wise Tax" OFF the
+    line tax is always 0."""
     gross = qty * rate
     discount_bp = raw.get("discount_bp")
     tax_bp = raw.get("tax_bp")
-    discount = _int_field(raw, "discount_paisa", default=0, min_value=0)
-    tax = _int_field(raw, "tax_paisa", default=0, min_value=0)
-    if discount_bp is not None and settings.get("item_wise_discount", True):
-        discount = _pct_of(
-            gross, _int_field(raw, "discount_bp", default=0, min_value=0))
-    if tax_bp is not None and settings.get("item_wise_tax", True):
-        tax = _pct_of(
-            gross - discount, _int_field(raw, "tax_bp", default=0, min_value=0))
+    if settings.get("txn_wise_discount", True):
+        discount = _int_field(raw, "discount_paisa", default=0, min_value=0)
+        if discount_bp is not None and settings.get("item_wise_discount", True):
+            discount = _pct_of(
+                gross, _int_field(raw, "discount_bp", default=0, min_value=0))
+    else:
+        discount = _item_default_discount(item, qty, gross)
+    if settings.get("txn_wise_tax", True):
+        tax = _int_field(raw, "tax_paisa", default=0, min_value=0)
+        if tax_bp is not None and settings.get("item_wise_tax", True):
+            tax = _pct_of(
+                gross - discount, _int_field(raw, "tax_bp", default=0, min_value=0))
+    else:
+        tax = 0
     if not settings.get("tax_enabled", True):
         tax = 0
     return discount, tax, discount_bp, tax_bp
@@ -687,7 +778,16 @@ def _prepare_lines(tx, biz, lines_in, settings):
         rate = _int_field(raw, "rate_paisa", required=True, min_value=0)
         amount = qty * rate  # integer math — exact to the paisa
         subtotal += amount
-        discount, tax, discount_bp, tax_bp = _line_money(raw, qty, rate, settings)
+        item = None
+        if raw.get("item_id") is not None:
+            item = tx.query_one(
+                "SELECT * FROM items WHERE id = ? AND business_id = ?",
+                (raw["item_id"], biz),
+            )
+            if item is None:
+                raise ApiError("Item not found.")
+        discount, tax, discount_bp, tax_bp = _line_money(
+            raw, qty, rate, settings, item=item)
         line_discount += discount
         line_tax += tax
         lines.append(
@@ -768,9 +868,109 @@ def _low_stock_warnings(tx, biz, lines):
     return warnings
 
 
+PAYMENT_MODES = ("cash", "cheque", "bank", "jazzcash", "easypaisa",
+                 "card", "online")
+
+
+def _prepare_payments(tx, biz, data, meta):
+    """Split payments (Vyapar doc-form payment rows): the optional
+    `payments` array on an invoice body. Returns None when the body
+    carries no usable array — the caller then keeps the classic single
+    paid_paisa behaviour exactly. Otherwise returns normalized rows;
+    their amounts sum to the document's paid total."""
+    raw_list = data.get("payments")
+    if not isinstance(raw_list, list) or not raw_list:
+        return None
+    if meta["pay_direction"] is None:
+        raise ApiError("Payments are not taken on this document type.")
+    rows = []
+    for raw in raw_list:
+        if not isinstance(raw, dict):
+            raise ApiError("Each payment row must be an object.")
+        amount = _int_field(raw, "amount_paisa", default=0, min_value=0)
+        if amount == 0:
+            continue
+        mode = str(raw.get("mode") or "cash").strip().lower() or "cash"
+        if mode not in PAYMENT_MODES:
+            raise ApiError(
+                "Payment type must be one of: {}.".format(
+                    ", ".join(PAYMENT_MODES)))
+        bank_account_id = raw.get("bank_account_id")
+        if bank_account_id is not None:
+            account = tx.query_one(
+                "SELECT id FROM bank_accounts WHERE id = ? AND business_id = ?",
+                (bank_account_id, biz),
+            )
+            if account is None:
+                raise ApiError("Bank account not found.")
+        if mode == "bank" and bank_account_id is None:
+            raise ApiError("Choose a bank account for a bank payment row.")
+        rows.append({
+            "mode": mode,
+            "amount_paisa": amount,
+            "bank_account_id": bank_account_id,
+            "cheque_no": str(raw.get("cheque_no") or "").strip(),
+            "reference_no": str(raw.get("reference_no") or "").strip(),
+        })
+    return rows or None
+
+
+def _insert_split_payments(tx, biz, party_id, inv_id, direction, rows,
+                           ref_base, created_at):
+    """One real payment row per split row, note 'at_document' like the
+    classic single payment. A row tied to a bank account also lands in
+    that account's transactions, exactly like a standalone bank
+    payment, and carries the same client_ref so an edit can reverse
+    both sides together."""
+    for index, row in enumerate(rows):
+        ref = "{}:pay{}".format(ref_base, index) if ref_base else None
+        tx.execute(
+            "INSERT INTO payments (business_id, party_id, invoice_id, "
+            "direction, amount_paisa, client_ref, created_at, note, mode, "
+            "bank_account_id, cheque_no, reference_no) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'at_document', ?, ?, ?, ?)",
+            (biz, party_id, inv_id, direction, row["amount_paisa"], ref,
+             created_at, row["mode"], row["bank_account_id"],
+             row["cheque_no"], row["reference_no"]),
+        )
+        if row["bank_account_id"] is not None:
+            tx.execute(
+                "INSERT INTO bank_transactions (business_id, "
+                "bank_account_id, kind, amount_paisa, note, created_at, "
+                "client_ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (biz, row["bank_account_id"],
+                 "deposit" if direction == "in" else "withdraw",
+                 row["amount_paisa"],
+                 "Payment {} — {}".format(
+                     "In" if direction == "in" else "Out", row["mode"]),
+                 created_at, ref),
+            )
+
+
+def _delete_atdoc_payments(tx, biz, invoice_id):
+    """Remove an invoice's at-document payments (edit/delete path),
+    reversing any bank-account transactions they created."""
+    rows = tx.query_all(
+        "SELECT client_ref FROM payments WHERE invoice_id = ? "
+        "AND note = 'at_document'",
+        (invoice_id,),
+    )
+    refs = [r["client_ref"] for r in rows if r["client_ref"]]
+    if refs:
+        tx.execute(
+            "DELETE FROM bank_transactions WHERE business_id = ? "
+            "AND client_ref IN ({})".format(", ".join("?" for _ in refs)),
+            tuple([biz] + refs),
+        )
+    tx.execute(
+        "DELETE FROM payments WHERE invoice_id = ? AND note = 'at_document'",
+        (invoice_id,),
+    )
+
+
 def _insert_document(tx, biz, inv_type, party_id, lines, subtotal,
                      discount, tax, paid, client_ref, settings=None,
-                     extra=None, loyalty_redeemed=0):
+                     extra=None, loyalty_redeemed=0, payments=None):
     """Insert one document + its lines, apply its stock effect and its
     at-document payment (if any). Returns the new invoice row id."""
     settings = settings or {}
@@ -838,7 +1038,11 @@ def _insert_document(tx, biz, inv_type, party_id, lines, subtotal,
                         "UPDATE items SET purchase_price_paisa = ? WHERE id = ?",
                         (line["rate_paisa"], line["item_id"]),
                     )
-    if paid > 0 and meta["pay_direction"]:
+    if meta["pay_direction"] and payments:
+        _insert_split_payments(
+            tx, biz, party_id, inv_id, meta["pay_direction"], payments,
+            client_ref or "inv{}".format(inv_id), now_iso())
+    elif paid > 0 and meta["pay_direction"]:
         tx.execute(
             "INSERT INTO payments (business_id, party_id, invoice_id, direction, "
             "amount_paisa, client_ref, created_at, note) VALUES (?, ?, ?, ?, ?, ?, ?, 'at_document')",
@@ -949,6 +1153,9 @@ def create_invoice():
         lines, subtotal, line_discount, line_tax = _prepare_lines(
             tx, biz, data.get("lines"), settings
         )
+        pay_rows = _prepare_payments(tx, biz, data, DOC_TYPES[inv_type])
+        if pay_rows is not None:
+            paid = sum(r["amount_paisa"] for r in pay_rows)
         discount = discount_in + line_discount
         tax = tax_in + line_tax
         if not settings.get("tax_enabled", True):
@@ -980,7 +1187,7 @@ def create_invoice():
         inv_id = _insert_document(
             tx, biz, inv_type, party_id, lines, subtotal,
             discount, tax, paid, client_ref, settings=settings, extra=extra,
-            loyalty_redeemed=redeemed,
+            loyalty_redeemed=redeemed, payments=pay_rows,
         )
         row = tx.query_one("SELECT * FROM invoices WHERE id = ?", (inv_id,))
         result = _invoice_dict(tx, row)
@@ -1029,10 +1236,7 @@ def update_invoice(invoice_id):
                         _apply_batch(tx, biz, line["item_id"], line["batch_no"],
                                      line.get("exp_date") or "",
                                      -meta["stock"] * units)
-        tx.execute(
-            "DELETE FROM payments WHERE invoice_id = ? AND note = 'at_document'",
-            (invoice_id,),
-        )
+        _delete_atdoc_payments(tx, biz, invoice_id)
         standalone_paid = tx.query_one(
             "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM payments "
             "WHERE invoice_id = ?",
@@ -1049,7 +1253,10 @@ def update_invoice(invoice_id):
         tax = tax_in + line_tax
         if not settings.get("tax_enabled", True):
             tax = 0
-        if "paid_paisa" in data:
+        pay_rows = _prepare_payments(tx, biz, data, meta)
+        if pay_rows is not None:
+            at_doc_paid = sum(r["amount_paisa"] for r in pay_rows)
+        elif "paid_paisa" in data:
             at_doc_paid = _int_field(data, "paid_paisa", default=0, min_value=0)
         else:
             at_doc_paid = max(old_at_doc_paid, 0)
@@ -1097,7 +1304,11 @@ def update_invoice(invoice_id):
              extra["po_number"], extra["description"], extra["terms_id"],
              extra["repeat_freq"], extra["attachment_name"], invoice_id),
         )
-        if at_doc_paid > 0 and meta["pay_direction"]:
+        if pay_rows and meta["pay_direction"]:
+            _insert_split_payments(
+                tx, biz, party_id, invoice_id, meta["pay_direction"],
+                pay_rows, "inv{}".format(invoice_id), row["created_at"])
+        elif at_doc_paid > 0 and meta["pay_direction"]:
             tx.execute(
                 "INSERT INTO payments (business_id, party_id, invoice_id, direction, "
                 "amount_paisa, client_ref, created_at, note) "
@@ -1323,6 +1534,13 @@ def get_invoice(invoice_id):
 
 
 # ------------------------------------------------------------- payments ----
+def payment_ref(settings, payment_id):
+    """Display reference for a payment, e.g. PIN-12 (Settings >
+    TRANSACTION > Transaction Prefixes > Payment In)."""
+    prefix = str((settings.get("prefixes") or {}).get("payment_in") or "").strip()
+    return "{}-{}".format(prefix or "PIN", payment_id)
+
+
 @bp.get("/payments")
 @require_session
 @require_approved
@@ -1330,25 +1548,13 @@ def get_invoice(invoice_id):
 def list_payments():
     with db.transaction() as tx:
         biz = _business_id(tx)
+        settings = _settings(tx, biz)
         rows = tx.query_all(
             "SELECT * FROM payments WHERE business_id = ? ORDER BY id", (biz,)
         )
-    return jsonify(
-        ok=True,
-        payments=[
-            {
-                "id": r["id"],
-                "partyId": r["party_id"],
-                "invoiceId": r["invoice_id"],
-                "direction": r["direction"],
-                "amountPaisa": r["amount_paisa"],
-                "createdAt": r["created_at"],
-                "mode": r.get("mode") or "cash",
-                "bankAccountId": r.get("bank_account_id"),
-                "chequeNo": r.get("cheque_no") or "",
-                "referenceNo": r.get("reference_no") or "",
-                "note": r.get("note") or "",
-            }
-            for r in rows
-        ],
-    )
+    result = []
+    for r in rows:
+        entry = _payment_row_dict(r)
+        entry["ref"] = payment_ref(settings, r["id"])
+        result.append(entry)
+    return jsonify(ok=True, payments=result)

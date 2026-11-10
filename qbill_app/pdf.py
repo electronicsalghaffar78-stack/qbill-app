@@ -226,9 +226,12 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
     y -= 16
     party_label = "Estimate For" if inv_type == "estimate" else "Party"
     pdf.drawString(left, y, "{}: {}".format(party_label, party_name))
-    pdf.drawRightString(
-        right, y, "Date: {}".format((invoice.get("createdAt") or "")[:10])
-    )
+    created = invoice.get("createdAt") or ""
+    date_text = created[:10]
+    if settings.get("txn_add_time") and len(created) >= 16:
+        # Settings > TRANSACTION > Add Time on Transactions.
+        date_text += " " + created[11:16]
+    pdf.drawRightString(right, y, "Date: {}".format(date_text))
     y -= 14
     if settings.get("due_dates_payment_terms", True) and invoice.get("dueDate"):
         pdf.setFont("Helvetica", 9)
@@ -502,7 +505,11 @@ def _render_thermal(business, invoice, party_name, settings, opts):
     y -= 12
     pdf.setFont("Helvetica", 8.5)
     pdf.drawString(left, y, "No: " + invoice["invoiceNo"])
-    pdf.drawRightString(right, y, (invoice.get("createdAt") or "")[:10])
+    created = invoice.get("createdAt") or ""
+    date_text = created[:10]
+    if settings.get("txn_add_time") and len(created) >= 16:
+        date_text += " " + created[11:16]
+    pdf.drawRightString(right, y, date_text)
     y -= 11
     pdf.drawString(left, y, "Party: " + party_name[:34])
     y -= 8
@@ -567,6 +574,11 @@ def invoice_pdf(invoice_id):
         invoice = _invoice_dict(tx, row)
         business = tx.query_one("SELECT * FROM businesses WHERE id = ?", (biz,))
         settings = get_settings(tx, biz)
+        if business.get("signature_text"):
+            # Business Profile > Signature Text wins over the PRINT
+            # setting when the owner has filled it in.
+            settings = dict(settings)
+            settings["signature_text"] = business["signature_text"]
         party_row = None
         party_name = "Cash Sale"
         if row["party_id"] is not None:

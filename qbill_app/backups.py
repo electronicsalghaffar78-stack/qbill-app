@@ -63,6 +63,13 @@ def build_snapshot(tx, business_id, source="server", created_at=None):
             "address": business.get("address"),
             "phone": business.get("phone"),
             "email": business.get("email"),
+            "tax_note": business.get("tax_note"),
+            "terms": business.get("terms"),
+            "business_type": business.get("business_type"),
+            "business_category": business.get("business_category"),
+            "pincode": business.get("pincode"),
+            "state": business.get("state"),
+            "signature_text": business.get("signature_text"),
         },
         "parties": parties,
         "items": items,
@@ -241,16 +248,33 @@ def list_backups():
 
 # --------------------------------------------------------------- restore ---
 _PARTY_COLS = ["id", "business_id", "name", "phone", "opening_balance_paisa",
-               "client_ref", "created_at"]
+               "client_ref", "created_at", "opening_date",
+               "credit_limit_type", "credit_limit_paisa"]
 _ITEM_COLS = ["id", "business_id", "name", "sale_price_paisa",
-              "purchase_price_paisa", "stock_qty", "client_ref", "created_at"]
+              "purchase_price_paisa", "stock_qty", "client_ref", "created_at",
+              "min_wholesale_qty", "discount_type", "discount_amount_paisa"]
+# Snapshots taken before these columns existed restore with these
+# defaults instead of NULLs.
+_COL_DEFAULTS = {
+    "opening_date": "",
+    "credit_limit_type": "none",
+    "credit_limit_paisa": 0,
+    "min_wholesale_qty": 0,
+    "discount_type": "percentage",
+    "discount_amount_paisa": 0,
+    "mode": "cash",
+    "cheque_no": "",
+    "reference_no": "",
+    "note": "",
+}
 _INVOICE_COLS = ["id", "business_id", "party_id", "invoice_no", "type",
                  "subtotal_paisa", "discount_paisa", "tax_paisa", "total_paisa",
                  "paid_paisa", "balance_paisa", "client_ref", "created_at"]
 _LINE_COLS = ["id", "invoice_id", "item_id", "description", "qty",
               "rate_paisa", "amount_paisa"]
 _PAYMENT_COLS = ["id", "business_id", "party_id", "invoice_id", "direction",
-                 "amount_paisa", "client_ref", "created_at"]
+                 "amount_paisa", "client_ref", "created_at", "mode",
+                 "cheque_no", "reference_no", "note"]
 _EXPENSE_COLS = ["id", "business_id", "title", "category", "amount_paisa",
                  "client_ref", "created_at"]
 
@@ -258,7 +282,10 @@ _EXPENSE_COLS = ["id", "business_id", "title", "category", "amount_paisa",
 def _insert_row(tx, table, cols, row, business_id):
     values = []
     for col in cols:
-        values.append(business_id if col == "business_id" else row.get(col))
+        value = business_id if col == "business_id" else row.get(col)
+        if value is None and col in _COL_DEFAULTS:
+            value = _COL_DEFAULTS[col]
+        values.append(value)
     tx.execute(
         "INSERT INTO {} ({}) VALUES ({})".format(
             table, ", ".join(cols), ", ".join("?" for _ in cols)
@@ -305,9 +332,16 @@ def restore_backup(backup_id):
             tx.execute("DELETE FROM {} WHERE business_id = ?".format(table), (biz,))
         profile = snap.get("business") or {}
         tx.execute(
-            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ? WHERE id = ?",
+            "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ?, "
+            "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
+            "pincode = ?, state = ?, signature_text = ? WHERE id = ?",
             (profile.get("name") or "My Business", profile.get("address"),
-             profile.get("phone"), profile.get("email"), biz),
+             profile.get("phone"), profile.get("email"),
+             profile.get("tax_note"), profile.get("terms"),
+             profile.get("business_type") or "",
+             profile.get("business_category") or "",
+             profile.get("pincode") or "", profile.get("state") or "",
+             profile.get("signature_text") or "", biz),
         )
         for party in snap.get("parties", []):
             _insert_row(tx, "parties", _PARTY_COLS, party, biz)

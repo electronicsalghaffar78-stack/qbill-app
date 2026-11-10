@@ -532,6 +532,21 @@ _ADDED_COLUMNS = [
     ("expenses", "expense_item", "TEXT NOT NULL DEFAULT ''"),
     ("expenses", "category_type", "TEXT NOT NULL DEFAULT ''"),
     ("expenses", "tax_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    # ---- Vyapar delta build #2 (2026-11-10.14) columns ----
+    # Party Credit & Balance tab: opening-balance date + credit limit.
+    ("parties", "opening_date", "TEXT NOT NULL DEFAULT ''"),
+    ("parties", "credit_limit_type", "TEXT NOT NULL DEFAULT 'none'"),
+    ("parties", "credit_limit_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    # Item: Disc. On Sale Price as a flat amount + wholesale minimum qty.
+    ("items", "min_wholesale_qty", "INTEGER NOT NULL DEFAULT 0"),
+    ("items", "discount_type", "TEXT NOT NULL DEFAULT 'percentage'"),
+    ("items", "discount_amount_paisa", "INTEGER NOT NULL DEFAULT 0"),
+    # Business profile (Edit Firm): type/category/area + print signature.
+    ("businesses", "business_type", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "business_category", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "pincode", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "state", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "signature_text", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

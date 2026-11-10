@@ -138,6 +138,55 @@ def compute_dashboard(tx, business_id):
             "WHERE bank_account_id = ?",
             (account["id"],),
         )["s"]
+    # Home Purchase card: this month's purchase total + the supplier
+    # with the largest purchase total this month.
+    month_purchases = tx.query_one(
+        "SELECT COALESCE(SUM(total_paisa), 0) AS s FROM invoices "
+        "WHERE business_id = ? AND type = 'purchase' AND deleted_at IS NULL "
+        "AND substr(created_at, 1, 7) = ?",
+        (business_id, month),
+    )["s"]
+    top_purchase = tx.query_one(
+        "SELECT p.name AS name, SUM(i.total_paisa) AS s FROM invoices i "
+        "JOIN parties p ON p.id = i.party_id "
+        "WHERE i.business_id = ? AND i.type = 'purchase' "
+        "AND i.deleted_at IS NULL AND substr(i.created_at, 1, 7) = ? "
+        "GROUP BY i.party_id ORDER BY s DESC LIMIT 1",
+        (business_id, month),
+    )
+    top_purchase_party = (
+        {"name": top_purchase["name"], "amountPaisa": top_purchase["s"]}
+        if top_purchase else None
+    )
+    # Expenses mini chart on Home: daily expense totals, last 30 days.
+    expenses_series = []
+    for back in range(29, -1, -1):
+        day = (now - timedelta(days=back)).strftime("%Y-%m-%d")
+        amount = tx.query_one(
+            "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM expenses "
+            "WHERE business_id = ? AND substr(created_at, 1, 10) = ?",
+            (business_id, day),
+        )["s"]
+        expenses_series.append({"date": day, "amountPaisa": amount})
+    # Home "Open Cheques" card: cheque-mode payments, received vs paid.
+    cheque_rows = tx.query_all(
+        "SELECT direction, COUNT(*) AS c, COALESCE(SUM(amount_paisa), 0) AS s "
+        "FROM payments WHERE business_id = ? AND mode = 'cheque' "
+        "AND (invoice_id IS NULL OR invoice_id IN "
+        "     (SELECT id FROM invoices WHERE deleted_at IS NULL)) "
+        "GROUP BY direction",
+        (business_id,),
+    )
+    open_cheques = {
+        "receivedCount": 0, "receivedPaisa": 0, "paidCount": 0, "paidPaisa": 0,
+    }
+    for r in cheque_rows:
+        if r["direction"] == "in":
+            open_cheques["receivedCount"] = r["c"]
+            open_cheques["receivedPaisa"] = r["s"]
+        else:
+            open_cheques["paidCount"] = r["c"]
+            open_cheques["paidPaisa"] = r["s"]
     return {
         "todaySalesPaisa": today_sales,
         "monthSalesPaisa": month_sales,
@@ -159,6 +208,10 @@ def compute_dashboard(tx, business_id):
         ],
         "lowStockCount": low_stock,
         "bankBalancePaisa": bank_balance,
+        "monthPurchasesPaisa": month_purchases,
+        "topPurchaseParty": top_purchase_party,
+        "expensesSeries": expenses_series,
+        "openCheques": open_cheques,
     }
 
 
@@ -212,6 +265,11 @@ def _profile_dict(row):
         "email": row.get("email") or "",
         "taxNote": row.get("tax_note") or "",
         "terms": row.get("terms") or "",
+        "businessType": row.get("business_type") or "",
+        "businessCategory": row.get("business_category") or "",
+        "pincode": row.get("pincode") or "",
+        "state": row.get("state") or "",
+        "signatureText": row.get("signature_text") or "",
     }
 
 
@@ -239,7 +297,8 @@ def update_business():
         row = _business_row(tx, biz)
         tx.execute(
             "UPDATE businesses SET name = ?, address = ?, phone = ?, email = ?, "
-            "tax_note = ?, terms = ? WHERE id = ?",
+            "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
+            "pincode = ?, state = ?, signature_text = ? WHERE id = ?",
             (
                 name if "name" in data else row["name"],
                 str(data.get("address", row.get("address") or "") or "").strip() or None,
@@ -247,6 +306,11 @@ def update_business():
                 str(data.get("email", row.get("email") or "") or "").strip() or None,
                 str(data.get("tax_note", row.get("tax_note") or "") or "").strip() or None,
                 str(data.get("terms", row.get("terms") or "") or "").strip() or None,
+                str(data.get("business_type", row.get("business_type") or "") or "").strip(),
+                str(data.get("business_category", row.get("business_category") or "") or "").strip(),
+                str(data.get("pincode", row.get("pincode") or "") or "").strip(),
+                str(data.get("state", row.get("state") or "") or "").strip(),
+                str(data.get("signature_text", row.get("signature_text") or "") or "").strip(),
                 biz,
             ),
         )
@@ -737,11 +801,13 @@ def day_book():
             }
         )
     for p in pays:
+        note = p.get("note") or ""
         entries.append(
             {
                 "kind": "payment",
                 "ref": "",
-                "description": "Payment In" if p["direction"] == "in" else "Payment Out",
+                "description": note if note.startswith("Cash Adjustment")
+                else ("Payment In" if p["direction"] == "in" else "Payment Out"),
                 "party": parties.get(p["party_id"]) or "",
                 "amountPaisa": p["amount_paisa"],
                 "createdAt": p["created_at"],

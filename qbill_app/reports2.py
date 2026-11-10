@@ -119,6 +119,94 @@ def all_transactions():
     return jsonify(ok=True, entries=entries)
 
 
+@bp.get("/reports/item-serial")
+@require_session
+@require_approved
+@require_unlocked
+def item_serial_report():
+    """Item Serial Report: one row per bill line that carries a
+    Serial No./IMEI (serial-tracked items)."""
+    date_from, date_to = _range()
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        names = _party_names(tx, biz)
+        items = _item_map(tx, biz)
+        rows = []
+        for inv in _invoices(tx, biz, date_from=date_from, date_to=date_to):
+            lines = tx.query_all(
+                "SELECT * FROM invoice_lines WHERE invoice_id = ? "
+                "AND serial_no != '' ORDER BY id",
+                (inv["id"],),
+            )
+            for line in lines:
+                item = items.get(line["item_id"])
+                rows.append({
+                    "date": inv["created_at"][:10],
+                    "invoiceNo": inv["invoice_no"],
+                    "item": (item or {}).get("name") or line["description"],
+                    "serialNo": line["serial_no"],
+                    "party": names.get(inv["party_id"]) or "Cash Sale",
+                    "qty": line["qty"],
+                })
+    return jsonify(ok=True, rows=rows)
+
+
+@bp.get("/reports/sale-orders")
+@require_session
+@require_approved
+@require_unlocked
+def sale_orders_report():
+    """Sale Orders report: every Sale Order with its status."""
+    date_from, date_to = _range()
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        names = _party_names(tx, biz)
+        rows = [
+            {
+                "date": inv["created_at"][:10],
+                "invoiceNo": inv["invoice_no"],
+                "party": names.get(inv["party_id"]) or "Cash Sale",
+                "amountPaisa": inv["total_paisa"],
+                "status": "Converted" if inv.get("converted_to_id") else "Open",
+            }
+            for inv in _invoices(tx, biz, types=("sale_order",),
+                                 date_from=date_from, date_to=date_to)
+        ]
+    return jsonify(ok=True, rows=rows)
+
+
+@bp.get("/reports/sale-order-items")
+@require_session
+@require_approved
+@require_unlocked
+def sale_order_items_report():
+    """Sale Order Item report: the item lines inside Sale Orders."""
+    date_from, date_to = _range()
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        names = _party_names(tx, biz)
+        items = _item_map(tx, biz)
+        rows = []
+        for inv in _invoices(tx, biz, types=("sale_order",),
+                             date_from=date_from, date_to=date_to):
+            lines = tx.query_all(
+                "SELECT * FROM invoice_lines WHERE invoice_id = ? ORDER BY id",
+                (inv["id"],),
+            )
+            for line in lines:
+                item = items.get(line["item_id"])
+                rows.append({
+                    "date": inv["created_at"][:10],
+                    "invoiceNo": inv["invoice_no"],
+                    "item": (item or {}).get("name") or line["description"],
+                    "party": names.get(inv["party_id"]) or "Cash Sale",
+                    "qty": line["qty"],
+                    "ratePaisa": line["rate_paisa"],
+                    "amountPaisa": line["amount_paisa"],
+                })
+    return jsonify(ok=True, rows=rows)
+
+
 @bp.get("/reports/bill-wise-profit")
 @require_session
 @require_approved
@@ -1030,6 +1118,14 @@ def list_journal():
 @require_approved
 @require_unlocked
 def trial_balance():
+    """Trial Balance with the Vyapar view options:
+    - working=1: the WORKING trial balance — every chart account is
+      listed (including the untouched Owner's Capital seed) and each
+      row also carries its journal-only debit/credit columns.
+    - zero=0: hide accounts whose balance is exactly 0 (the default
+      zero=1 keeps today's full listing)."""
+    working = request.args.get("working") in ("1", "true")
+    show_zero = request.args.get("zero", "1") not in ("0", "false")
     with db.transaction() as tx:
         biz = _business_id(tx)
         _seed_accounts(tx, biz)
@@ -1054,9 +1150,16 @@ def trial_balance():
             else:
                 debit, credit = (0, net) if net >= 0 else (-net, 0)
             if name == "Owner's Capital" and live is None and not (j_debit or j_credit):
-                continue  # plugged below as the balancing figure
-            rows.append({"account": name, "group": group,
-                         "debitPaisa": debit, "creditPaisa": credit})
+                if not working:
+                    continue  # plugged below as the balancing figure
+            if not show_zero and debit == 0 and credit == 0:
+                continue
+            row = {"account": name, "group": group,
+                   "debitPaisa": debit, "creditPaisa": credit}
+            if working:
+                row["journalDebitPaisa"] = j_debit
+                row["journalCreditPaisa"] = j_credit
+            rows.append(row)
             total_debit += debit
             total_credit += credit
         diff = total_debit - total_credit

@@ -385,3 +385,18 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
   .hero-value { font-size: 28px; }
   .pill { font-size: 11px; }
 }
+
+/* Delta build: doc tabs, Quick Billing POS, split payments, report groups */
+.doc-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.doc-tab { display: inline-flex; gap: 4px; align-items: center; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; cursor: pointer; font-weight: 600; font-size: 13px; }
+.doc-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.doc-tab .dt-close { font-weight: 800; padding: 0 2px; }
+.qb-billtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.qb-layout { display: grid; grid-template-columns: 1fr 320px; gap: 14px; align-items: start; }
+@media (max-width: 900px) { .qb-layout { grid-template-columns: 1fr; } }
+.qb-result { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; margin: 4px 0; cursor: pointer; }
+.qb-shortcuts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.qb-grid-input { width: 64px; margin: 0; }
+.pay-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.pay-row select, .pay-row input { margin: 0; width: auto; }
+.rep-group { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: #667085; margin: 12px 0 2px; text-transform: uppercase; flex-basis: 100%; }

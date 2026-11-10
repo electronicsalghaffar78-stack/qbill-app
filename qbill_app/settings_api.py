@@ -27,6 +27,7 @@ DEFAULT_PREFIXES = {
     "sale": "S", "purchase": "P", "sale_return": "SR",
     "purchase_return": "PR", "estimate": "EST", "sale_order": "SO",
     "purchase_order": "PO", "challan": "DC", "proforma": "PI",
+    "payment_in": "PIN",
 }
 
 DEFAULT_SETTINGS = {
@@ -57,6 +58,12 @@ DEFAULT_SETTINGS = {
     "due_dates_payment_terms": True,
     "show_profit_on_sale": False,
     "repeat_invoices": True,
+    # Delta build #2 (Vyapar Settings > TRANSACTION):
+    "txn_add_time": False,          # print the bill time in Invoice Details
+    "txn_cash_sale_default": False,  # bill form opens in Cash mode
+    "txn_wise_tax": True,           # per-line Tax % editable on the bill form
+    "txn_wise_discount": True,      # per-line Disc % editable on the bill form
+    "round_off_mode": "nearest",    # "nearest" | "one" (round up to Rs 1)
     "prefixes": dict(DEFAULT_PREFIXES),
     # ---- Settings > PRINT ----
     "print_theme": "Tally Theme",

@@ -5,6 +5,8 @@ Bank balance = opening balance + deposits - withdrawals, where payments
 recorded against a bank account also land here as transactions (see
 business.create_payment). All money stays integer paisa.
 """
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 
 from . import db
@@ -179,6 +181,119 @@ def bank_transact(account_id):
     return jsonify(ok=True, balancePaisa=balance), 201
 
 
+@bp.post("/bank-accounts/<int:account_id>/transfer")
+@require_session
+@require_approved
+@require_unlocked
+def bank_transfer(account_id):
+    """The Deposit/Withdraw menu (Vyapar Bank Accounts): Bank to Cash
+    Transfer, Cash to Bank Transfer, Bank to Bank Transfer and Adjust
+    Bank Balance. Every action writes real bank_transactions rows; the
+    cash side of the first two is a real cash payment row, so Cash in
+    Hand moves too and both sides show in the Day Book."""
+    data = _body()
+    kind = str(data.get("kind") or "").strip().lower()
+    if kind not in ("bank_to_cash", "cash_to_bank", "bank_to_bank", "adjust"):
+        raise ApiError(
+            "Kind must be bank_to_cash, cash_to_bank, bank_to_bank or adjust.")
+    client_ref = _client_ref(data)
+    note = str(data.get("note") or "").strip()
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        account = tx.query_one(
+            "SELECT * FROM bank_accounts WHERE id = ? AND business_id = ?",
+            (account_id, biz),
+        )
+        if account is None:
+            raise ApiError("Bank account not found.", status=404)
+        if client_ref:
+            done = tx.query_one(
+                "SELECT id FROM bank_transactions WHERE business_id = ? "
+                "AND client_ref IN (?, ?, ?, ?)",
+                (biz, client_ref + ":bank", client_ref + ":adj",
+                 client_ref + ":from", client_ref + ":to"),
+            )
+            if done is not None:
+                return jsonify(
+                    ok=True, balancePaisa=_bank_balance(tx, account)), 200
+
+        def bank_row(acc_id, row_kind, amount, label, suffix):
+            tx.execute(
+                "INSERT INTO bank_transactions (business_id, "
+                "bank_account_id, kind, amount_paisa, note, created_at, "
+                "client_ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (biz, acc_id, row_kind, amount,
+                 note or label, now_iso(),
+                 "{}:{}".format(client_ref, suffix) if client_ref else None),
+            )
+
+        def cash_row(direction, amount, label):
+            tx.execute(
+                "INSERT INTO payments (business_id, party_id, invoice_id, "
+                "direction, amount_paisa, client_ref, created_at, mode, "
+                "note) VALUES (?, NULL, NULL, ?, ?, ?, ?, 'cash', ?)",
+                (biz, direction, amount,
+                 "{}:cash".format(client_ref) if client_ref else None,
+                 now_iso(), note or label),
+            )
+
+        if kind == "adjust":
+            target = _int_field(data, "adjust_to_paisa", required=True,
+                                min_value=0)
+            delta = target - _bank_balance(tx, account)
+            if delta > 0:
+                bank_row(account_id, "deposit", delta,
+                         "Adjust Bank Balance", "adj")
+            elif delta < 0:
+                bank_row(account_id, "withdraw", -delta,
+                         "Adjust Bank Balance", "adj")
+        else:
+            amount = _int_field(data, "amount_paisa", required=True,
+                                min_value=1)
+            if kind == "bank_to_cash":
+                bank_row(account_id, "withdraw", amount,
+                         "Bank to Cash Transfer — {}".format(
+                             account["display_name"]), "bank")
+                cash_row("in", amount,
+                         "Bank to Cash Transfer — {}".format(
+                             account["display_name"]))
+            elif kind == "cash_to_bank":
+                bank_row(account_id, "deposit", amount,
+                         "Cash to Bank Transfer — {}".format(
+                             account["display_name"]), "bank")
+                cash_row("out", amount,
+                         "Cash to Bank Transfer — {}".format(
+                             account["display_name"]))
+            else:  # bank_to_bank
+                to_id = data.get("to_account_id")
+                target_acct = tx.query_one(
+                    "SELECT * FROM bank_accounts WHERE id = ? "
+                    "AND business_id = ?",
+                    (to_id, biz),
+                )
+                if target_acct is None:
+                    raise ApiError("Target bank account not found.")
+                if to_id == account_id:
+                    raise ApiError(
+                        "Source and target bank accounts must be different.")
+                bank_row(account_id, "withdraw", amount,
+                         "Bank to Bank Transfer — to {}".format(
+                             target_acct["display_name"]), "from")
+                bank_row(to_id, "deposit", amount,
+                         "Bank to Bank Transfer — from {}".format(
+                             account["display_name"]), "to")
+        balance = _bank_balance(tx, account)
+        to_balance = None
+        if kind == "bank_to_bank":
+            target_acct = tx.query_one(
+                "SELECT * FROM bank_accounts WHERE id = ?",
+                (data.get("to_account_id"),),
+            )
+            to_balance = _bank_balance(tx, target_acct)
+    return jsonify(
+        ok=True, balancePaisa=balance, toBalancePaisa=to_balance), 201
+
+
 @bp.get("/bank-accounts/<int:account_id>/transactions")
 @require_session
 @require_approved
@@ -281,6 +396,106 @@ def list_cheques():
         )
         names = _party_names(tx, biz)
     return jsonify(ok=True, cheques=[_cheque_dict(r, names) for r in rows])
+
+
+# -------------------------------------------------------- cash adjust ----
+@bp.post("/cash-adjustments")
+@require_session
+@require_approved
+@require_unlocked
+def cash_adjustment():
+    """Cash In Hand > Adjust Cash (Vyapar): an Add Cash / Remove Cash
+    correction recorded as a plain cash payment row with no party and
+    no invoice, so it flows into Cash in Hand, the Day Book and All
+    Transactions like any other cash movement."""
+    data = _body()
+    direction = str(data.get("direction") or "").strip().lower()
+    if direction not in ("in", "out"):
+        raise ApiError("Direction must be 'in' (Add Cash) or 'out' (Remove Cash).")
+    amount = _int_field(data, "amount_paisa", required=True, min_value=1)
+    date = str(data.get("date") or "").strip()
+    if date:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise ApiError("Adjustment Date must be YYYY-MM-DD.")
+        created_at = "{}T12:00:00+00:00".format(date)
+    else:
+        created_at = now_iso()
+    description = str(data.get("description") or "").strip()
+    note = "Cash Adjustment — {}".format(description) if description \
+        else "Cash Adjustment"
+    client_ref = _client_ref(data)
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        if client_ref:
+            existing = tx.query_one(
+                "SELECT * FROM payments WHERE business_id = ? AND client_ref = ?",
+                (biz, client_ref),
+            )
+            if existing is not None:
+                return jsonify(ok=True, payment={
+                    "id": existing["id"],
+                    "direction": existing["direction"],
+                    "amountPaisa": existing["amount_paisa"],
+                    "createdAt": existing["created_at"],
+                    "note": existing.get("note") or "",
+                }), 200
+        pid = tx.insert(
+            "INSERT INTO payments (business_id, party_id, invoice_id, "
+            "direction, amount_paisa, client_ref, created_at, mode, note) "
+            "VALUES (?, NULL, NULL, ?, ?, ?, ?, 'cash', ?) RETURNING id",
+            (biz, direction, amount, client_ref, created_at, note),
+        )
+        row = tx.query_one("SELECT * FROM payments WHERE id = ?", (pid,))
+    return jsonify(ok=True, payment={
+        "id": row["id"], "direction": row["direction"],
+        "amountPaisa": row["amount_paisa"], "createdAt": row["created_at"],
+        "note": row.get("note") or "",
+    }), 201
+
+
+@bp.get("/cheque-payments")
+@require_session
+@require_approved
+@require_unlocked
+def cheque_payments():
+    """Cheques page (Cash & Bank): every payment made by cheque, split
+    Received (direction in) / Paid (direction out), with the party and
+    the cheque/reference number."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        names = _party_names(tx, biz)
+        invoices = {
+            r["id"]: r["invoice_no"]
+            for r in tx.query_all(
+                "SELECT id, invoice_no FROM invoices WHERE business_id = ?",
+                (biz,),
+            )
+        }
+        rows = tx.query_all(
+            "SELECT * FROM payments WHERE business_id = ? AND mode = 'cheque' "
+            "AND (invoice_id IS NULL OR invoice_id IN "
+            "     (SELECT id FROM invoices WHERE deleted_at IS NULL)) "
+            "ORDER BY id",
+            (biz,),
+        )
+    received, paid = [], []
+    for r in rows:
+        entry = {
+            "id": r["id"],
+            "date": (r["created_at"] or "")[:10],
+            "party": names.get(r["party_id"]) or "",
+            "refNo": r.get("cheque_no") or r.get("reference_no") or "",
+            "amountPaisa": r["amount_paisa"],
+            "invoiceNo": invoices.get(r["invoice_id"]) or "",
+        }
+        (received if r["direction"] == "in" else paid).append(entry)
+    return jsonify(
+        ok=True, received=received, paid=paid,
+        receivedTotalPaisa=sum(e["amountPaisa"] for e in received),
+        paidTotalPaisa=sum(e["amountPaisa"] for e in paid),
+    )
 
 
 @bp.post("/cheques/<int:cheque_id>/status")

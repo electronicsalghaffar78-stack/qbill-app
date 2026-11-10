@@ -803,7 +803,7 @@ var VIEW_TITLES = {
   store: "Online Store", loyalty: "Loyalty Points", accounting: "Accounting",
   team: "Sync, Share & Backup", utilities: "Utilities",
   grow: "Grow Your Business", preview: "Invoice Preview",
-  itemdetail: "Item Detail", ledger: "Ledger",
+  itemdetail: "Item Detail", ledger: "Ledger", quick: "Quick Billing",
 };
 
 function setActiveNav() {
@@ -845,7 +845,7 @@ function go(nav) {
     case "paymentin": navKey = "paymentin"; setPayFilter("in", "in"); showScreen("payments"); break;
     case "paymentout": navKey = "paymentout"; setPayFilter("out", "out"); showScreen("payments"); break;
     case "payments": setPayFilter("all", null); showScreen("payments"); break;
-    case "quickbilling": navKey = "quickbilling"; openDocForm("sale"); break;
+    case "quickbilling": navKey = "quickbilling"; showScreen("quick"); break;
     case "expenses": navKey = "expenses"; showScreen("expenses"); break;
     case "cashbank": navKey = "cashbank"; showScreen("cashbank"); break;
     case "pnl": navKey = "pnl"; showScreen("pnl"); break;
@@ -897,6 +897,7 @@ function loadScreen(name, silent) {
   else if (name === "loyalty") loadLoyalty();
   else if (name === "accounting") loadAccounting();
   else if (name === "team") loadTeam();
+  else if (name === "quick") loadQuick();
   else if (name === "utilities") loadUtilities();
   else if (name === "grow") loadGrow();
   else if (name === "settings") { loadProfile(); loadSettingsDoc(); loadBackups(); if (me && me.isOwner) { loadMailConfig(); loadAccounts(); } }
@@ -925,6 +926,14 @@ function loadDashboard() {
     $("dTopParty").textContent = d.topReceivableParty
       ? d.topReceivableParty.name + " · " + fmtRs(d.topReceivableParty.balancePaisa)
       : "—";
+    $("dPurchases").textContent = fmtRs(d.monthPurchasesPaisa || 0);
+    $("dTopPurchaseParty").textContent = d.topPurchaseParty
+      ? "Top: " + d.topPurchaseParty.name + " · " + fmtRs(d.topPurchaseParty.amountPaisa)
+      : "No purchases this month";
+    var chq = d.openCheques || {};
+    $("dChqIn").textContent = (chq.receivedCount || 0) + " · " + fmtRs(chq.receivedPaisa || 0);
+    $("dChqOut").textContent = (chq.paidCount || 0) + " · " + fmtRs(chq.paidPaisa || 0);
+    renderExpChart(d.expensesSeries || []);
     var low = d.lowStockCount || 0;
     $("dLowRow").classList.toggle("hidden", low === 0);
     if (low) $("dLowStock").textContent = low + (low === 1 ? " item" : " items");
@@ -977,6 +986,18 @@ function graphBuckets() {
     map[k] += p.amountPaisa;
   });
   return order.map(function (k) { return { label: k, amount: map[k] }; });
+}
+function renderExpChart(series) {
+  var svg = $("dExpChart");
+  if (!svg) return;
+  var max = 0;
+  series.forEach(function (s) { if (s.amountPaisa > max) max = s.amountPaisa; });
+  if (!max) { svg.innerHTML = ""; return; }
+  var bars = series.map(function (s, i) {
+    var h = Math.max(1, Math.round(32 * s.amountPaisa / max));
+    return '<rect x="' + (i * 4) + '" y="' + (34 - h) + '" width="3" height="' + h + '" fill="#b3261e" opacity="0.75"><title>' + esc(s.date) + ": " + esc(fmtRs(s.amountPaisa)) + "</title></rect>";
+  }).join("");
+  svg.innerHTML = bars;
 }
 function renderSaleGraph() {
   var svg = $("saleGraph"), tip = $("saleGraphTip");
@@ -1094,7 +1115,8 @@ function loadParties() {
     list.forEach(function (p) {
       var wrap = document.createElement("div");
       wrap.className = "row";
-      var sub = [p.phone || "", p.groupName || "", p.status && p.status !== "Active" ? p.status : ""]
+      var sub = [p.phone || "", p.groupName || "", p.status && p.status !== "Active" ? p.status : "",
+        p.creditLimitType === "custom" ? "Limit " + fmtRs(p.creditLimitPaisa || 0) : ""]
         .filter(Boolean).join(" · ");
       wrap.innerHTML = rowHtml(p.name, sub, fmtRs(p.balancePaisa), p.balancePaisa > 0 ? "neg" : "");
       var actions = document.createElement("div");
@@ -1143,6 +1165,13 @@ function startEditParty(p) {
   $("partyPhone").value = p.phone || "";
   $("partyEmail").value = p.email || "";
   $("partyOpening").value = ((p.openingBalancePaisa || 0) / 100).toFixed(2);
+  $("partyOpeningDate").value = p.openingDate || "";
+  var ctype = p.creditLimitType || "none";
+  document.querySelectorAll('[name="partyCreditType"]').forEach(function (rb) {
+    rb.checked = rb.value === ctype;
+  });
+  $("partyCreditLimit").value = ((p.creditLimitPaisa || 0) / 100).toFixed(2);
+  $("partyCreditLimitWrap").classList.toggle("hidden", ctype !== "custom");
   $("partyStatus").value = p.status || "Active";
   $("partyLoyalty").value = p.loyaltyPoints || 0;
   $("partyBilling").value = p.billingAddress || "";
@@ -1175,10 +1204,14 @@ $("partyForm").addEventListener("submit", function (ev) {
     var def = partyExtrasDefsCache[+inp.getAttribute("data-party-extra")];
     if (def && inp.value.trim()) extras[def.label] = inp.value.trim();
   });
+  var creditType = (document.querySelector('[name="partyCreditType"]:checked') || {}).value || "none";
   var payload = {
     name: $("partyName").value.trim(), phone: $("partyPhone").value.trim(),
     email: $("partyEmail").value.trim(),
     opening_balance_paisa: rsToPaisa($("partyOpening").value),
+    opening_date: $("partyOpeningDate").value || "",
+    credit_limit_type: creditType,
+    credit_limit_paisa: creditType === "custom" ? rsToPaisa($("partyCreditLimit").value) : 0,
     group_name: ($("partyGroupNew").value.trim() || $("partyGroup").value || "").trim(),
     status: $("partyStatus").value,
     billing_address: $("partyBilling").value.trim(),
@@ -1189,9 +1222,11 @@ $("partyForm").addEventListener("submit", function (ev) {
   var done = function (msg) {
     editingPartyId = null;
     $("partyForm").reset(); $("partyOpening").value = 0;
+    $("partyCreditLimitWrap").classList.add("hidden");
     $("partyFormTitle").textContent = "Add party";
     $("partySubmitBtn").textContent = "Add party";
     $("partyCancelEdit").classList.add("hidden");
+    if (partySaveNewFlag) { partySaveNewFlag = false; msg += " Add the next party."; $("partyName").focus(); }
     setMsg("appMsg", msg);
     loadParties();
   };
@@ -1204,6 +1239,29 @@ $("partyForm").addEventListener("submit", function (ev) {
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
   }
 });
+
+/* Party form tabs (Address / Credit & Balance / Additional Fields). */
+var partySaveNewFlag = false;
+document.querySelectorAll("[data-partytab]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    document.querySelectorAll("[data-partytab]").forEach(function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    document.querySelectorAll("[data-partypanel]").forEach(function (p) {
+      p.classList.toggle("hidden", p.getAttribute("data-partypanel") !== btn.getAttribute("data-partytab"));
+    });
+  });
+});
+document.querySelectorAll('[name="partyCreditType"]').forEach(function (rb) {
+  rb.addEventListener("change", function () {
+    $("partyCreditLimitWrap").classList.toggle("hidden", rb.value !== "custom" || !rb.checked);
+  });
+});
+$("partySaveNew").addEventListener("click", function () {
+  partySaveNewFlag = true;
+  $("partyForm").requestSubmit();
+});
+$("btnOpenTeam").addEventListener("click", function () { go("team"); });
 
 /* ------------------------------------------------------------- ledger -- */
 function openLedger(party) {
@@ -1236,14 +1294,31 @@ function itemCategories() {
   try { return JSON.parse(localStorage.getItem("qbill_item_categories") || "[]"); } catch (e) { return []; }
 }
 function setItemCategories(list) { localStorage.setItem("qbill_item_categories", JSON.stringify(list)); }
+var STANDARD_UNITS = [
+  ["Bags", "Bag"], ["Bottles", "Btl"], ["Box", "Box"], ["Bundles", "Bdl"],
+  ["Cans", "Can"], ["Cartons", "Ctn"], ["Dozens", "Dzn"], ["Grammes", "Gm"],
+  ["Kilograms", "Kg"], ["Litre", "Ltr"], ["Meters", "Mtr"], ["Mililitre", "Ml"],
+  ["Numbers", "Nos"], ["Packs", "Pac"], ["Pairs", "Prs"], ["Pieces", "Pcs"],
+  ["Quintal", "Qtl"], ["Rolls", "Rol"], ["Square Feet", "Sqft"]
+];
 function itemUnits() {
-  try {
-    var u = JSON.parse(localStorage.getItem("qbill_item_units") || "null");
-    if (u) return u;
-  } catch (e) {}
-  return [{ name: "Pcs", secondary: "", conversion: 0 }, { name: "Box", secondary: "", conversion: 0 },
-          { name: "Kg", secondary: "", conversion: 0 }, { name: "Litre", secondary: "", conversion: 0 },
-          { name: "Dozen", secondary: "Pcs", conversion: 12 }];
+  var stored = null;
+  try { stored = JSON.parse(localStorage.getItem("qbill_item_units") || "null"); } catch (e) {}
+  var list = stored && stored.length ? stored.slice() : [
+    { name: "Pcs", code: "Pcs", secondary: "", conversion: 0 },
+    { name: "Box", code: "Box", secondary: "", conversion: 0 },
+    { name: "Kg", code: "Kg", secondary: "", conversion: 0 },
+    { name: "Litre", code: "Ltr", secondary: "", conversion: 0 },
+    { name: "Dozen", code: "Dzn", secondary: "Pcs", conversion: 12 }
+  ];
+  var have = {};
+  list.forEach(function (u) { have[(u.name || "").toLowerCase()] = 1; });
+  STANDARD_UNITS.forEach(function (pair) {
+    if (!have[pair[0].toLowerCase()]) {
+      list.push({ name: pair[0], code: pair[1], secondary: "", conversion: 0 });
+    }
+  });
+  return list;
 }
 function setItemUnits(list) { localStorage.setItem("qbill_item_units", JSON.stringify(list)); }
 function refreshItemUnitSelects() {
@@ -1282,7 +1357,8 @@ function renderCategoryPanel() {
 }
 function renderUnitPanel() {
   $("unitList").innerHTML = itemUnits().map(function (u) {
-    return '<div class="row"><div><div class="main">' + esc(u.name) + '</div><div class="sub">' +
+    return '<div class="row"><div><div class="main">' + esc(u.name) +
+      (u.code ? " (" + esc(u.code) + ")" : "") + '</div><div class="sub">' +
       (u.secondary ? ("1 " + esc(u.name) + " = " + u.conversion + " " + esc(u.secondary)) : "Base unit") +
       "</div></div></div>";
   }).join("");
@@ -1378,9 +1454,13 @@ function startEditItem(i) {
   $("itemSale").value = ((i.salePricePaisa || 0) / 100).toFixed(2);
   $("itemPurchase").value = ((i.purchasePricePaisa || 0) / 100).toFixed(2);
   $("itemWholesale").value = ((i.wholesalePricePaisa || 0) / 100).toFixed(2);
+  $("itemMinWholesaleQty").value = i.minWholesaleQty || 0;
   $("itemMrp").value = ((i.mrpPaisa || 0) / 100).toFixed(2);
   $("itemTaxPct").value = (i.taxBp || 0) / 100;
-  $("itemDiscountPct").value = (i.discountBp || 0) / 100;
+  $("itemDiscountType").value = i.discountType || "percentage";
+  $("itemDiscountPct").value = i.discountType === "amount"
+    ? ((i.discountAmountPaisa || 0) / 100).toFixed(2)
+    : (i.discountBp || 0) / 100;
   $("itemStock").value = i.stockQty || 0;
   $("itemMinStock").value = i.minStock || 0;
   $("itemLocation").value = i.location || "";
@@ -1422,9 +1502,14 @@ $("itemForm").addEventListener("submit", function (ev) {
     sale_price_paisa: rsToPaisa($("itemSale").value),
     purchase_price_paisa: rsToPaisa($("itemPurchase").value),
     wholesale_price_paisa: rsToPaisa($("itemWholesale").value),
+    min_wholesale_qty: parseInt($("itemMinWholesaleQty").value || "0", 10) || 0,
     mrp_paisa: rsToPaisa($("itemMrp").value),
     tax_bp: Math.round((parseFloat($("itemTaxPct").value || "0") || 0) * 100),
-    discount_bp: Math.round((parseFloat($("itemDiscountPct").value || "0") || 0) * 100),
+    discount_type: $("itemDiscountType").value,
+    discount_bp: $("itemDiscountType").value === "amount" ? 0
+      : Math.round((parseFloat($("itemDiscountPct").value || "0") || 0) * 100),
+    discount_amount_paisa: $("itemDiscountType").value === "amount"
+      ? rsToPaisa($("itemDiscountPct").value) : 0,
     stock_qty: stockQty,
     min_stock: parseInt($("itemMinStock").value || "0", 10) || 0,
     location: $("itemLocation").value.trim(),
@@ -1441,6 +1526,7 @@ $("itemForm").addEventListener("submit", function (ev) {
     $("itemFormTitle").textContent = "Add item";
     $("itemSubmitBtn").textContent = "Add item";
     $("itemCancelEdit").classList.add("hidden");
+    if (itemSaveNewFlag) { itemSaveNewFlag = false; msg += " Add the next item."; $("itemName").focus(); }
     setMsg("appMsg", msg);
     loadItems();
   };
@@ -1453,6 +1539,12 @@ $("itemForm").addEventListener("submit", function (ev) {
       done(r.queued ? "Saved on this device — will sync when online." : "Item added.");
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
   }
+});
+
+var itemSaveNewFlag = false;
+$("itemSaveNew").addEventListener("click", function () {
+  itemSaveNewFlag = true;
+  $("itemForm").requestSubmit();
 });
 
 /* ------------------------------------------------- document form ----- */
@@ -1477,9 +1569,11 @@ function fillPartySelects() {
       parties.forEach(function (p) {
         var o = document.createElement("option");
         o.value = p.id;
-        o.textContent = p.name + (p.balancePaisa ? "  ·  " + fmtRs(p.balancePaisa) : "");
+        o.textContent = p.name + (p.balancePaisa ? "  ·  " + fmtRs(p.balancePaisa) : "") +
+          (pair[1] && p.creditLimitType === "custom" ? "  ·  Limit " + fmtRs(p.creditLimitPaisa || 0) : "");
         o.setAttribute("data-phone", p.phone || "");
         o.setAttribute("data-balance", p.balancePaisa || 0);
+        o.setAttribute("data-credit", p.creditLimitType === "custom" ? (p.creditLimitPaisa || 0) : "");
         sel.appendChild(o);
       });
       sel.value = keep;
@@ -1506,9 +1600,11 @@ function updateDocPartyInfo() {
   if (o && o.value) {
     $("docPhone").value = o.getAttribute("data-phone") || "";
     var bal = parseInt(o.getAttribute("data-balance") || "0", 10);
-    $("docPartyBalance").textContent = bal === 0 ? "Party balance: nil" :
+    var credit = parseInt(o.getAttribute("data-credit") || "0", 10);
+    $("docPartyBalance").textContent = (bal === 0 ? "Party balance: nil" :
       (bal > 0 ? "You'll receive " + fmtRs(bal) + " from this party."
-               : "You'll pay " + fmtRs(-bal) + " to this party.");
+               : "You'll pay " + fmtRs(-bal) + " to this party.")) +
+      (credit ? " Credit limit: " + fmtRs(credit) + "." : "");
   } else {
     $("docPhone").value = "";
     $("docPartyBalance").textContent = "";
@@ -1570,15 +1666,22 @@ function addSaleLine(itemId, preset) {
     sel.appendChild(o);
   });
   wrap.querySelector(".sl-free-wrap").classList.toggle("hidden", !s.txn_free_item_qty);
-  wrap.querySelector(".sl-disc-wrap").classList.toggle("hidden", s.item_wise_discount === false);
-  wrap.querySelector(".sl-tax-wrap").classList.toggle("hidden", !(s.tax_enabled && s.item_wise_tax !== false));
+  wrap.querySelector(".sl-disc-wrap").classList.toggle("hidden",
+    s.item_wise_discount === false || s.txn_wise_discount === false);
+  wrap.querySelector(".sl-tax-wrap").classList.toggle("hidden",
+    !(s.tax_enabled && s.item_wise_tax !== false && s.txn_wise_tax !== false));
   function fillFromItem() {
     var o = sel.options[sel.selectedIndex];
     var it = itemById(parseInt(sel.value, 10) || 0);
     if (o && o.getAttribute("data-rate")) wrap.querySelector(".sl-rate").value = (o.getAttribute("data-rate") / 100).toFixed(2);
     wrap.querySelector(".sl-unit").textContent = it && it.unit ? it.unit : (s.default_unit || "Pcs");
     if (it) {
-      if (it.discountBp) wrap.querySelector(".sl-disc").value = it.discountBp / 100;
+      var rateNow = rsToPaisa(wrap.querySelector(".sl-rate").value);
+      if (it.discountType === "amount" && it.discountAmountPaisa && rateNow) {
+        wrap.querySelector(".sl-disc").value = (it.discountAmountPaisa / rateNow * 100).toFixed(2);
+      } else if (it.discountBp) {
+        wrap.querySelector(".sl-disc").value = it.discountBp / 100;
+      }
       if (it.taxBp != null && s.tax_enabled) wrap.querySelector(".sl-tax").value = it.taxBp / 100;
       if (it.description && s.item_description_enabled) wrap.querySelector(".sl-desc").value = it.description;
       apiGet("/api/items/" + it.id + "/batches", null).then(function (r) {
@@ -1631,15 +1734,35 @@ function addSaleLine(itemId, preset) {
   calcSaleTotal();
   return wrap;
 }
+/* One line's money, honouring Settings > TRANSACTION: with
+   "Transaction wise Discount" OFF the line discount is the item's own
+   default (Disc. On Sale Price); with "Transaction wise Tax" OFF the
+   line tax is 0 — exactly what the server computes. */
+function lineAmounts(w) {
+  var s = QB.settings || {};
+  var itemId = w.querySelector(".sl-item").value;
+  var it = itemId ? itemById(parseInt(itemId, 10) || 0) : null;
+  var qty = parseInt(w.querySelector(".sl-qty").value || "0", 10);
+  var rate = rsToPaisa(w.querySelector(".sl-rate").value);
+  var gross = qty * rate;
+  var disc, tax;
+  if (s.txn_wise_discount === false) {
+    if (!it) disc = 0;
+    else if (it.discountType === "amount") disc = (it.discountAmountPaisa || 0) * qty;
+    else disc = Math.round(gross * (it.discountBp || 0) / 10000);
+  } else {
+    disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
+  }
+  if (s.txn_wise_tax === false) tax = 0;
+  else tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
+  return { qty: qty, rate: rate, gross: gross, disc: disc, tax: tax };
+}
 function saleLinesData() {
   var lines = [];
   document.querySelectorAll(".sale-line").forEach(function (w) {
     var itemId = w.querySelector(".sl-item").value;
-    var qty = parseInt(w.querySelector(".sl-qty").value || "0", 10);
-    var rate = rsToPaisa(w.querySelector(".sl-rate").value);
-    var gross = qty * rate;
-    var disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
-    var tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
+    var a = lineAmounts(w);
+    var qty = a.qty, rate = a.rate, disc = a.disc, tax = a.tax;
     var line = {
       qty: qty,
       free_qty: parseInt(w.querySelector(".sl-free").value || "0", 10),
@@ -1664,17 +1787,14 @@ function docTotals() {
     tax += l.tax_paisa || 0;
   });
   var total = Math.max(sub - disc + tax, 0);
-  var rounded = Math.round(total / 100) * 100;
+  var mode = (QB.settings || {}).round_off_mode;
+  var rounded = mode === "one" ? Math.ceil(total / 100) * 100 : Math.round(total / 100) * 100;
   return { sub: sub, disc: disc, tax: tax, total: total, rounded: rounded };
 }
 function calcSaleTotal() {
   document.querySelectorAll(".sale-line").forEach(function (w) {
-    var q = parseInt(w.querySelector(".sl-qty").value || "0", 10);
-    var r = rsToPaisa(w.querySelector(".sl-rate").value);
-    var gross = q * r;
-    var disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
-    var tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
-    w.querySelector(".sl-amt").textContent = fmtRs(gross - disc + tax);
+    var a = lineAmounts(w);
+    w.querySelector(".sl-amt").textContent = fmtRs(a.gross - a.disc + a.tax);
   });
   var t = docTotals();
   var shown = $("docRoundOff").checked ? t.rounded : t.total;
@@ -1696,7 +1816,63 @@ function calcSaleTotal() {
   }
   updateLoyaltyInfo();
   if (docCashMode) $("salePaid").value = (shown / 100).toFixed(2);
+  var payRowsNow = docPaymentsData();
+  if (payRowsNow.length) {
+    var paySum = 0;
+    payRowsNow.forEach(function (p) { paySum += p.amount_paisa; });
+    $("docPayTotal").textContent = "Total payment: " + fmtRs(paySum) + " / " + fmtRs(shown);
+  }
 }
+/* ---- Split payments on the bill form (delta #3) ---- */
+var docBankAccounts = [];
+function refreshDocBankAccounts() {
+  apiGet("/api/bank-accounts", "bankaccounts").then(function (r) {
+    docBankAccounts = r.body.bankAccounts || [];
+  }).catch(function () {});
+}
+function payTypeOptions(sel) {
+  var keep = sel.value;
+  sel.innerHTML = '<option value="cash">Cash</option><option value="cheque">Cheque</option>' +
+    docBankAccounts.map(function (a) {
+      return '<option value="bank:' + a.id + '">' + esc(a.displayName) + "</option>";
+    }).join("");
+  if (keep) sel.value = keep;
+}
+function addDocPayRow() {
+  var row = document.createElement("div");
+  row.className = "pay-row";
+  row.innerHTML = '<select class="pay-type"></select>' +
+    '<input class="pay-amt" type="number" step="0.01" min="0" value="0" placeholder="Amount (Rs)">' +
+    '<input class="pay-ref hidden" type="text" placeholder="Reference No.">' +
+    '<button class="rm" type="button" title="Remove payment">×</button>';
+  var sel = row.querySelector(".pay-type");
+  payTypeOptions(sel);
+  var syncRef = function () {
+    row.querySelector(".pay-ref").classList.toggle("hidden", sel.value === "cash");
+    row.querySelector(".pay-ref").placeholder = sel.value === "cheque" ? "Cheque No." : "Reference No.";
+  };
+  sel.addEventListener("change", syncRef);
+  row.querySelector(".pay-amt").addEventListener("input", calcSaleTotal);
+  row.querySelector(".rm").addEventListener("click", function () { row.remove(); calcSaleTotal(); });
+  syncRef();
+  $("docPayRows").appendChild(row);
+  return row;
+}
+function docPaymentsData() {
+  var rows = [];
+  document.querySelectorAll("#docPayRows .pay-row").forEach(function (row) {
+    var amt = rsToPaisa(row.querySelector(".pay-amt").value);
+    if (amt <= 0) return;
+    var v = row.querySelector(".pay-type").value;
+    var ref = row.querySelector(".pay-ref").value.trim();
+    if (v === "cash") rows.push({ mode: "cash", amount_paisa: amt });
+    else if (v === "cheque") rows.push({ mode: "cheque", amount_paisa: amt, cheque_no: ref });
+    else if (v.indexOf("bank:") === 0) rows.push({ mode: "bank", bank_account_id: parseInt(v.slice(5), 10), amount_paisa: amt, reference_no: ref });
+  });
+  return rows;
+}
+$("btnAddPayRow").addEventListener("click", function () { addDocPayRow(); });
+
 function applyDocType() {
   var meta = DOC_META[docType];
   $("docTitle").textContent = meta.title;
@@ -1704,6 +1880,8 @@ function applyDocType() {
   $("docPaidLabel").textContent = meta.returnsDoc ? "Refund (Rs)" : "Paid now (Rs)";
   $("docToggleWrap").classList.toggle("hidden", meta.noPayment);
   $("docPaidWrap").classList.toggle("hidden", meta.noPayment);
+  $("docPayBlock").classList.toggle("hidden", !!meta.noPayment);
+  refreshDocBankAccounts();
   $("docSaveBtn").textContent = editingInvoiceId ? "Save changes" : "Save " + meta.title;
   $("docDate").textContent = new Date().toISOString().slice(0, 10);
   $("docNumber").textContent = editingInvoiceId ? "Editing" : "Auto";
@@ -1720,14 +1898,198 @@ function applyDocType() {
   $("docLoyaltyBlock").classList.toggle("hidden", !(docType === "sale" && s.loyalty && s.loyalty.enabled));
   $("docShippingWrap").classList.toggle("hidden", s.party_shipping_address === false);
   $("btnDocAddParty").classList.toggle("hidden", !!s.block_new_from_txn);
+  if (s.txn_cash_sale_default && !meta.noPayment && !editingInvoiceId) {
+    // Settings > TRANSACTION > Cash Sale by default.
+    docCashMode = true;
+    $("docCashToggle").classList.add("on");
+    $("docCashToggle").setAttribute("aria-checked", "true");
+    $("salePaid").toggleAttribute("readonly", true);
+  }
   fillPartySelects();
   loadTermsPicker();
   calcSaleTotal();
 }
-function openDocForm(type) {
-  docType = DOC_META[type] ? type : "sale";
+/* ---- Document form tabs (delta #16) ----
+   Client-side only: each tab keeps its own unsaved form state in
+   memory; switching preserves it, closing a dirty tab asks first.
+   No API changes — a tab is saved through the normal form submit. */
+var docTabs = [];
+var activeDocTab = null;
+var docTabSeq = 0;
+var docSaveNewFlag = false;
+var DOC_TAB_SHORT = { sale: "Sale", purchase: "Purchase", estimate: "Estimate",
+  sale_order: "Sale Order", purchase_order: "Purchase Order", challan: "Challan",
+  proforma: "Proforma", sale_return: "Sale Return", purchase_return: "Purchase Return" };
+function captureDocState() {
+  return {
+    type: docType, editingId: editingInvoiceId,
+    party: $("saleParty").value, phone: $("docPhone").value,
+    paid: $("salePaid").value, roundOff: $("docRoundOff").checked,
+    cashMode: docCashMode, termsId: docTermsSelected,
+    due: $("docDueDate").value, terms: $("docPayTerms").value,
+    billing: $("docBilling").value, shipping: $("docShipping").value,
+    po: $("docPoNumber").value, transport: $("docTransport").value,
+    vehicle: $("docVehicle").value, delDate: $("docDeliveryDate").value,
+    delLoc: $("docDeliveryLoc").value, desc: $("docDescription").value,
+    loyalty: $("docLoyaltyUse").value, repeat: $("docRepeat").value,
+    lines: Array.prototype.map.call(document.querySelectorAll(".sale-line"), function (w) {
+      return {
+        itemId: w.querySelector(".sl-item").value,
+        qty: w.querySelector(".sl-qty").value, free: w.querySelector(".sl-free").value,
+        rate: w.querySelector(".sl-rate").value, disc: w.querySelector(".sl-disc").value,
+        tax: w.querySelector(".sl-tax").value, desc: w.querySelector(".sl-desc").value,
+        batch: w.querySelector(".sl-batch").value, serial: w.querySelector(".sl-serial").value,
+        exp: w.querySelector(".sl-exp").value
+      };
+    }),
+    payRows: Array.prototype.map.call(document.querySelectorAll("#docPayRows .pay-row"), function (row) {
+      return { type: row.querySelector(".pay-type").value,
+               amt: row.querySelector(".pay-amt").value,
+               ref: row.querySelector(".pay-ref").value };
+    })
+  };
+}
+function restoreDocState(st) {
+  docType = st.type;
+  editingInvoiceId = st.editingId;
+  docTermsSelected = st.termsId;
+  $("saleLines").innerHTML = "";
+  st.lines.forEach(function (L) {
+    var w = addSaleLine();
+    w.querySelector(".sl-item").value = L.itemId;
+    w.querySelector(".sl-qty").value = L.qty;
+    w.querySelector(".sl-free").value = L.free;
+    w.querySelector(".sl-rate").value = L.rate;
+    w.querySelector(".sl-disc").value = L.disc;
+    w.querySelector(".sl-tax").value = L.tax;
+    w.querySelector(".sl-desc").value = L.desc;
+    w.querySelector(".sl-batch").value = L.batch;
+    w.querySelector(".sl-serial").value = L.serial;
+    w.querySelector(".sl-exp").value = L.exp;
+  });
+  if (!st.lines.length) addSaleLine();
+  $("docPayRows").innerHTML = "";
+  (st.payRows || []).forEach(function (p) {
+    var row = addDocPayRow();
+    row.querySelector(".pay-type").value = p.type;
+    row.querySelector(".pay-amt").value = p.amt;
+    row.querySelector(".pay-ref").value = p.ref;
+    row.querySelector(".pay-ref").classList.toggle("hidden", p.type === "cash");
+  });
+  $("saleParty").value = st.party;
+  $("docDueDate").value = st.due; $("docPayTerms").value = st.terms;
+  $("docBilling").value = st.billing; $("docShipping").value = st.shipping;
+  $("docPoNumber").value = st.po; $("docTransport").value = st.transport;
+  $("docVehicle").value = st.vehicle; $("docDeliveryDate").value = st.delDate;
+  $("docDeliveryLoc").value = st.delLoc; $("docDescription").value = st.desc;
+  $("docLoyaltyUse").value = st.loyalty; $("docRepeat").value = st.repeat;
+  $("docRoundOff").checked = !!st.roundOff;
+  applyDocType();
+  docCashMode = !!st.cashMode;
+  $("docCashToggle").classList.toggle("on", docCashMode);
+  $("docCashToggle").setAttribute("aria-checked", docCashMode ? "true" : "false");
+  $("salePaid").toggleAttribute("readonly", docCashMode);
+  $("saleParty").value = st.party;
+  $("salePaid").value = st.paid;
+  updateDocPartyInfo();
+  $("viewTitle").textContent = DOC_META[docType].title;
+  calcSaleTotal();
+}
+function docTabLabel(t) {
+  if (t.label) return t.label;
+  var same = docTabs.filter(function (x) { return x.type === t.type && !x.editingId; });
+  return (DOC_TAB_SHORT[t.type] || "Bill") + " #" + (same.indexOf(t) + 1 || 1);
+}
+function renderDocTabs() {
+  var bar = $("docTabs");
+  if (!bar) return;
+  bar.innerHTML = "";
+  docTabs.forEach(function (t) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "doc-tab" + (t === activeDocTab ? " active" : "");
+    b.innerHTML = esc(docTabLabel(t)) + ' <span class="dt-close" title="Close tab">×</span>';
+    b.addEventListener("click", function (ev) {
+      if (ev.target.classList.contains("dt-close")) closeDocTab(t);
+      else activateDocTab(t);
+    });
+    bar.appendChild(b);
+  });
+  var add = document.createElement("button");
+  add.type = "button";
+  add.className = "doc-tab";
+  add.textContent = "+";
+  add.title = "New tab";
+  add.addEventListener("click", function () { newDocTab(docType); });
+  bar.appendChild(add);
+}
+function newDocTab(type) {
+  if (activeDocTab) activeDocTab.state = captureDocState();
+  var tab = { id: ++docTabSeq, type: type, editingId: null, label: null, state: null, blank: null, baseline: null };
+  docTabs.push(tab);
+  activeDocTab = tab;
+  docType = type;
   editingInvoiceId = null;
+  resetDocForm();
+  tab.blank = captureDocState();
+  renderDocTabs();
+  return tab;
+}
+function activateDocTab(tab) {
+  if (activeDocTab === tab) { renderDocTabs(); return; }
+  if (activeDocTab) activeDocTab.state = captureDocState();
+  activeDocTab = tab;
+  apiGet("/api/items", "items").then(function () {
+    if (activeDocTab !== tab) return;
+    if (tab.state) restoreDocState(tab.state);
+    else {
+      docType = tab.type;
+      editingInvoiceId = tab.editingId;
+      resetDocForm();
+      tab.blank = captureDocState();
+    }
+    renderDocTabs();
+  }).catch(function () { renderDocTabs(); });
+}
+function closeDocTab(t) {
+  var state = t === activeDocTab ? captureDocState() : t.state;
+  var base = t.baseline || (t.blank ? JSON.stringify(t.blank) : null);
+  if (state && base && JSON.stringify(state) !== base &&
+      !confirm("This bill has unsaved changes. Close the tab and discard them?")) return;
+  docTabs = docTabs.filter(function (x) { return x !== t; });
+  if (t === activeDocTab) {
+    activeDocTab = null;
+    if (docTabs.length) activateDocTab(docTabs[docTabs.length - 1]);
+    else newDocTab(docType);
+  } else {
+    renderDocTabs();
+  }
+}
+function dropActiveDocTab() {
+  if (!activeDocTab) return;
+  docTabs = docTabs.filter(function (t) { return t !== activeDocTab; });
+  activeDocTab = null;
+}
+function ensureDocTab() {
+  if (activeDocTab) { renderDocTabs(); return; }
+  var tab = { id: ++docTabSeq, type: docType, editingId: null, label: null, state: null, blank: null, baseline: null };
+  docTabs.push(tab);
+  activeDocTab = tab;
+  tab.blank = captureDocState();
+  renderDocTabs();
+}
+$("docSaveNewBtn").addEventListener("click", function () {
+  docSaveNewFlag = true;
+  $("saleForm").requestSubmit();
+});
+
+function openDocForm(type) {
+  type = DOC_META[type] ? type : "sale";
   navKey = type === "sale" ? "salebook" : type === "purchase" ? "purchasebook" : navKey;
+  var existing = null;
+  docTabs.forEach(function (t) { if (!existing && t.type === type && !t.editingId) existing = t; });
+  if (existing) activateDocTab(existing);
+  else newDocTab(type);
   showScreen("sale");
 }
 function loadSaleForm() {
@@ -1796,14 +2158,23 @@ $("saleForm").addEventListener("submit", function (ev) {
     repeat_freq: $("docRepeat").value || null,
     attachment_name: $("docAttachment").value ? $("docAttachment").value.split("\\").pop() : ""
   };
+  var payRows = meta.noPayment ? [] : docPaymentsData();
+  if (payRows.length) payload.payments = payRows;
   var wasEditing = editingInvoiceId;
   function finishSave(inv, queuedFlag) {
     lastInvoiceId = inv ? inv.id : null;
     lastSavedInvoice = inv;
+    var saveNew = docSaveNewFlag; docSaveNewFlag = false;
+    dropActiveDocTab();
     resetDocForm();
+    ensureDocTab();
     if (queuedFlag) {
       setMsg("appMsg", meta.title + " saved on this device — it will sync when you are online. PDF will be available after sync.");
       go("dashboard");
+      return;
+    }
+    if (saveNew) {
+      setMsg("appMsg", meta.title + " saved. Add the next one.");
       return;
     }
     if (payload.repeat_freq && !wasEditing) {
@@ -1834,6 +2205,8 @@ function resetDocForm() {
   editingInvoiceId = null;
   docTermsSelected = null;
   $("saleLines").innerHTML = ""; addSaleLine();
+  $("docPayRows").innerHTML = "";
+  $("docPayTotal").textContent = "";
   $("salePaid").value = 0;
   $("docRoundOff").checked = false;
   ["docBilling", "docShipping", "docPoNumber", "docTransport", "docVehicle",
@@ -2044,6 +2417,15 @@ function appendDocRowActions(td, inv, meta, where) {
   td.appendChild(del);
 }
 function startEditInvoice(inv) {
+  var existingTab = null;
+  docTabs.forEach(function (t) { if (t.editingId === inv.id) existingTab = t; });
+  if (existingTab) { showScreen("sale"); activateDocTab(existingTab); return; }
+  if (activeDocTab) activeDocTab.state = captureDocState();
+  var tab = { id: ++docTabSeq, type: inv.type || "sale", editingId: inv.id,
+              label: inv.invoiceNo || null, state: null, blank: null, baseline: null };
+  docTabs.push(tab);
+  activeDocTab = tab;
+  renderDocTabs();
   apiGet("/api/items", "items").then(function () {
     return apiGet("/api/invoices/" + inv.id, null);
   }).then(function (r) {
@@ -2069,6 +2451,13 @@ function startEditInvoice(inv) {
     $("docNumber").textContent = full.invoiceNo;
     updateDocPartyInfo();
     calcSaleTotal();
+    if ((full.payments || []).length > 1) {
+      $("docPayTotal").textContent = "This bill was paid in " + full.payments.length +
+        " parts. Add payment rows below only to replace them.";
+    }
+    tab.state = captureDocState();
+    tab.baseline = JSON.stringify(tab.state);
+    renderDocTabs();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
 function showInvoiceHistory(inv) {
@@ -2146,7 +2535,7 @@ function loadCashBank() {
       div.className = "row";
       div.innerHTML = rowHtml(
         (p.direction === "in" ? "Received" : "Paid") + (p.partyId ? " · " + (parties[p.partyId] || "") : ""),
-        (p.createdAt || "").slice(0, 10), fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
+        (p.createdAt || "").slice(0, 10) + (p.note ? " · " + p.note : ""), fmtRs(p.amountPaisa), p.direction === "in" ? "pos" : "neg");
       $("cashbankList").appendChild(div);
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -2154,6 +2543,32 @@ function loadCashBank() {
     $("cbCashAmt").textContent = fmtRs(r.body.dashboard.cashInHandPaisa);
   }).catch(function () {});
 }
+/* Cash In Hand > Adjust Cash (delta #4): records a cash-adjustment
+   transaction that flows into Day Book, All Transactions and the
+   Cash in Hand total. */
+$("btnAdjustCash").addEventListener("click", function () {
+  var today = new Date().toISOString().slice(0, 10);
+  openDialog("Adjust Cash",
+    '<label>Adjustment <select id="adjDir"><option value="in">Add Cash</option><option value="out">Remove Cash</option></select></label>' +
+    '<label>Amount (Rs) <input id="adjAmt" type="number" step="0.01" min="0" value="0"></label>' +
+    '<label>Adjustment Date <input id="adjDate" type="date" value="' + today + '"></label>' +
+    '<label>Description <input id="adjDesc" type="text" placeholder="Why is cash being adjusted?"></label>' +
+    '<button class="btn btn-primary btn-block" id="adjSave" type="button">Save Adjustment</button>');
+  $("adjSave").addEventListener("click", function () {
+    var amt = rsToPaisa($("adjAmt").value);
+    if (amt <= 0) { setMsg("appMsg", "Enter an amount.", true); return; }
+    apiPost("/api/cash-adjustments", {
+      direction: $("adjDir").value, amount_paisa: amt,
+      date: $("adjDate").value || null,
+      description: $("adjDesc").value.trim(),
+      client_ref: "adj-" + Date.now()
+    }).then(function () {
+      closeDialog();
+      setMsg("appMsg", "Cash adjusted.");
+      loadCashBank(); loadDashboard();
+    }).catch(function (e) { setMsg("appMsg", e.message, true); });
+  });
+});
 function loadPnl() {
   var q = "";
   var f = $("pnlFrom").value, t = $("pnlTo").value;
@@ -2269,7 +2684,7 @@ function loadPayments() {
   $("allocateCard").classList.toggle("hidden", !s.link_payments_to_invoices);
   apiGet("/api/bank-accounts", null).then(function (r) {
     var sel = $("payBank");
-    sel.innerHTML = '<option value="">— None —</option>' + (r.body.accounts || []).map(function (a) {
+    sel.innerHTML = '<option value="">— None —</option>' + (r.body.bankAccounts || []).map(function (a) {
       return '<option value="' + a.id + '">' + esc(a.displayName) + "</option>";
     }).join("");
   }).catch(function () {});
@@ -2403,6 +2818,11 @@ function loadProfile() {
     $("profAddress").value = b.address || "";
     $("profPhone").value = b.phone || "";
     $("profEmail").value = b.email || "";
+    $("profBizType").value = b.businessType || "";
+    $("profBizCategory").value = b.businessCategory || "";
+    $("profPincode").value = b.pincode || "";
+    $("profState").value = b.state || "";
+    $("profSignature").value = b.signatureText || "";
     $("profTaxNote").value = b.taxNote || "";
     $("profTerms").value = b.terms || "";
     if (b.name) {
@@ -2416,7 +2836,12 @@ $("profileForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   apiPut("/api/business", {
     name: $("profName").value.trim(), address: $("profAddress").value.trim(),
-    phone: $("profPhone").value.trim(), email: $("profEmail").value.trim()
+    phone: $("profPhone").value.trim(), email: $("profEmail").value.trim(),
+    business_type: $("profBizType").value.trim(),
+    business_category: $("profBizCategory").value.trim(),
+    pincode: $("profPincode").value.trim(),
+    state: $("profState").value.trim(),
+    signature_text: $("profSignature").value.trim()
   }).then(function (r) {
     cacheSet("business", { business: r.business });
     if (r.business && r.business.name) {
@@ -2448,7 +2873,8 @@ var PRINT_COLORS = ["#f26522", "#e53935", "#1e88e5", "#43a047", "#8e24aa", "#00a
   "#fb8c00", "#5e35b1", "#3949ab", "#00897b", "#c0ca33", "#6d4c41", "#546e7a", "#d81b60"];
 var DOC_TYPE_LABELS = { sale: "Sale", purchase: "Purchase", estimate: "Estimate",
   proforma: "Proforma", sale_order: "Sale Order", purchase_order: "Purchase Order",
-  challan: "Delivery Challan", sale_return: "Sale Return", purchase_return: "Purchase Return" };
+  challan: "Delivery Challan", sale_return: "Sale Return", purchase_return: "Purchase Return",
+  payment_in: "Payment In" };
 
 function openDialog(title, html) {
   $("dlgTitle").textContent = title;
@@ -3085,7 +3511,39 @@ var REPORT_DEFS = [
            ["withdrawPaisa", "Withdraw", "money"], ["balancePaisa", "Balance", "money"]] },
   { key: "sales-graph", title: "Sales Graph", path: "/api/reports/sales-graph", source: "points",
     cols: [["label", "Period"], ["amountPaisa", "Sales", "money"]] },
+  { key: "trial-balance", title: "Trial Balance", path: "/api/reports/trial-balance",
+    cols: [["account", "Account"], ["group", "Group"], ["debitPaisa", "Debit", "money"], ["creditPaisa", "Credit", "money"]] },
+  { key: "item-serial", title: "Item Serial Report", path: "/api/reports/item-serial",
+    cols: [["date", "Date"], ["invoiceNo", "Number"], ["item", "Item"], ["serialNo", "Serial No./IMEI"], ["party", "Party"], ["qty", "Qty"]] },
+  { key: "sale-orders", title: "Sale Orders", path: "/api/reports/sale-orders",
+    cols: [["date", "Date"], ["invoiceNo", "Number"], ["party", "Party"], ["amountPaisa", "Amount", "money"], ["status", "Status"]] },
+  { key: "sale-order-items", title: "Sale Order Item Report", path: "/api/reports/sale-order-items",
+    cols: [["date", "Date"], ["invoiceNo", "Number"], ["item", "Item"], ["party", "Party"], ["qty", "Qty"], ["ratePaisa", "Rate", "money"], ["amountPaisa", "Amount", "money"]] },
+  { key: "loans", title: "Loan Accounts", path: "/api/loans", source: "loans",
+    cols: [["name", "Loan"], ["lender", "Lender"], ["principalPaisa", "Loan Amount", "money"], ["paidPaisa", "Paid", "money"], ["balancePaisa", "Balance", "money"]] },
 ];
+/* Report groups (delta #13) — the video's menu groups, Pakistan-adapted
+   (no GST group; tax reports live under Business Status). */
+var REPORT_GROUPS = {
+  "all-transactions": "Transaction report", "bill-wise-profit": "Transaction report",
+  "cash-flow": "Transaction report", "trial-balance": "Transaction report",
+  "discount-report": "Transaction report",
+  "party-pnl": "Party report", "all-parties": "Party report",
+  "party-report-by-item": "Party report", "sale-purchase-by-party": "Party report",
+  "item-wise-pnl": "Item-Stock report", "item-report-by-party": "Item-Stock report",
+  "item-detail": "Item-Stock report", "item-wise-discount": "Item-Stock report",
+  "item-batch": "Item-Stock report", "item-serial": "Item-Stock report",
+  "low-stock": "Item-Stock report", "stock-detail": "Item-Stock report",
+  "tax-report": "Business Status", "tax-rate-report": "Business Status",
+  "sales-graph": "Business Status", "bank-statement": "Business Status",
+  "store-report": "Business Status",
+  "expense": "Expense report", "expense-category": "Expense report",
+  "expense-item": "Expense report", "other-income-report": "Expense report",
+  "sale-orders": "Sale Order report", "sale-order-items": "Sale Order report",
+  "loans": "Loan Accounts"
+};
+var REPORT_GROUP_ORDER = ["Transaction report", "Party report", "Item-Stock report",
+  "Business Status", "Expense report", "Sale Order report", "Loan Accounts"];
 var currentReport = "all-transactions";
 function reportDef(key) {
   return REPORT_DEFS.filter(function (d) { return d.key === key; })[0] || REPORT_DEFS[0];
@@ -3098,10 +3556,17 @@ function openReports(key) {
   loadReport();
 }
 function renderReportChips() {
-  $("reportChips").innerHTML = REPORT_DEFS.map(function (d) {
-    return '<button class="fchip' + (d.key === currentReport ? " active" : "") +
-      '" data-report="' + d.key + '" type="button">' + esc(d.title) + "</button>";
-  }).join("");
+  var html = "";
+  REPORT_GROUP_ORDER.forEach(function (g) {
+    var defs = REPORT_DEFS.filter(function (d) { return (REPORT_GROUPS[d.key] || "Reports") === g; });
+    if (!defs.length) return;
+    html += '<div class="rep-group">' + esc(g) + "</div>";
+    html += defs.map(function (d) {
+      return '<button class="fchip' + (d.key === currentReport ? " active" : "") +
+        '" data-report="' + d.key + '" type="button">' + esc(d.title) + "</button>";
+    }).join("");
+  });
+  $("reportChips").innerHTML = html;
   $("reportChips").querySelectorAll("[data-report]").forEach(function (b) {
     b.addEventListener("click", function () {
       currentReport = b.getAttribute("data-report");
@@ -3110,9 +3575,13 @@ function renderReportChips() {
     });
   });
 }
+var lastReportDef = null;
+var lastReportRows = [];
 function loadReport() {
   var def = reportDef(currentReport);
   $("reportTitle").textContent = def.title;
+  $("repTxTools").classList.toggle("hidden", def.key !== "all-transactions");
+  $("repTbOptions").classList.toggle("hidden", def.key !== "trial-balance");
   var f = $("repFrom").value, t = $("repTo").value;
   var url = def.path;
   var qs = [];
@@ -3120,6 +3589,10 @@ function loadReport() {
   if (t) qs.push("to=" + t);
   if (def.key === "sales-graph") qs.push("period=" + $("graphPeriod").value);
   if (def.key === "bank-statement" && selectedBankId) qs.push("bank_id=" + selectedBankId);
+  if (def.key === "trial-balance") {
+    qs.push("working=" + ($("tbWorking").checked ? "1" : "0"));
+    qs.push("zero=" + ($("tbZero").checked ? "1" : "0"));
+  }
   if (qs.length) url += "?" + qs.join("&");
   apiGet(url, null).then(function (r) {
     var rows = def.source ? (r.body[def.source] || []) : (r.body.rows || []);
@@ -3130,19 +3603,54 @@ function loadReport() {
       if (copy.createdAt && copy.createdAt.length > 10) copy.createdAt = copy.createdAt.slice(0, 10);
       return copy;
     });
-    $("reportHead").innerHTML = "<tr>" + def.cols.map(function (c) {
+    var cols = def.cols;
+    if (def.key === "all-transactions") {
+      var kindFilter = $("repTypeFilter").value;
+      if (kindFilter) rows = rows.filter(function (row) { return row.kind === kindFilter; });
+    }
+    if (def.key === "trial-balance") {
+      if ($("tbWorking").checked) {
+        cols = cols.concat([["journalDebitPaisa", "Journal Debit", "money"],
+                            ["journalCreditPaisa", "Journal Credit", "money"]]);
+      }
+      if ($("tbCollapse").checked) {
+        var byGroup = {};
+        rows.forEach(function (row) {
+          var g = row.group || "Other";
+          byGroup[g] = byGroup[g] || { account: g, group: "", debitPaisa: 0, creditPaisa: 0,
+                                       journalDebitPaisa: 0, journalCreditPaisa: 0 };
+          byGroup[g].debitPaisa += row.debitPaisa || 0;
+          byGroup[g].creditPaisa += row.creditPaisa || 0;
+          byGroup[g].journalDebitPaisa += row.journalDebitPaisa || 0;
+          byGroup[g].journalCreditPaisa += row.journalCreditPaisa || 0;
+        });
+        rows = Object.keys(byGroup).map(function (k) { return byGroup[k]; });
+      }
+    }
+    lastReportDef = def;
+    lastReportRows = rows;
+    $("reportHead").innerHTML = "<tr>" + cols.map(function (c) {
       return "<th" + (c[2] === "money" ? ' class="num"' : "") + ">" + esc(c[1]) + "</th>";
     }).join("") + "</tr>";
     $("reportBody").innerHTML = rows.map(function (row) {
-      return "<tr>" + def.cols.map(function (c) {
+      return "<tr>" + cols.map(function (c) {
         var v = row[c[0]];
         if (c[2] === "money") return '<td class="num">' + fmtRs(v || 0) + "</td>";
         return "<td>" + esc(v == null ? "" : v) + "</td>";
       }).join("") + "</tr>";
     }).join("");
     $("reportEmpty").classList.toggle("hidden", rows.length > 0);
-    var total = def.totalKey ? r.body[def.totalKey] : r.body.totalPaisa;
-    $("reportTotal").textContent = total != null ? ("Total: " + fmtRs(total)) : "";
+    if (def.key === "all-transactions") {
+      var tAmt = 0, tBal = 0;
+      rows.forEach(function (row) { tAmt += row.amountPaisa || 0; tBal += row.balancePaisa || 0; });
+      $("reportTotal").textContent = "Total Amount: " + fmtRs(tAmt) + " · Balance: " + fmtRs(tBal);
+    } else if (def.key === "trial-balance") {
+      $("reportTotal").textContent = "Total Debit: " + fmtRs(r.body.totalDebitPaisa || 0) +
+        " · Total Credit: " + fmtRs(r.body.totalCreditPaisa || 0);
+    } else {
+      var total = def.totalKey ? r.body[def.totalKey] : r.body.totalPaisa;
+      $("reportTotal").textContent = total != null ? ("Total: " + fmtRs(total)) : "";
+    }
     if (def.key === "sales-graph") {
       $("reportGraphWrap").classList.remove("hidden");
       drawReportGraph(rows);
@@ -3151,6 +3659,50 @@ function loadReport() {
     }
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+$("repTypeFilter").addEventListener("change", function () {
+  if (currentReport === "all-transactions") loadReport();
+});
+[$("tbWorking"), $("tbZero"), $("tbCollapse")].forEach(function (el) {
+  el.addEventListener("change", function () {
+    if (currentReport === "trial-balance") loadReport();
+  });
+});
+$("btnRepExcel").addEventListener("click", function () {
+  if (!lastReportDef) return;
+  var cols = lastReportDef.cols;
+  var lines = [cols.map(function (c) { return c[1]; }).join(",")];
+  lastReportRows.forEach(function (row) {
+    lines.push(cols.map(function (c) {
+      var v = row[c[0]];
+      if (c[2] === "money") v = ((v || 0) / 100).toFixed(2);
+      v = v == null ? "" : String(v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }).join(","));
+  });
+  var blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = lastReportDef.key + ".csv";
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+});
+$("btnRepPrint").addEventListener("click", function () {
+  if (!lastReportDef) return;
+  var cols = lastReportDef.cols;
+  var w = window.open("", "_blank");
+  if (!w) { setMsg("appMsg", "Allow pop-ups to print the report.", true); return; }
+  var html = "<h2>" + esc(lastReportDef.title) + "</h2><table border='1' cellspacing='0' cellpadding='4'>" +
+    "<tr>" + cols.map(function (c) { return "<th>" + esc(c[1]) + "</th>"; }).join("") + "</tr>" +
+    lastReportRows.map(function (row) {
+      return "<tr>" + cols.map(function (c) {
+        var v = row[c[0]];
+        return "<td>" + esc(c[2] === "money" ? fmtRs(v || 0) : (v == null ? "" : String(v))) + "</td>";
+      }).join("") + "</tr>";
+    }).join("") + "</table>";
+  w.document.write(html);
+  w.document.close();
+  w.print();
+});
 function drawReportGraph(rows) {
   var svg = $("reportGraph");
   if (!rows.length) { svg.innerHTML = ""; return; }
@@ -3474,7 +4026,15 @@ document.querySelectorAll("[data-cbtab]").forEach(function (b) {
 });
 function loadBankAccounts() {
   apiGet("/api/bank-accounts", null).then(function (r) {
-    var list = r.body.accounts || [];
+    var list = r.body.bankAccounts || [];
+    var toSel = $("bankTxTo");
+    if (toSel) {
+      var keepTo = toSel.value;
+      toSel.innerHTML = list.filter(function (a) { return a.id !== selectedBankId; }).map(function (a) {
+        return '<option value="' + a.id + '">' + esc(a.displayName) + "</option>";
+      }).join("");
+      if (keepTo) toSel.value = keepTo;
+    }
     $("bankList").innerHTML = list.length ? "" : '<p class="empty">No bank accounts yet.</p>';
     list.forEach(function (a) {
       var div = document.createElement("div");
@@ -3537,14 +4097,54 @@ function bankTransact(kind) {
     loadBankAccounts(); loadBankTransactions();
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
-$("btnBankDeposit").addEventListener("click", function () { bankTransact("deposit"); });
-$("btnBankWithdraw").addEventListener("click", function () { bankTransact("withdraw"); });
+/* Bank account transfers (delta #12): the Deposit/Withdraw buttons
+   became a 4-action transfer menu; every action records real
+   movements on the server. */
+function bankTransfer(kind) {
+  if (!selectedBankId) { setMsg("appMsg", "Open an account's Transactions first.", true); return; }
+  var payload = { kind: kind, note: $("bankTxNote").value.trim(), client_ref: "xfer-" + Date.now() };
+  if (kind === "adjust") {
+    payload.adjust_to_paisa = rsToPaisa($("bankTxAdjustTo").value);
+  } else {
+    var amt = rsToPaisa($("bankTxAmount").value);
+    if (amt <= 0) { setMsg("appMsg", "Enter an amount.", true); return; }
+    payload.amount_paisa = amt;
+    if (kind === "bank_to_bank") {
+      var to = parseInt($("bankTxTo").value || "0", 10);
+      if (!to) { setMsg("appMsg", "Choose the account to transfer to.", true); return; }
+      payload.to_account_id = to;
+    }
+  }
+  apiPost("/api/bank-accounts/" + selectedBankId + "/transfer", payload).then(function () {
+    $("bankTxAmount").value = 0; $("bankTxNote").value = "";
+    setMsg("appMsg", "Transfer saved.");
+    loadBankAccounts(); loadBankTransactions(); loadCashBank();
+  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+}
+$("btnBankToCash").addEventListener("click", function () { bankTransfer("bank_to_cash"); });
+$("btnCashToBank").addEventListener("click", function () { bankTransfer("cash_to_bank"); });
+$("btnBankToBank").addEventListener("click", function () { bankTransfer("bank_to_bank"); });
+$("btnAdjustBank").addEventListener("click", function () { bankTransfer("adjust"); });
 $("btnBankStatement").addEventListener("click", function () {
   if (!selectedBankId) return;
   openReports("bank-statement");
 });
 function loadCheques() {
   fillPartySelects();
+  apiGet("/api/cheque-payments", null).then(function (r) {
+    var mk = function (list, emptyText) {
+      if (!list.length) return '<p class="empty">' + emptyText + "</p>";
+      return list.map(function (c) {
+        return '<div class="row">' + rowHtml("Cheque " + (c.refNo || "—"),
+          (c.date || "") + (c.party ? " · " + c.party : "") + (c.invoiceNo ? " · " + c.invoiceNo : ""),
+          fmtRs(c.amountPaisa)) + "</div>";
+      }).join("");
+    };
+    $("chqPayInList").innerHTML = mk(r.body.received || [], "No received cheques yet.") +
+      '<p class="note">Total received: ' + fmtRs(r.body.receivedTotalPaisa || 0) + "</p>";
+    $("chqPayOutList").innerHTML = mk(r.body.paid || [], "No paid cheques yet.") +
+      '<p class="note">Total paid: ' + fmtRs(r.body.paidTotalPaisa || 0) + "</p>";
+  }).catch(function () {});
   apiGet("/api/cheques", null).then(function (r) {
     var list = (r.body.cheques || []).slice().reverse();
     $("chequeList").innerHTML = list.length ? "" : '<p class="empty">No cheques yet.</p>';
@@ -4339,6 +4939,387 @@ $("previewNoShow").addEventListener("change", function () {
     });
   }
 });
+/* --------------------------------------------------- Quick Billing ---- */
+/* POS-style sale screen (delta #1). Each bill tab lives in memory;
+   Save & Print posts a normal sale through the existing API and
+   opens the bill PDF. */
+var qbBills = [];
+var qbActive = null;
+var qbSeq = 0;
+var qbSelectedRow = null;
+function qbNewBill() {
+  return { id: ++qbSeq, partyId: null, partyName: "", items: {}, order: [],
+           received: 0, payMode: "cash", partial: false, useSplit: false,
+           payRows: [], billDiscountPaisa: 0, billTaxPct: 0, loyalty: 0, remarks: "" };
+}
+function qbEnsure() {
+  if (!qbBills.length) { var b = qbNewBill(); qbBills.push(b); qbActive = b; }
+  if (!qbActive) qbActive = qbBills[0];
+}
+function qbLineCalc(bill, entry) {
+  if (entry.custom) {
+    return { rate: entry.ratePaisa || 0, gross: entry.ratePaisa || 0, disc: 0, tax: 0, total: entry.ratePaisa || 0 };
+  }
+  var it = itemById(entry.itemId) || {};
+  var rate = it.salePricePaisa || 0;
+  var gross = entry.qty * rate;
+  var disc = entry.discPct != null ? Math.round(gross * entry.discPct / 100)
+    : (it.discountType === "amount" ? (it.discountAmountPaisa || 0) * entry.qty
+       : Math.round(gross * (it.discountBp || 0) / 10000));
+  var taxPct = entry.taxPct != null ? entry.taxPct : ((it.taxBp || 0) / 100);
+  var tax = Math.round((gross - disc) * taxPct / 100);
+  return { rate: rate, gross: gross, disc: disc, tax: tax, total: gross - disc + tax };
+}
+function qbTotals(bill) {
+  var sub = 0, count = 0, qtyTotal = 0;
+  bill.order.forEach(function (id) {
+    var e = bill.items[id];
+    if (!e) return;
+    sub += qbLineCalc(bill, e).total;
+    count += 1;
+    qtyTotal += e.qty || 0;
+  });
+  var afterDisc = Math.max(sub - (bill.billDiscountPaisa || 0), 0);
+  var billTax = Math.round(afterDisc * (bill.billTaxPct || 0) / 100);
+  return { sub: sub, count: count, qty: qtyTotal, total: afterDisc + billTax, billTax: billTax };
+}
+function qbSyncSide() {
+  var bill = qbActive;
+  if (!bill) return;
+  bill.received = rsToPaisa($("qbReceived").value);
+  bill.remarks = $("qbRemarks").value;
+  bill.payMode = $("qbPayMode").value;
+}
+function renderQuickTotals() {
+  var bill = qbActive;
+  if (!bill) return;
+  var t = qbTotals(bill);
+  $("qbSubTotal").textContent = fmtRs(t.sub);
+  $("qbTotalLine").textContent = "Total Amount: " + fmtRs(t.total) +
+    " (Items: " + t.count + ", Quantity: " + t.qty + ")";
+  var received = bill.useSplit ? qbSplitSum() : rsToPaisa($("qbReceived").value);
+  $("qbChange").textContent = fmtRs(Math.max(received - t.total, 0));
+}
+function qbSplitSum() {
+  return (qbActive.payRows || []).reduce(function (s, p) { return s + (p.amount_paisa || 0); }, 0);
+}
+function syncQbPayRow(p, row) {
+  var v = row.querySelector(".qb-pay-type").value;
+  p.amount_paisa = rsToPaisa(row.querySelector(".qb-pay-amt").value);
+  p.ref = row.querySelector(".qb-pay-ref").value.trim();
+  if (v.indexOf("bank:") === 0) { p.mode = "bank"; p.bank_account_id = parseInt(v.slice(5), 10); }
+  else { p.mode = v; delete p.bank_account_id; }
+}
+function renderQbPayRows() {
+  var bill = qbActive;
+  var list = $("qbPayRowsList");
+  list.innerHTML = "";
+  (bill.payRows || []).forEach(function (p, idx) {
+    var row = document.createElement("div");
+    row.className = "pay-row";
+    row.innerHTML = '<select class="qb-pay-type"></select>' +
+      '<input class="qb-pay-amt" type="number" step="0.01" min="0" value="' + ((p.amount_paisa || 0) / 100) + '">' +
+      '<input class="qb-pay-ref' + (p.mode === "cash" ? " hidden" : "") + '" type="text" placeholder="Reference No." value="' + esc(p.ref || "") + '">' +
+      '<button class="rm" type="button" title="Remove payment">×</button>';
+    var sel = row.querySelector(".qb-pay-type");
+    sel.innerHTML = '<option value="cash">Cash</option><option value="cheque">Cheque</option>' +
+      (docBankAccounts || []).map(function (a) {
+        return '<option value="bank:' + a.id + '">' + esc(a.displayName) + "</option>";
+      }).join("");
+    sel.value = p.mode === "bank" ? "bank:" + p.bank_account_id : p.mode;
+    sel.addEventListener("change", function () {
+      syncQbPayRow(p, row);
+      row.querySelector(".qb-pay-ref").classList.toggle("hidden", sel.value === "cash");
+    });
+    row.querySelector(".qb-pay-amt").addEventListener("input", function () { syncQbPayRow(p, row); renderQuickTotals(); });
+    row.querySelector(".qb-pay-ref").addEventListener("input", function () { syncQbPayRow(p, row); });
+    row.querySelector(".rm").addEventListener("click", function () {
+      bill.payRows.splice(idx, 1);
+      renderQbPayRows();
+      renderQuickTotals();
+    });
+    list.appendChild(row);
+  });
+}
+function markQbRow() {
+  $("qbGrid").querySelectorAll("[data-qbrow]").forEach(function (tr) {
+    tr.style.background = tr.getAttribute("data-qbrow") === String(qbSelectedRow) ? "#eef4ff" : "";
+  });
+}
+function renderQuick() {
+  qbEnsure();
+  var bill = qbActive;
+  $("qbBillTabs").innerHTML = "";
+  qbBills.forEach(function (b, i) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "doc-tab" + (b === bill ? " active" : "");
+    btn.textContent = "#" + (i + 1);
+    btn.addEventListener("click", function () { qbSyncSide(); qbActive = b; renderQuick(); });
+    $("qbBillTabs").appendChild(btn);
+  });
+  var add = document.createElement("button");
+  add.type = "button";
+  add.className = "doc-tab";
+  add.textContent = "+ New Bill";
+  add.addEventListener("click", function () {
+    qbSyncSide();
+    var b = qbNewBill();
+    qbBills.push(b);
+    qbActive = b;
+    renderQuick();
+  });
+  $("qbBillTabs").appendChild(add);
+  var items = ((cacheGet("items") || {}).items) || [];
+  var byId = {};
+  items.forEach(function (i) { byId[i.id] = i; });
+  $("qbGrid").innerHTML = bill.order.map(function (id, idx) {
+    var e = bill.items[id];
+    var it = byId[id] || {};
+    var c = qbLineCalc(bill, e);
+    return "<tr data-qbrow='" + id + "'>" +
+      "<td>" + (idx + 1) + "</td><td>" + esc(e.custom ? "—" : (it.itemCode || "—")) + "</td>" +
+      "<td>" + esc(e.custom ? e.name : (it.name || "")) + "</td>" +
+      '<td><input class="qb-grid-input qb-qty" data-qbqty="' + id + '" type="number" min="1" step="1" value="' + e.qty + '"></td>' +
+      "<td>" + esc(e.custom ? "—" : (it.unit || "Pcs")) + "</td>" +
+      "<td>" + fmtRs(c.rate) + "</td><td>" + fmtRs(c.disc) + "</td><td>" + fmtRs(c.tax) + "</td>" +
+      "<td>" + fmtRs(c.total) + "</td></tr>";
+  }).join("");
+  $("qbEmpty").classList.toggle("hidden", bill.order.length > 0);
+  $("qbGrid").querySelectorAll("[data-qbqty]").forEach(function (inp) {
+    inp.addEventListener("change", function () {
+      var id = inp.getAttribute("data-qbqty");
+      bill.items[id].qty = Math.max(parseInt(inp.value || "1", 10) || 1, 1);
+      renderQuick();
+    });
+  });
+  $("qbGrid").querySelectorAll("[data-qbrow]").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      qbSelectedRow = tr.getAttribute("data-qbrow");
+      markQbRow();
+    });
+  });
+  markQbRow();
+  $("qbPartyChosen").textContent = bill.partyId ? ("Customer: " + bill.partyName) : "Cash Sale (no customer chosen)";
+  $("qbPayMode").value = bill.payMode || "cash";
+  $("qbPayRowsWrap").classList.toggle("hidden", !bill.useSplit);
+  renderQbPayRows();
+  $("qbReceived").value = bill.received ? (bill.received / 100).toFixed(2) : "";
+  $("qbRemarks").value = bill.remarks || "";
+  renderQuickTotals();
+}
+function loadQuick() {
+  qbEnsure();
+  Promise.all([
+    apiGet("/api/items", "items"),
+    apiGet("/api/parties", "parties"),
+    apiGet("/api/bank-accounts", "bankaccounts")
+  ]).then(function () {
+    docBankAccounts = ((cacheGet("bankaccounts") || {}).bankAccounts) || [];
+    var sel = $("qbPayMode");
+    var keep = qbActive.payMode || sel.value;
+    sel.innerHTML = '<option value="cash">Cash</option><option value="cheque">Cheque</option>' +
+      docBankAccounts.map(function (a) {
+        return '<option value="bank:' + a.id + '">' + esc(a.displayName) + "</option>";
+      }).join("");
+    sel.value = keep || "cash";
+    renderQuick();
+  }).catch(function () { renderQuick(); });
+}
+function qbAddItem(id) {
+  var bill = qbActive;
+  if (bill.items[id]) bill.items[id].qty += 1;
+  else { bill.items[id] = { itemId: id, qty: 1, discPct: null, taxPct: null }; bill.order.push(id); }
+  qbSelectedRow = String(id);
+  $("qbSearch").value = "";
+  $("qbResults").innerHTML = "";
+  renderQuick();
+  $("qbSearch").focus();
+}
+$("qbSearch").addEventListener("input", function () {
+  var q = $("qbSearch").value.trim().toLowerCase();
+  var box = $("qbResults");
+  if (!q) { box.innerHTML = ""; return; }
+  var items = ((cacheGet("items") || {}).items) || [];
+  var hits = items.filter(function (i) {
+    return i.name.toLowerCase().indexOf(q) >= 0 || (i.itemCode || "").toLowerCase().indexOf(q) >= 0;
+  }).slice(0, 8);
+  box.innerHTML = hits.map(function (i) {
+    return '<button type="button" class="qb-result" data-qbadd="' + i.id + '">' + esc(i.name) +
+      (i.itemCode ? " · " + esc(i.itemCode) : "") + " · " + fmtRs(i.salePricePaisa) + "</button>";
+  }).join("");
+  box.querySelectorAll("[data-qbadd]").forEach(function (b) {
+    b.addEventListener("click", function () { qbAddItem(+b.getAttribute("data-qbadd")); });
+  });
+});
+$("qbSearch").addEventListener("keydown", function (ev) {
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  var q = $("qbSearch").value.trim().toLowerCase();
+  if (!q) return;
+  var items = ((cacheGet("items") || {}).items) || [];
+  var hit = items.filter(function (i) { return (i.itemCode || "").toLowerCase() === q; })[0] ||
+            items.filter(function (i) { return i.name.toLowerCase().indexOf(q) >= 0; })[0];
+  if (hit) qbAddItem(hit.id);
+});
+$("qbPartySearch").addEventListener("input", function () {
+  var q = $("qbPartySearch").value.trim().toLowerCase();
+  var box = $("qbPartyResults");
+  if (!q) { box.innerHTML = ""; return; }
+  var parties = ((cacheGet("parties") || {}).parties) || [];
+  var hits = parties.filter(function (p) {
+    return p.name.toLowerCase().indexOf(q) >= 0 || (p.phone || "").indexOf(q) >= 0;
+  }).slice(0, 8);
+  box.innerHTML = hits.map(function (p) {
+    return '<button type="button" class="qb-result" data-qbparty="' + p.id + '">' + esc(p.name) +
+      (p.phone ? " · " + esc(p.phone) : "") + "</button>";
+  }).join("") + '<button type="button" class="qb-result" data-qbparty="">Cash Sale (no customer)</button>';
+  box.querySelectorAll("[data-qbparty]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var id = b.getAttribute("data-qbparty");
+      var p = parties.filter(function (x) { return String(x.id) === id; })[0];
+      qbActive.partyId = p ? p.id : null;
+      qbActive.partyName = p ? p.name : "";
+      $("qbPartySearch").value = "";
+      box.innerHTML = "";
+      renderQuick();
+    });
+  });
+});
+$("qbReceived").addEventListener("input", function () {
+  if (!qbActive) return;
+  qbActive.received = rsToPaisa($("qbReceived").value);
+  renderQuickTotals();
+});
+$("qbPayMode").addEventListener("change", function () {
+  qbActive.payMode = $("qbPayMode").value;
+  renderQuickTotals();
+});
+$("qbRemarks").addEventListener("input", function () { qbActive.remarks = $("qbRemarks").value; });
+$("qbAddPayRow").addEventListener("click", function () {
+  qbActive.payRows.push({ mode: "cash", amount_paisa: 0, ref: "" });
+  renderQbPayRows();
+});
+function qbNeedRow() {
+  if (!qbActive || qbSelectedRow == null || !qbActive.items[qbSelectedRow]) {
+    setMsg("qbMsg", "Select an item row first.", true);
+    return null;
+  }
+  return qbActive.items[qbSelectedRow];
+}
+$("qbBtnQty").addEventListener("click", function () {
+  var e = qbNeedRow(); if (!e) return;
+  var v = prompt("Quantity for this item:", e.qty);
+  if (v == null) return;
+  e.qty = Math.max(parseInt(v, 10) || 1, 1);
+  renderQuick();
+});
+$("qbBtnDisc").addEventListener("click", function () {
+  var e = qbNeedRow(); if (!e) return;
+  var v = prompt("Discount % for this item:", e.discPct == null ? "" : e.discPct);
+  if (v == null) return;
+  e.discPct = Math.max(parseFloat(v) || 0, 0);
+  renderQuick();
+});
+$("qbBtnRemove").addEventListener("click", function () {
+  if (!qbNeedRow()) return;
+  delete qbActive.items[qbSelectedRow];
+  qbActive.order = qbActive.order.filter(function (id) { return String(id) !== String(qbSelectedRow); });
+  qbSelectedRow = null;
+  renderQuick();
+});
+$("qbBtnTax").addEventListener("click", function () {
+  var v = prompt("Bill tax % (applied on the total after bill discount):", qbActive.billTaxPct || 0);
+  if (v == null) return;
+  qbActive.billTaxPct = Math.max(parseFloat(v) || 0, 0);
+  renderQuick();
+});
+$("qbBtnCharges").addEventListener("click", function () {
+  var v = prompt("Additional charges (Rs):", "0");
+  if (v == null) return;
+  var amt = rsToPaisa(v);
+  if (amt <= 0) return;
+  var key = "custom" + (++qbSeq);
+  qbActive.items[key] = { itemId: null, custom: true, name: "Additional Charges", ratePaisa: amt, qty: 1 };
+  qbActive.order.push(key);
+  renderQuick();
+});
+$("qbBtnBillDisc").addEventListener("click", function () {
+  var v = prompt("Bill discount (Rs):", ((qbActive.billDiscountPaisa || 0) / 100).toFixed(2));
+  if (v == null) return;
+  qbActive.billDiscountPaisa = Math.max(rsToPaisa(v), 0);
+  renderQuick();
+});
+$("qbBtnLoyalty").addEventListener("click", function () {
+  if (!qbActive.partyId) { setMsg("qbMsg", "Choose a customer first to use loyalty points.", true); return; }
+  var v = prompt("Loyalty points to use:", qbActive.loyalty || 0);
+  if (v == null) return;
+  qbActive.loyalty = Math.max(parseInt(v, 10) || 0, 0);
+  setMsg("qbMsg", "Loyalty points set: " + qbActive.loyalty + " (applied on save).");
+});
+$("qbBtnRemarks").addEventListener("click", function () { $("qbRemarks").focus(); });
+$("qbBtnPartial").addEventListener("click", function () {
+  qbActive.partial = !qbActive.partial;
+  setMsg("qbMsg", qbActive.partial
+    ? "Partial Pay ON — only the Amount Received will be recorded as paid."
+    : "Partial Pay OFF — the full bill amount will be recorded as paid.");
+  $("qbReceived").focus();
+});
+$("qbBtnMulti").addEventListener("click", function () {
+  qbActive.useSplit = !qbActive.useSplit;
+  if (qbActive.useSplit && !qbActive.payRows.length) {
+    qbActive.payRows.push({ mode: "cash", amount_paisa: 0, ref: "" });
+  }
+  renderQuick();
+});
+function qbSave() {
+  var bill = qbActive;
+  qbSyncSide();
+  if (!bill.order.length) { setMsg("qbMsg", "Add at least one item.", true); return; }
+  var t = qbTotals(bill);
+  var lines = bill.order.map(function (id) {
+    var e = bill.items[id];
+    if (e.custom) return { qty: 1, rate_paisa: e.ratePaisa || 0, description: e.name };
+    var c = qbLineCalc(bill, e);
+    return { item_id: +id, qty: e.qty, rate_paisa: c.rate, discount_paisa: c.disc, tax_paisa: c.tax };
+  });
+  var payload = { type: "sale", party_id: bill.partyId || null, lines: lines,
+                  discount_paisa: Math.min(bill.billDiscountPaisa || 0, t.sub),
+                  tax_paisa: t.billTax, description: bill.remarks || "" };
+  if (bill.loyalty > 0) payload.loyalty_points_used = bill.loyalty;
+  if (bill.useSplit) {
+    var rows = bill.payRows.filter(function (p) { return p.amount_paisa > 0; }).map(function (p) {
+      var row = { mode: p.mode, amount_paisa: p.amount_paisa };
+      if (p.mode === "bank") { row.bank_account_id = p.bank_account_id; row.reference_no = p.ref || ""; }
+      if (p.mode === "cheque") row.cheque_no = p.ref || "";
+      return row;
+    });
+    if (rows.length) payload.payments = rows;
+  }
+  if (!payload.payments) {
+    var paid = bill.partial ? Math.min(bill.received || 0, t.total) : t.total;
+    if (bill.payMode === "cheque") payload.payments = [{ mode: "cheque", amount_paisa: paid }];
+    else if (bill.payMode && bill.payMode.indexOf("bank:") === 0) {
+      payload.payments = [{ mode: "bank", bank_account_id: parseInt(bill.payMode.slice(5), 10), amount_paisa: paid }];
+    } else payload.paid_paisa = paid;
+  }
+  apiCreate("invoice", payload).then(function (r) {
+    if (r.queued) {
+      setMsg("qbMsg", "Saved on this device — it will sync when online. The PDF will be available after sync.");
+    } else {
+      setMsg("qbMsg", "Bill " + (r.body.invoice ? r.body.invoice.invoiceNo : "") + " saved.");
+      if (r.body.invoice) downloadInvoicePdf(r.body.invoice.id, false);
+    }
+    qbBills = qbBills.filter(function (b) { return b !== bill; });
+    qbActive = null;
+    qbSelectedRow = null;
+    qbEnsure();
+    renderQuick();
+    loadDashboard();
+  }).catch(function (e) { setMsg("qbMsg", e.message, true); });
+}
+$("qbBtnSavePrint").addEventListener("click", qbSave);
+
 $("btnPreviewPdf").addEventListener("click", function () {
   if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, false);
 });

@@ -163,6 +163,8 @@ def _module_action_for_request():
     if path.startswith("/api/journal") or path.startswith("/api/accounts"):
         return "Journal Entries", action
     if path.startswith("/api/bank-accounts") or path.startswith("/api/cheques") \
+            or path.startswith("/api/cheque-payments") \
+            or path.startswith("/api/cash-adjustments") \
             or path.startswith("/api/loans"):
         return "Cash & Bank", action
     if path.startswith("/api/store"):

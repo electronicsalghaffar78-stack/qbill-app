@@ -158,7 +158,8 @@
             <div class="stat"><span class="stat-label">Today's Sales</span><span class="stat-value" id="dToday">—</span></div>
             <div class="stat"><span class="stat-label">You'll Receive</span><span class="stat-value pos" id="dReceivable">—</span><span class="note" id="dTopParty"></span></div>
             <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span></div>
-            <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span></div>
+            <div class="stat"><span class="stat-label">Purchase (This Month)</span><span class="stat-value" id="dPurchases">—</span><span class="note" id="dTopPurchaseParty"></span></div>
+            <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span><svg id="dExpChart" width="100%" height="36" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Expenses, last 30 days"></svg></div>
             <div class="stat"><span class="stat-label">Profit (This Month)</span><span class="stat-value" id="dProfit">—</span></div>
           </div>
           <div class="card">
@@ -194,6 +195,11 @@
             <div class="kv" id="widgetBankRow"><span>Total Bank Balance</span><strong id="dBank">—</strong></div>
           </div>
           <div class="card side-card">
+            <h3>Open Cheques</h3>
+            <div class="kv"><span>Received</span><strong id="dChqIn">0</strong></div>
+            <div class="kv"><span>Paid</span><strong id="dChqOut">0</strong></div>
+          </div>
+          <div class="card side-card">
             <h3>Add Widget of Your Choice</h3>
             <label class="check-row"><input type="checkbox" data-widget="cash_in_hand"> <span>Cash In Hand</span></label>
             <label class="check-row"><input type="checkbox" data-widget="bank_balance"> <span>Total Bank Balance</span></label>
@@ -218,7 +224,6 @@
         <div class="grid2">
           <label>Name <input id="partyName" type="text" required></label>
           <label>Phone <input id="partyPhone" type="text"></label>
-          <label>Opening balance (Rs) <input id="partyOpening" type="number" step="0.01" value="0"></label>
           <label>Party Group
             <select id="partyGroup"><option value="">— No group —</option></select>
           </label>
@@ -229,10 +234,32 @@
           <label>Email <input id="partyEmail" type="email"></label>
           <label>Loyalty Points <input id="partyLoyalty" type="number" step="1" min="0" value="0"></label>
         </div>
-        <label>Billing Address <textarea id="partyBilling" rows="2"></textarea></label>
-        <label>Shipping Address <textarea id="partyShipping" rows="2"></textarea></label>
-        <div class="grid2" id="partyExtras"></div>
+        <div class="filter-chips" style="margin-top:4px">
+          <button class="fchip active" data-partytab="address" type="button">Address</button>
+          <button class="fchip" data-partytab="credit" type="button">Credit &amp; Balance</button>
+          <button class="fchip" data-partytab="extra" type="button">Additional Fields</button>
+        </div>
+        <div data-partypanel="address">
+          <label>Billing Address <textarea id="partyBilling" rows="2"></textarea></label>
+          <label>Shipping Address <textarea id="partyShipping" rows="2"></textarea></label>
+        </div>
+        <div data-partypanel="credit" class="hidden">
+          <div class="grid2">
+            <label>Opening Balance (Rs) <input id="partyOpening" type="number" step="0.01" value="0"></label>
+            <label>As Of Date <input id="partyOpeningDate" type="date"></label>
+          </div>
+          <label style="margin-bottom:4px">Credit Limit</label>
+          <label class="check-row"><input type="radio" name="partyCreditType" value="none" checked> <span>No Limit</span></label>
+          <label class="check-row"><input type="radio" name="partyCreditType" value="custom"> <span>Custom Limit</span></label>
+          <label id="partyCreditLimitWrap" class="hidden">Credit Limit Amount (Rs) <input id="partyCreditLimit" type="number" step="0.01" min="0" value="0"></label>
+          <p class="note">A custom limit is shown on the party and in the bill form's party list, so you can see it before selling on credit.</p>
+        </div>
+        <div data-partypanel="extra" class="hidden">
+          <div class="grid2" id="partyExtras"></div>
+          <p class="note">Additional fields are set up in Settings &gt; PARTY.</p>
+        </div>
         <button class="btn btn-primary" type="submit" id="partySubmitBtn">Add party</button>
+        <button class="btn" type="button" id="partySaveNew">Save &amp; New</button>
         <button class="btn btn-link hidden" id="partyCancelEdit" type="button">Cancel edit</button>
       </form>
       <div class="card hidden" id="reminderCard">
@@ -279,9 +306,12 @@
             <label>Sale price (Rs) <input id="itemSale" type="number" step="0.01" min="0" value="0"></label>
             <label>Purchase price (Rs) <input id="itemPurchase" type="number" step="0.01" min="0" value="0"></label>
             <label>Wholesale price (Rs) <input id="itemWholesale" type="number" step="0.01" min="0" value="0"></label>
+            <label>Minimum Wholesale Qty <input id="itemMinWholesaleQty" type="number" step="1" min="0" value="0"></label>
             <label>MRP (Rs) <input id="itemMrp" type="number" step="0.01" min="0" value="0"></label>
             <label>Tax % <input id="itemTaxPct" type="number" step="0.01" min="0" value="0"></label>
-            <label>Discount % <input id="itemDiscountPct" type="number" step="0.01" min="0" value="0"></label>
+            <label>Disc. On Sale Price
+              <span style="display:flex; gap:6px"><input id="itemDiscountPct" type="number" step="0.01" min="0" value="0" style="margin-top:0"><select id="itemDiscountType" style="width:auto; margin-top:0"><option value="percentage">Percentage</option><option value="amount">Amount (Rs)</option></select></span>
+            </label>
             <label>Unit
               <select id="itemUnit"></select>
             </label>
@@ -301,6 +331,7 @@
             <p class="note">When batches are added, the opening stock becomes the total of the batches.</p>
           </div>
           <button class="btn btn-primary" type="submit" id="itemSubmitBtn">Add Item</button>
+          <button class="btn" type="button" id="itemSaveNew">Save &amp; New</button>
           <button class="btn btn-link hidden" id="itemCancelEdit" type="button">Cancel edit</button>
         </form>
         <div class="card">
@@ -391,6 +422,7 @@
 
     <!-- Document form (shared by every document type) -->
     <section id="screen-sale" class="screen hidden">
+      <div class="doc-tabs" id="docTabs"></div>
       <form id="saleForm" class="card form-card doc-form">
         <div class="doc-head">
           <h2 id="docTitle">Sale Invoice</h2>
@@ -430,6 +462,11 @@
           <label class="check-row"><input id="docRoundOff" type="checkbox"> <span>Round Off</span></label>
           <p class="sale-total">Total: <strong id="saleTotal">Rs 0.00</strong><br><span class="note" id="docProfitHint"></span></p>
         </div>
+        <div id="docPayBlock">
+          <div id="docPayRows"></div>
+          <button id="btnAddPayRow" class="btn btn-link" type="button">+ Add Payment type</button>
+          <p class="note" id="docPayTotal" style="font-weight:700"></p>
+        </div>
         <div class="card" style="box-shadow:none; margin:10px 0">
           <h3 style="margin-top:0">More Details</h3>
           <div class="grid2">
@@ -459,6 +496,7 @@
           </div>
         </div>
         <button class="btn btn-primary btn-block" id="docSaveBtn" type="submit">Save</button>
+        <button class="btn btn-block" id="docSaveNewBtn" type="button">Save &amp; New</button>
       </form>
     </section>
 
@@ -492,6 +530,55 @@
           <button id="btnSaleBook" class="btn btn-link" type="button">Open the book</button>
         </div>
       </div>
+    </section>
+
+    <!-- Quick Billing / POS -->
+    <section id="screen-quick" class="screen hidden">
+      <div class="qb-billtabs" id="qbBillTabs"></div>
+      <div class="qb-layout">
+        <div class="card">
+          <input id="qbSearch" type="text" placeholder="Scan or search by item code, model no or item name" autocomplete="off">
+          <div id="qbResults" class="qb-results"></div>
+          <table class="tbl">
+            <thead><tr><th>#</th><th>ITEM CODE</th><th>ITEM NAME</th><th>QTY</th><th>UNIT</th><th>PRICE/UNIT</th><th>DISCOUNT</th><th>TAX APPLIED</th><th>TOTAL</th></tr></thead>
+            <tbody id="qbGrid"></tbody>
+          </table>
+          <p class="note" id="qbEmpty">No items yet — search above or scan a barcode to add.</p>
+          <div class="qb-shortcuts">
+            <button class="btn" id="qbBtnQty" type="button">Change Quantity</button>
+            <button class="btn" id="qbBtnDisc" type="button">Item Discount</button>
+            <button class="btn" id="qbBtnRemove" type="button">Remove Item</button>
+            <button class="btn" id="qbBtnTax" type="button">Bill Tax</button>
+            <button class="btn btn-primary" id="qbBtnSavePrint" type="button">Save &amp; Print Bill</button>
+            <button class="btn" id="qbBtnCharges" type="button">Additional Charges</button>
+            <button class="btn" id="qbBtnBillDisc" type="button">Bill Discount</button>
+            <button class="btn" id="qbBtnLoyalty" type="button">Loyalty Points</button>
+            <button class="btn" id="qbBtnRemarks" type="button">Remarks</button>
+            <button class="btn" id="qbBtnPartial" type="button">Partial Pay</button>
+            <button class="btn" id="qbBtnMulti" type="button">Multi Pay</button>
+          </div>
+        </div>
+        <div class="card qb-side">
+          <h3>Customer Details</h3>
+          <input id="qbPartySearch" type="text" placeholder="Search customer by name or phone" autocomplete="off">
+          <div id="qbPartyResults" class="qb-results"></div>
+          <p id="qbPartyChosen" class="note">Cash Sale (no customer chosen)</p>
+          <h3 style="margin-top:14px">Bill Details</h3>
+          <div class="kv"><span>Sub Total</span><strong id="qbSubTotal">Rs 0.00</strong></div>
+          <p id="qbTotalLine" style="font-weight:800">Total Amount (Items: 0, Quantity: 0)</p>
+          <label>Payment Mode
+            <select id="qbPayMode"><option value="cash">Cash</option><option value="cheque">Cheque</option></select>
+          </label>
+          <div id="qbPayRowsWrap" class="hidden">
+            <div id="qbPayRowsList"></div>
+            <button id="qbAddPayRow" class="btn btn-link" type="button">+ Add Payment type</button>
+          </div>
+          <label>Amount Received (Rs) <input id="qbReceived" type="number" step="0.01" min="0" value="0"></label>
+          <div class="kv"><span>Change to Return</span><strong id="qbChange">Rs 0.00</strong></div>
+          <label>Remarks <input id="qbRemarks" type="text" placeholder="Optional"></label>
+        </div>
+      </div>
+      <p class="banner" id="qbMsg"></p>
     </section>
 
     <!-- Payments -->
@@ -683,10 +770,14 @@
           <div class="grid2">
             <label>Amount (Rs) <input id="bankTxAmount" type="number" step="0.01" min="0" value="0"></label>
             <label>Note <input id="bankTxNote" type="text"></label>
+            <label>To Bank Account (for Bank to Bank) <select id="bankTxTo"></select></label>
+            <label>Adjust Balance To (Rs) <input id="bankTxAdjustTo" type="number" step="0.01" min="0" value="0"></label>
           </div>
-          <div style="display:flex; gap:8px">
-            <button id="btnBankDeposit" class="btn btn-primary" type="button">Deposit</button>
-            <button id="btnBankWithdraw" class="btn" type="button">Withdraw</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button id="btnBankToCash" class="btn btn-primary" type="button">Bank to Cash Transfer</button>
+            <button id="btnCashToBank" class="btn" type="button">Cash to Bank Transfer</button>
+            <button id="btnBankToBank" class="btn" type="button">Bank to Bank Transfer</button>
+            <button id="btnAdjustBank" class="btn" type="button">Adjust Bank Balance</button>
             <button id="btnBankStatement" class="btn" type="button">Bank Statement</button>
           </div>
           <div id="bankTxList" class="list" style="margin-top:10px"></div>
@@ -698,10 +789,18 @@
           <div class="stat"><span class="stat-label">Total Payments Out</span><span class="stat-value neg" id="cbOut">—</span></div>
           <div class="stat"><span class="stat-label">Cash in Hand</span><span class="stat-value" id="cbCashAmt">—</span></div>
         </div>
+        <div class="row-btns"><button class="btn btn-primary" id="btnAdjustCash" type="button">Adjust Cash</button></div>
         <h3>All payments</h3>
         <div id="cashbankList" class="list"></div>
       </div>
       <div id="cbCheques" class="hidden">
+        <div class="card">
+          <h3>Cheques from Bills</h3>
+          <h4>Received Cheques</h4>
+          <div id="chqPayInList"><p class="note">Loading…</p></div>
+          <h4>Paid Cheques</h4>
+          <div id="chqPayOutList"><p class="note">Loading…</p></div>
+        </div>
         <form id="chequeForm" class="card form-card">
           <h2>Add Cheque</h2>
           <div class="grid2">
@@ -789,6 +888,33 @@
       </div>
       <div class="filter-chips" id="reportChips"></div>
       <h2 id="reportTitle">All Transactions</h2>
+      <div class="row-btns hidden" id="repTxTools" style="margin:8px 0">
+        <label>Type
+          <select id="repTypeFilter">
+            <option value="">All Types</option>
+            <option value="sale">Sale</option>
+            <option value="purchase">Purchase</option>
+            <option value="sale_return">Sale Return</option>
+            <option value="purchase_return">Purchase Return</option>
+            <option value="estimate">Estimate</option>
+            <option value="sale_order">Sale Order</option>
+            <option value="purchase_order">Purchase Order</option>
+            <option value="challan">Delivery Challan</option>
+            <option value="proforma">Proforma Invoice</option>
+            <option value="payment_in">Payment In</option>
+            <option value="payment_out">Payment Out</option>
+            <option value="expense">Expense</option>
+            <option value="other_income">Other Income</option>
+          </select>
+        </label>
+        <button class="btn" id="btnRepExcel" type="button">Excel (CSV)</button>
+        <button class="btn" id="btnRepPrint" type="button">Print</button>
+      </div>
+      <div class="row-btns hidden" id="repTbOptions" style="margin:8px 0">
+        <label class="check-row"><input id="tbWorking" type="checkbox"> <span>Show working trial balance</span></label>
+        <label class="check-row"><input id="tbZero" type="checkbox" checked> <span>Show 0 balance accounts</span></label>
+        <label class="check-row"><input id="tbCollapse" type="checkbox"> <span>Collapse all accounts</span></label>
+      </div>
       <div id="reportGraphWrap" class="card hidden">
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px">
           <span class="stat-label">Period</span>
@@ -1075,6 +1201,7 @@
         <button class="set-cat" data-setcat="party" type="button">PARTY</button>
         <button class="set-cat" data-setcat="item" type="button">ITEM</button>
         <button class="set-cat" data-setcat="accounting" type="button">ACCOUNTING</button>
+        <button class="set-cat" data-setcat="usermgmt" type="button">USER MANAGEMENT</button>
         <button class="set-cat" data-setcat="backups" type="button">BACKUPS</button>
         <button class="set-cat hidden" data-setcat="email" id="setCatEmail" type="button">EMAIL DELIVERY</button>
         <button class="set-cat hidden" data-setcat="accounts" id="setCatAccounts" type="button">CUSTOMER ACCOUNTS</button>
@@ -1085,6 +1212,11 @@
         <label>Address <input id="profAddress" type="text"></label>
         <label>Phone <input id="profPhone" type="text"></label>
         <label>Email <input id="profEmail" type="email"></label>
+        <label>Business Type <input id="profBizType" type="text" placeholder="e.g. Retail, Wholesale, Services"></label>
+        <label>Business Category <input id="profBizCategory" type="text" placeholder="e.g. Electronics &amp; Solar"></label>
+        <label>Pincode <input id="profPincode" type="text"></label>
+        <label>State / Province <input id="profState" type="text" placeholder="e.g. Sindh"></label>
+        <label>Signature Text <input id="profSignature" type="text" placeholder="Printed above Authorised Signatory on bills"></label>
         <button class="btn btn-primary" type="submit">Save profile</button>
       </form>
 
@@ -1132,6 +1264,13 @@
         <label class="check-row"><input type="checkbox" data-setting="due_dates_payment_terms"> <span>Due Dates and Payment Terms</span></label>
         <label class="check-row"><input type="checkbox" data-setting="show_profit_on_sale"> <span>Show Profit while making Sale Invoice</span></label>
         <label class="check-row"><input type="checkbox" data-setting="repeat_invoices"> <span>Repeat Invoices</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_add_time"> <span>Add Time on Transactions (time is stored and printed in Invoice Details)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_cash_sale_default"> <span>Cash Sale by default (the bill form opens in Cash mode)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_wise_tax"> <span>Transaction wise Tax (per-line tax on the bill form)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="txn_wise_discount"> <span>Transaction wise Discount (per-line discount on the bill form)</span></label>
+        <label>Round Off
+          <select data-setting="round_off_mode"><option value="nearest">Nearest</option><option value="one">To 1</option></select>
+        </label>
         <h3>Transaction Prefixes</h3>
         <div class="grid2" id="prefixGrid"></div>
         <button class="btn btn-primary" id="btnSavePrefixes" type="button">Save prefixes</button>
@@ -1274,6 +1413,12 @@
         <h2>Accounting</h2>
         <label class="check-row"><input type="checkbox" data-setting="accounting_enabled"> <span>Enable Accounting module (Chart Of Accounts, Journal Entries, Balance Sheet, Trial Balance)</span></label>
         <p class="note">When on, the Accounting screen opens from the main menu.</p>
+      </div>
+
+      <div class="card form-card hidden" data-setcard="usermgmt">
+        <h2>User Management</h2>
+        <p class="note">Team members, roles and permissions (Biller, Salesman, Stock Keeper, Accountant) are managed on the Team &amp; Roles screen.</p>
+        <button id="btnOpenTeam" class="btn btn-primary" type="button">Open Team &amp; Roles</button>
       </div>
 
       <div class="card form-card hidden" data-setcard="backups">
