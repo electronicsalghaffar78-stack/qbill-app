@@ -294,6 +294,25 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
         pdf.drawString(left, y, " · ".join(bits)[:115])
         y -= 13
         pdf.setFont("Helvetica", 10)
+    # Party additional fields whose Settings "Show In Print" switch is
+    # ON (build .20 parity: the switch existed in Settings but nothing
+    # printed the values — a dead toggle). Label: value, under the
+    # party block, only for fields the party actually has a value for.
+    _extras = party.get("extras") or {}
+    _extra_lines = []
+    for _f in settings.get("party_extra_fields") or []:
+        if not isinstance(_f, dict):
+            continue
+        if _f.get("enabled") and _f.get("show_in_print"):
+            _v = _extras.get(_f.get("label") or "")
+            if _v:
+                _extra_lines.append("{}: {}".format(_f["label"], _v))
+    if _extra_lines:
+        pdf.setFont("Helvetica", 9)
+        for _line in _extra_lines:
+            pdf.drawString(left, y, _line[:110])
+            y -= 12
+        pdf.setFont("Helvetica", 10)
     y -= 2
     pdf.line(left, y, right, y)
     y -= 18
@@ -569,8 +588,12 @@ def _render_thermal(business, invoice, party_name, settings, opts):
     y -= 8
     pdf.line(left, y, right, y)
     y -= 12
-    for line in invoice["lines"]:
-        pdf.drawString(left, y, str(line["description"])[:30])
+    for _ln_idx, line in enumerate(invoice["lines"], 1):
+        # Build .20 (defect D5): every printed line is numbered, the
+        # same "#" the A4 bill carries — the thermal roll used to
+        # print bare descriptions with no line numbers.
+        pdf.drawString(left, y, "{}. {}".format(
+            _ln_idx, str(line["description"])[:27]))
         y -= 10
         pdf.drawString(
             left + 8, y,

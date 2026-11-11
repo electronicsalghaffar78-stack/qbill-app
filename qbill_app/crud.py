@@ -71,17 +71,28 @@ def _client_ref(data):
 
 
 def party_balance_map(tx, business_id, include_deleted=False):
-    """Current balance per party, in paisa (positive = the party owes us).
+    """Current balance per party, in paisa.
 
-    balance = opening + sale totals - purchase totals
-              - sale returns + purchase returns
-              - payments in (party paid us) + payments out (we paid party)
-    Invoice-time payments are ordinary payment rows, so an invoice's own
-    paid part nets out automatically. Estimates, orders and challans are
-    NOT dues and never enter the balance. One aggregate query, exact
-    integers. Soft-deleted parties are excluded everywhere totals are
-    shown; the Recycle Bin passes include_deleted=True so a binned
-    party still displays the balance it carried.
+    SIGN CONVENTION (build .20, on the owner's word — his defect list
+    D4, 2026-11-11): POSITIVE = we owe the party (To Pay — e.g. an
+    unpaid purchase); NEGATIVE = the party owes us / money is out
+    with the party (To Receive — e.g. an unpaid sale, or an advance
+    Payment-Out to a party with no dues, which must read as a MINUS
+    figure, never clamped to zero). The stored opening balance keeps
+    its entry meaning (positive at entry = the party owed us), so the
+    displayed balance is the negation of the entry-side sum:
+
+    balance = -(opening + sale totals - purchase totals
+                - sale returns + purchase returns
+                - payments in (party paid us) + payments out (we paid))
+
+    Invoice-time payments are ordinary payment rows, so an invoice's
+    own paid part nets out automatically. Estimates, orders and
+    challans are NOT dues and never enter the balance. One aggregate
+    query, exact integers. Soft-deleted parties are excluded
+    everywhere totals are shown; the Recycle Bin passes
+    include_deleted=True so a binned party still displays the balance
+    it carried.
     """
     rows = tx.query_all(
         "SELECT p.id AS pid, p.opening_balance_paisa AS opening, "
@@ -106,9 +117,9 @@ def party_balance_map(tx, business_id, include_deleted=False):
         (business_id,),
     )
     return {
-        r["pid"]: r["opening"] + r["sales"] - r["purchases"]
-        - r["sale_returns"] + r["purchase_returns"]
-        - r["paid_in"] + r["paid_out"]
+        r["pid"]: -(r["opening"] + r["sales"] - r["purchases"]
+                    - r["sale_returns"] + r["purchase_returns"]
+                    - r["paid_in"] + r["paid_out"])
         for r in rows
     }
 
@@ -128,8 +139,10 @@ def _party_dict(row, balance=None):
         "openingDate": row.get("opening_date") or "",
         "creditLimitType": row.get("credit_limit_type") or "none",
         "creditLimitPaisa": row.get("credit_limit_paisa") or 0,
-        # A brand-new party's balance is exactly its opening balance.
-        "balancePaisa": row["opening_balance_paisa"] if balance is None else balance,
+        # Displayed balance follows the party_balance_map convention
+        # (build .20): a brand-new party's balance is the NEGATION of
+        # its stored opening balance (positive at entry = owed to us).
+        "balancePaisa": -row["opening_balance_paisa"] if balance is None else balance,
         "group": row.get("group_name") or "",
         "status": row.get("status") or "active",
         "billingAddress": row.get("billing_address") or "",

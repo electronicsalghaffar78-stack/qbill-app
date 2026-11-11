@@ -346,8 +346,9 @@ def all_parties_report():
     return jsonify(
         ok=True,
         parties=[_party_dict(r, balances.get(r["id"])) for r in rows],
-        totalReceivablePaisa=sum(b for b in balances.values() if b > 0),
-        totalPayablePaisa=sum(-b for b in balances.values() if b < 0),
+        # Build .20 sign convention: negative balance = party owes us.
+        totalReceivablePaisa=sum(-b for b in balances.values() if b < 0),
+        totalPayablePaisa=sum(b for b in balances.values() if b > 0),
     )
 
 
@@ -934,8 +935,9 @@ def _system_balances(tx, biz):
     """Live balances for the seeded system accounts, from real data."""
     dash = compute_dashboard(tx, biz)
     balances = party_balance_map(tx, biz)
-    receivable = sum(b for b in balances.values() if b > 0)
-    payable = sum(-b for b in balances.values() if b < 0)
+    # Build .20 sign convention: negative balance = party owes us.
+    receivable = sum(-b for b in balances.values() if b < 0)
+    payable = sum(b for b in balances.values() if b > 0)
     loans = tx.query_one(
         "SELECT COALESCE(SUM(principal_paisa - paid_paisa), 0) AS s "
         "FROM loan_accounts WHERE business_id = ?",

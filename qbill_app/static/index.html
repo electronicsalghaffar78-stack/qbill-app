@@ -136,6 +136,11 @@
             <div class="sale-hero-top"><span class="stat-label">Sale</span><span class="hero-per" id="dVsLast">This Month</span></div>
             <div class="hero-value" id="dMonth">—</div>
             <div class="hero-sub">Total Sale (This Month)</div>
+            <!-- Build .20 (defect D1): Today's Sales is its OWN figure
+                 inside the Sale card — today's sale invoices only, so
+                 it can no longer be mistaken for one lump with the
+                 month total. -->
+            <div class="hero-today"><span>Today's Sales</span><strong id="dTodayHero">—</strong></div>
           </div>
           <div class="card">
             <div class="book-head">
@@ -163,7 +168,17 @@
             <div class="stat"><span class="stat-label">You'll Pay</span><span class="stat-value neg" id="dPayable">—</span><span class="note" id="dTopPayParty"></span></div>
             <div class="stat"><span class="stat-label">Purchase (This Month)</span><span class="stat-value" id="dPurchases">—</span><span class="note" id="dTopPurchaseParty"></span></div>
             <div class="stat"><span class="stat-label">Expenses (This Month)</span><span class="stat-value neg" id="dExpenses">—</span><svg id="dExpChart" width="100%" height="36" viewBox="0 0 120 36" preserveAspectRatio="none" aria-label="Expenses, last 30 days"></svg></div>
-            <div class="stat"><span class="stat-label">Profit (This Month)</span><span class="stat-value" id="dProfit">—</span></div>
+          </div>
+          <!-- Build .20 (defect D2): Profit is its own card with its
+               own label and formula — no longer one small stat lost
+               among the sales figures. COGS-based; equals the Profit
+               & Loss report for the month. -->
+          <div class="card">
+            <div class="book-head">
+              <h3 style="margin:0">Profit (This Month)</h3>
+              <span class="stat-value" id="dProfit">—</span>
+            </div>
+            <p class="note" style="margin:6px 0 0">Sales − cost of goods sold − expenses + other income. The same figure as the Profit &amp; Loss report for this month.</p>
           </div>
           <div class="card">
             <h3 style="margin-top:0">Most Used Reports</h3>
@@ -336,6 +351,10 @@
             <label>Unit
               <select id="itemUnit"></select>
             </label>
+            <!-- Build .20 parity: the recorded Vyapar item form shows
+                 an "Edit Unit" link with the live conversion text
+                 ("1 PAC = 24 PCS"). -->
+            <p class="note" style="margin:-4px 0 10px"><span id="itemUnitConv"></span> <button class="btn btn-link" id="btnEditUnit" type="button">Edit Unit</button></p>
             <label>Secondary Unit
               <select id="itemSecondaryUnit"><option value="">— None —</option></select>
             </label>
@@ -689,35 +708,18 @@
       </div>
       <div id="paymentPanel" class="hidden">
       <button class="btn btn-link panel-back" id="btnPaymentBack" type="button">← Back to payments</button>
-      <form id="paymentForm" class="card form-card">
+      <!-- Build .20 (defect D6): Payment-In and Payment-Out are TWO
+           SEPARATE popups, like the owner's Vyapar — the old single
+           form with a Direction dropdown is gone. This panel only
+           chooses which popup opens. -->
+      <div class="card form-card">
         <h2>Add payment</h2>
-        <label>Party
-          <select id="payParty"><option value="">— None —</option></select>
-        </label>
-        <label>Direction
-          <select id="payDirection">
-            <option value="in">In — party paid us</option>
-            <option value="out">Out — we paid party</option>
-          </select>
-        </label>
-        <label>Payment Mode
-          <select id="payMode">
-            <option value="cash">Cash</option>
-            <option value="bank">Bank Transfer</option>
-            <option value="jazzcash">JazzCash</option>
-            <option value="easypaisa">EasyPaisa</option>
-            <option value="cheque">Cheque</option>
-          </select>
-        </label>
-        <label id="payBankWrap" class="hidden">Bank Account
-          <select id="payBank"><option value="">— None —</option></select>
-        </label>
-        <label id="payChequeWrap" class="hidden">Cheque No. <input id="payCheque" type="text"></label>
-        <label>Reference No. <input id="payReference" type="text"></label>
-        <label>Amount (Rs) <input id="payAmount" type="number" step="0.01" min="0" required></label>
-        <label id="payDiscountWrap" class="hidden">Discount (Rs) <input id="payDiscount" type="number" step="0.01" min="0" value="0"></label>
-        <button class="btn btn-primary" type="submit">Save payment</button>
-      </form>
+        <p class="note">Choose the payment type — each one opens its own popup.</p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap">
+          <button class="btn btn-primary" id="btnOpenPayIn" type="button">Payment-In — party paid us</button>
+          <button class="btn btn-primary" id="btnOpenPayOut" type="button">Payment-Out — we paid party</button>
+        </div>
+      </div>
       </div>
       <div class="card" id="allocateCard">
         <h2>Link Payments to Invoices</h2>
@@ -734,6 +736,97 @@
       </div>
       <div id="paymentList" class="list"></div>
     </section>
+
+    <!-- Payment-In popup (build .20, defect D6 — its OWN dialog,
+         following the owner's Vyapar recording) -->
+    <div class="modal hidden" id="payInModal">
+      <div class="modal-box modal-wide">
+        <form id="payInForm">
+          <h2 style="margin-top:0">Payment-In</h2>
+          <p class="offline-note hidden" id="piSettleNote"></p>
+          <label>Party *
+            <select id="piParty" required><option value="">— Choose party —</option></select>
+          </label>
+          <p class="note" id="piBal" style="margin:2px 0 8px"></p>
+          <label>Payment Type
+            <select id="piMode">
+              <option value="cash">Cash</option>
+              <option value="bank">Bank Transfer</option>
+              <option value="jazzcash">JazzCash</option>
+              <option value="easypaisa">EasyPaisa</option>
+              <option value="cheque">Cheque</option>
+            </select>
+          </label>
+          <label id="piBankWrap" class="hidden">Bank Account
+            <select id="piBank"><option value="">— None —</option></select>
+          </label>
+          <label id="piChequeWrap" class="hidden">Cheque No. <input id="piCheque" type="text"></label>
+          <div id="piExtra"></div>
+          <button class="btn btn-link" id="piAddType" type="button">+ Add Payment type</button>
+          <button class="btn btn-link" id="piDescBtn" type="button">ADD DESCRIPTION</button>
+          <label id="piNoteWrap" class="hidden">Description <textarea id="piNote" rows="2"></textarea></label>
+          <div class="grid2">
+            <label>Receipt No. <input id="piReceipt" type="text" value="Auto" readonly></label>
+            <label>Date <input id="piDate" type="text" readonly></label>
+            <label>Time <input id="piTime" type="text" readonly></label>
+          </div>
+          <label>Received (Rs) <input id="piAmount" type="number" step="0.01" min="0" required></label>
+          <label id="piDiscountWrap" class="hidden">Discount (Rs) <input id="piDiscount" type="number" step="0.01" min="0" value="0"></label>
+          <p class="note">Total: <strong id="piTotal">Rs 0</strong></p>
+          <p class="msg" id="piMsg"></p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+            <button class="btn hidden" id="piLink" type="button" style="background:#1a7f37; color:#fff; border-color:#1a7f37">LINK PAYMENT</button>
+            <button class="btn btn-primary" type="submit">Save</button>
+            <button class="btn" id="piClose" type="button">Close</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Payment-Out popup (build .20, defect D6 — separate dialog) -->
+    <div class="modal hidden" id="payOutModal">
+      <div class="modal-box modal-wide">
+        <form id="payOutForm">
+          <h2 style="margin-top:0">Payment-Out</h2>
+          <p class="offline-note hidden" id="poSettleNote"></p>
+          <label>Party *
+            <select id="poParty" required><option value="">— Choose party —</option></select>
+          </label>
+          <p class="note" id="poBal" style="margin:2px 0 8px"></p>
+          <label>Payment Type
+            <select id="poMode">
+              <option value="cash">Cash</option>
+              <option value="bank">Bank Transfer</option>
+              <option value="jazzcash">JazzCash</option>
+              <option value="easypaisa">EasyPaisa</option>
+              <option value="cheque">Cheque</option>
+            </select>
+          </label>
+          <label id="poBankWrap" class="hidden">Bank Account
+            <select id="poBank"><option value="">— None —</option></select>
+          </label>
+          <label id="poChequeWrap" class="hidden">Cheque No. <input id="poCheque" type="text"></label>
+          <div id="poExtra"></div>
+          <button class="btn btn-link" id="poAddType" type="button">+ Add Payment type</button>
+          <button class="btn btn-link" id="poDescBtn" type="button">ADD DESCRIPTION</button>
+          <label id="poNoteWrap" class="hidden">Description <textarea id="poNote" rows="2"></textarea></label>
+          <div class="grid2">
+            <label>Receipt No. <input id="poReceipt" type="text" value="Auto" readonly></label>
+            <label>Date <input id="poDate" type="text" readonly></label>
+            <label>Time <input id="poTime" type="text" readonly></label>
+          </div>
+          <label>Paid (Rs) <input id="poAmount" type="number" step="0.01" min="0" required></label>
+          <label id="poDiscountWrap" class="hidden">Discount (Rs) <input id="poDiscount" type="number" step="0.01" min="0" value="0"></label>
+          <p class="note">Total: <strong id="poTotal">Rs 0</strong></p>
+          <p class="msg" id="poMsg"></p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+            <button class="btn hidden" id="poLink" type="button" style="background:#1a7f37; color:#fff; border-color:#1a7f37">LINK PAYMENT</button>
+            <button class="btn btn-primary" type="submit">Save</button>
+            <button class="btn" id="poClose" type="button">Close</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- Expenses -->
     <section id="screen-expenses" class="screen hidden">
@@ -858,7 +951,7 @@
       </div>
       <div class="card table-card">
         <table class="tx-table">
-          <thead><tr><th>Date</th><th>Number</th><th>Party</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Number</th><th>Party</th><th class="num">Amount</th><th class="num">Balance</th><th>Status</th><th></th></tr></thead>
           <tbody id="docsBody"></tbody>
         </table>
         <p id="docsEmpty" class="empty hidden">Nothing here yet.</p>
@@ -1043,24 +1136,26 @@
       <div class="filter-chips" id="reportChips"></div>
       <h2 id="reportTitle">All Transactions</h2>
       <div class="row-btns hidden" id="repTxTools" style="margin:8px 0">
-        <label>Type
-          <select id="repTypeFilter">
-            <option value="">All Types</option>
-            <option value="sale">Sale</option>
-            <option value="purchase">Purchase</option>
-            <option value="sale_return">Sale Return</option>
-            <option value="purchase_return">Purchase Return</option>
-            <option value="estimate">Estimate</option>
-            <option value="sale_order">Sale Order</option>
-            <option value="purchase_order">Purchase Order</option>
-            <option value="challan">Delivery Challan</option>
-            <option value="proforma">Proforma Invoice</option>
-            <option value="payment_in">Payment In</option>
-            <option value="payment_out">Payment Out</option>
-            <option value="expense">Expense</option>
-            <option value="other_income">Other Income</option>
-          </select>
-        </label>
+        <!-- Build .20 parity: the recorded Vyapar All Transactions
+             screen filters by TYPE CHECKBOXES, not a dropdown. -->
+        <div id="repTypeChecks" style="display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center">
+          <span class="note" style="margin:0">Type:</span>
+          <label class="check-row"><input type="checkbox" data-reptype="sale" checked> <span>Sale</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="purchase" checked> <span>Purchase</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="sale_return" checked> <span>Sale Return</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="purchase_return" checked> <span>Purchase Return</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="estimate" checked> <span>Estimate</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="sale_order" checked> <span>Sale Order</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="purchase_order" checked> <span>Purchase Order</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="challan" checked> <span>Delivery Challan</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="proforma" checked> <span>Proforma Invoice</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="payment_in" checked> <span>Payment In</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="payment_out" checked> <span>Payment Out</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="expense" checked> <span>Expense</span></label>
+          <label class="check-row"><input type="checkbox" data-reptype="other_income" checked> <span>Other Income</span></label>
+          <button class="btn btn-mini" id="btnRepTypesAll" type="button">All</button>
+          <button class="btn btn-mini" id="btnRepTypesNone" type="button">None</button>
+        </div>
         <button class="btn" id="btnRepExcel" type="button">Excel (CSV)</button>
         <button class="btn" id="btnRepPrint" type="button">Print</button>
       </div>
@@ -1122,18 +1217,21 @@
       <div class="list-head">
         <h2 class="list-title">Stock Transfer</h2>
         <button class="btn btn-primary" id="btnAddTransfer" type="button">＋ New Transfer</button>
+        <button class="btn" id="btnManageGodowns" type="button">Manage Godowns</button>
       </div>
       <div id="transferPanel" class="hidden">
       <button class="btn btn-link panel-back" id="btnTransferBack" type="button">← Back to transfers</button>
       <form id="transferForm" class="card form-card">
         <h2>Stock Transfer</h2>
         <div class="grid2">
+          <label>Transfer Date <input id="trDate" type="date"></label>
           <label>Item <select id="trItem"></select></label>
           <label>Quantity <input id="trQty" type="number" step="1" min="1" value="1"></label>
           <label>From Godown <select id="trFrom"></select></label>
           <label>To Godown <select id="trTo"></select></label>
           <label>Note <input id="trNote" type="text"></label>
         </div>
+        <p class="note" id="trAvail"></p>
         <button class="btn btn-primary" type="submit">Transfer Stock</button>
       </form>
       </div>
@@ -1706,6 +1804,11 @@
       <div id="ownerAccountsCard" class="card form-card hidden" data-setcard="accounts">
         <h2>Customer accounts — owner</h2>
         <p class="note">Every QBill account is listed here, with the IP addresses it used. A new account cannot use QBill until you approve it. Blocking an account signs it out everywhere.</p>
+        <!-- Build .20 (D7): a clear in-app way to add another shop.
+             One account per shop is the model — each account holds
+             only its own shop's data. -->
+        <p class="note">Each shop gets its own separate account with only that shop's data — a second shop means a second account. New accounts stay pending until you approve them below.</p>
+        <button id="btnAddShopAccount" class="btn btn-primary" type="button">Add a shop account</button>
         <p id="accountsMsg" class="msg"></p>
         <div id="accountList" class="list"></div>
       </div>
@@ -1779,6 +1882,7 @@
     <div id="stepOne" class="auth-step hidden">
       <h1>Welcome to QBill</h1>
       <p class="auth-sub">Billing software for your shop.</p>
+      <p class="note">One account per shop — each account holds only its own shop's data, and a new account starts working after the owner's approval.</p>
       <label>Your email
         <input id="oneEmail" type="email" autocomplete="email" placeholder="you@example.com">
       </label>

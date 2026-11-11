@@ -50,7 +50,17 @@ def compute_dashboard(tx, business_id):
         (business_id, month),
     )["s"]
     balances = party_balance_map(tx, business_id)
-    receivable = sum(b for b in balances.values() if b > 0)
+    # Build .20 sign convention (party_balance_map): negative balance
+    # = the party owes us (To Receive), positive = we owe (To Pay).
+    receivable = sum(-b for b in balances.values() if b < 0)
+    # You'll Pay total rides in THIS payload too (build .20, defect
+    # D3): the Home card used to be computed by the frontend from a
+    # SECOND /api/parties fetch, so on a slow connection the figure
+    # silently stayed blank while every other card updated — the same
+    # failure the round-3 fix removed for Profit. One fetch = one
+    # snapshot: payable = what we owe across all parties, including
+    # unpaid purchases net of payments out.
+    payable = sum(b for b in balances.values() if b > 0)
     cash_in = tx.query_one(
         "SELECT COALESCE(SUM(amount_paisa), 0) AS s FROM payments "
         "WHERE business_id = ? AND direction = 'in' "
@@ -105,28 +115,31 @@ def compute_dashboard(tx, business_id):
         pct = 100.0 if month_sales else 0.0
     # You'll Receive: the party who owes the most.
     top_party = None
-    if balances:
-        top_id = max(balances, key=lambda pid: balances[pid])
-        if balances[top_id] > 0:
-            prow = tx.query_one(
-                "SELECT name FROM parties WHERE id = ?", (top_id,)
-            )
-            top_party = {
-                "name": (prow or {}).get("name") or "",
-                "amountPaisa": balances[top_id],
-            }
-    # You'll Pay: the party we owe the most (audit 2026-11-10 — the Home
-    # card names the top party, like You'll Receive does).
-    top_payable = None
+    # Build .20 sign convention (party_balance_map): negative balance
+    # = the party owes us, so You'll Receive's top party is the MOST
+    # NEGATIVE balance; You'll Pay's top party is the MOST POSITIVE.
     if balances:
         low_id = min(balances, key=lambda pid: balances[pid])
         if balances[low_id] < 0:
             prow = tx.query_one(
                 "SELECT name FROM parties WHERE id = ?", (low_id,)
             )
-            top_payable = {
+            top_party = {
                 "name": (prow or {}).get("name") or "",
                 "amountPaisa": -balances[low_id],
+            }
+    # You'll Pay: the party we owe the most (audit 2026-11-10 — the Home
+    # card names the top party, like You'll Receive does).
+    top_payable = None
+    if balances:
+        top_id = max(balances, key=lambda pid: balances[pid])
+        if balances[top_id] > 0:
+            prow = tx.query_one(
+                "SELECT name FROM parties WHERE id = ?", (top_id,)
+            )
+            top_payable = {
+                "name": (prow or {}).get("name") or "",
+                "amountPaisa": balances[top_id],
             }
     # Expiring stock: batches expiring within 30 days that still hold stock.
     horizon = (now + timedelta(days=30)).strftime("%Y-%m")
@@ -215,6 +228,7 @@ def compute_dashboard(tx, business_id):
         "monthExpensesPaisa": month_pnl["expensesPaisa"],
         "monthProfitPaisa": month_pnl["profitPaisa"],
         "totalReceivablePaisa": receivable,
+        "totalPayablePaisa": payable,
         "cashInHandPaisa": cash_in - cash_out - expenses,
         "stockValuePaisa": stock_value,
         "salesSeries": series,
@@ -909,9 +923,13 @@ def party_ledger(party_id):
             }
         )
     entries.sort(key=lambda e: e["_sort"])
-    balance = party["opening_balance_paisa"]
+    # Build .20 sign convention: the running balance uses the
+    # party_balance_map sign (positive = we owe the party), so it
+    # starts from the negated opening and moves by (credit - debit)
+    # per entry. The Dr/Cr columns themselves are unchanged accounting.
+    balance = -party["opening_balance_paisa"]
     for entry in entries:
-        balance += entry["debitPaisa"] - entry["creditPaisa"]
+        balance += entry["creditPaisa"] - entry["debitPaisa"]
         entry["balancePaisa"] = balance
         del entry["_sort"]
     return jsonify(

@@ -376,10 +376,11 @@ check(
 r = client.get("/api/parties/{}/ledger".format(party_id), headers=H(user_token))
 led = r.get_json()
 check(
-    "ledger: sale + its payment, running balance ends at 450000",
-    r.status_code == 200 and led.get("balancePaisa") == 450000
+    "ledger: sale + its payment, running balance ends at -450000 "
+    "(build .20 sign convention: negative = the party owes us)",
+    r.status_code == 200 and led.get("balancePaisa") == -450000
     and len(led.get("entries", [])) == 2
-    and led["entries"][-1]["balancePaisa"] == 450000,
+    and led["entries"][-1]["balancePaisa"] == -450000,
     json.dumps(led),
 )
 
@@ -1188,7 +1189,7 @@ check(
     json.dumps(conv),
 )
 check("docs: the converted sale moves stock (10->8) and the party balance",
-      _doc_stock() == 8 and _doc_balance(doc_party) == 120000)
+      _doc_stock() == 8 and _doc_balance(doc_party) == -120000)
 r = client.get("/api/invoices/{}".format(est["id"]), headers=H(user_token))
 check("docs: the source estimate is marked converted",
       (r.get_json() or {})["invoice"].get("convertedToId") == conv["id"])
@@ -1205,7 +1206,7 @@ r, sret = _mkdoc({"type": "sale_return", "party_id": doc_party,
 check(
     "docs: sale return SR- prefix restores stock (8->9), balance drops",
     r.status_code == 201 and sret.get("invoiceNo", "").startswith("SR-")
-    and _doc_stock() == 9 and _doc_balance(doc_party) == 60000,
+    and _doc_stock() == 9 and _doc_balance(doc_party) == -60000,
     json.dumps(sret),
 )
 r, pur = _mkdoc({"type": "purchase", "party_id": doc_supplier,
@@ -1845,12 +1846,12 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar8/v17 (round-3 build)",
+    "version/cache moved to vyapar9/v18 (build .20)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-10.19-vyapar8"
-    and "qbill-shell-v17" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-11.20-vyapar9"
+    and "qbill-shell-v18" in client.get("/sw.js").get_data(as_text=True),
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -1988,8 +1989,8 @@ def _item_stock(iid):
     return {i["id"]: i["stockQty"] for i in rows}.get(iid)
 
 
-check("fix4: setup — balance 40000, stock 8 after the sale",
-      _party_bal(dp["id"]) == 40000 and _item_stock(di["id"]) == 8)
+check("fix4: setup — balance -40000 (party owes us, build .20 sign), stock 8 after the sale",
+      _party_bal(dp["id"]) == -40000 and _item_stock(di["id"]) == 8)
 r = client.delete("/api/parties/{}".format(dp["id"]), headers=HU)
 led = client.get("/api/parties/{}/ledger".format(dp["id"]), headers=HU)
 bin_r = client.get("/api/recycle-bin", headers=HU).get_json()
@@ -1998,7 +1999,7 @@ check(
     "fix4: party delete -> bin (balance kept), list + ledger closed",
     r.status_code == 200 and _party_bal(dp["id"]) is None
     and led.status_code == 404 and len(bin_p) == 1
-    and bin_p[0]["balancePaisa"] == 40000,
+    and bin_p[0]["balancePaisa"] == -40000,
     json.dumps(bin_r.get("parties"))[:200],
 )
 r = client.post("/api/invoices", headers=HU, json={
@@ -2014,7 +2015,7 @@ check("fix4: permanent delete of a party WITH bills is refused (400)",
 r = client.post("/api/recycle-bin/parties/{}/restore".format(dp["id"]),
                 headers=HU, json={})
 check("fix4: party restore brings the exact balance back",
-      r.status_code == 200 and _party_bal(dp["id"]) == 40000)
+      r.status_code == 200 and _party_bal(dp["id"]) == -40000)
 r = client.delete("/api/items/{}".format(di["id"]), headers=HU)
 dash = client.get("/api/dashboard", headers=HU).get_json()
 bin_i = [i for i in client.get("/api/recycle-bin", headers=HU)
@@ -2097,7 +2098,7 @@ pay = client.post("/api/payments", headers=HU, json={
 bal_before = _party_bal(dp["id"])
 r = client.delete("/api/payments/{}".format(pay["id"]), headers=HU)
 check("fix4: standalone cash payment deletes, balance reverses exactly",
-      r.status_code == 200 and _party_bal(dp["id"]) == bal_before + 15000)
+      r.status_code == 200 and _party_bal(dp["id"]) == bal_before - 15000)
 pv = client.post("/api/invoices", headers=HU, json={
     "type": "sale", "party_id": dp["id"], "paid_paisa": 5000,
     "lines": [{"item_id": si["id"], "qty": 1, "rate_paisa": 5000}]})
@@ -2205,10 +2206,11 @@ r = client.post("/api/utilities/import/wizard-confirm", headers=HW,
 plist = client.get("/api/parties", headers=HW).get_json()["parties"]
 by_name = {p["name"]: p for p in plist}
 check(
-    "fix5: parties land with opening balances + the chosen as-of date",
+    "fix5: parties land with opening balances + the chosen as-of date "
+    "(build .20 sign: customer owes us = negative, supplier owed = positive)",
     r.status_code == 201 and r.get_json()["created"] == 2
-    and by_name["Wizard Customer"]["balancePaisa"] == 500000
-    and by_name["Wizard Supplier"]["balancePaisa"] == -250000
+    and by_name["Wizard Customer"]["balancePaisa"] == -500000
+    and by_name["Wizard Supplier"]["balancePaisa"] == 250000
     and by_name["Wizard Customer"]["openingDate"] == "2026-01-15",
     json.dumps(r.get_json()),
 )
@@ -2586,6 +2588,269 @@ check(
     "round3 B: a long item name wraps and prints in FULL (tail visible)",
     "Super Deluxe Refrigerator" in txt3c and "260 Litre" in txt3c,
     txt3c[:300],
+)
+
+# ---------------- 12q. build .20: the owner's recording defects -------
+# Qudoos's own Vyapar recordings + his spoken defect list (2026-11-11).
+# D1 today's sales are their own figure, consistent everywhere; D2
+# profit separate and equal to P&L; D3 money out (unpaid purchases +
+# standalone payments-out) visible in You'll Pay; D4 balances go
+# NEGATIVE for advances and are never clamped; D5 line numbers on the
+# thermal bill too; D6 Payment-In / Payment-Out are separate popups.
+tok_q = _signup_from_ip("build20@example.com", "198.51.100.120", "b20pass")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "build20@example.com"})
+HQ = H(tok_q)
+r = client.post("/api/items", headers=HQ, json={
+    "name": "B20 Widget", "sale_price_paisa": 200000,
+    "purchase_price_paisa": 120000, "stock_qty": 10})
+q_item = r.get_json()["item"]["id"]
+
+# D4: an advance Payment-Out to a ZERO-balance party reads MINUS.
+r = client.post("/api/parties", headers=HQ, json={"name": "B20 Zero"})
+q_zero = r.get_json()["party"]["id"]
+client.post("/api/payments", headers=HQ, json={
+    "direction": "out", "party_id": q_zero, "amount_paisa": 50000,
+    "mode": "cash"})
+q_parties = {p["id"]: p for p in
+             client.get("/api/parties", headers=HQ).get_json()["parties"]}
+q_led = client.get("/api/parties/{}/ledger".format(q_zero),
+                   headers=HQ).get_json()
+q_dash = client.get("/api/dashboard", headers=HQ).get_json()["dashboard"]
+check(
+    "build20 D4: advance Payment-Out to a zero-balance party = MINUS "
+    "50000 in the party list AND the ledger, counted in You'll Receive",
+    q_parties[q_zero]["balancePaisa"] == -50000
+    and q_led["balancePaisa"] == -50000
+    and q_dash["totalReceivablePaisa"] == 50000
+    and (q_dash.get("topReceivableParty") or {}).get("amountPaisa") == 50000,
+    json.dumps({"party": q_parties.get(q_zero),
+                "totalPayablePaisa": q_dash.get("totalPayablePaisa")})[:300],
+)
+
+# D3: unpaid purchase + standalone payment-out both land in You'll Pay.
+r = client.post("/api/parties", headers=HQ, json={"name": "B20 Supplier"})
+q_sup = r.get_json()["party"]["id"]
+client.post("/api/invoices", headers=HQ, json={
+    "type": "purchase", "party_id": q_sup,
+    "lines": [{"item_id": q_item, "qty": 1, "rate_paisa": 100000}]})
+client.post("/api/payments", headers=HQ, json={
+    "direction": "out", "party_id": q_sup, "amount_paisa": 30000,
+    "mode": "cash"})
+q_parties = {p["id"]: p for p in
+             client.get("/api/parties", headers=HQ).get_json()["parties"]}
+q_dash = client.get("/api/dashboard", headers=HQ).get_json()["dashboard"]
+check(
+    "build20 D3: unpaid purchase 100000 - payment-out 30000 = You'll "
+    "Pay 70000, inside the dashboard payload (totalPayablePaisa)",
+    q_parties[q_sup]["balancePaisa"] == 70000
+    and q_dash["totalPayablePaisa"] == 70000
+    and (q_dash.get("topPayableParty") or {}).get("name") == "B20 Supplier"
+    and (q_dash.get("topPayableParty") or {}).get("amountPaisa") == 70000,
+    json.dumps(q_dash)[:300],
+)
+
+# D4 other side: an overpaid customer is an advance WE hold (+), also
+# never clamped to zero.
+r = client.post("/api/parties", headers=HQ, json={"name": "B20 Customer"})
+q_cus = r.get_json()["party"]["id"]
+client.post("/api/invoices", headers=HQ, json={
+    "type": "sale", "party_id": q_cus, "paid_paisa": 10000,
+    "lines": [{"item_id": q_item, "qty": 1, "rate_paisa": 10000}]})
+client.post("/api/payments", headers=HQ, json={
+    "direction": "in", "party_id": q_cus, "amount_paisa": 5000,
+    "mode": "cash"})
+q_parties = {p["id"]: p for p in
+             client.get("/api/parties", headers=HQ).get_json()["parties"]}
+check(
+    "build20 D4: an overpaid customer's advance reads +5000 (we hold "
+    "their money), not clamped to zero",
+    q_parties[q_cus]["balancePaisa"] == 5000,
+    json.dumps(q_parties.get(q_cus))[:200],
+)
+
+# D1 + D2 on a second fresh account, exact figures: one unpaid sale
+# today, price 200000, cost 120000 -> today = month = graph = book =
+# 200000; Home profit = P&L profit = 80000.
+tok_q2 = _signup_from_ip("build20b@example.com", "198.51.100.121", "b20pass")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "build20b@example.com"})
+HQ2 = H(tok_q2)
+r = client.post("/api/items", headers=HQ2, json={
+    "name": "B20 Gadget", "sale_price_paisa": 200000,
+    "purchase_price_paisa": 120000, "stock_qty": 5})
+q2_item = r.get_json()["item"]["id"]
+r = client.post("/api/invoices", headers=HQ2, json={
+    "type": "sale",
+    "lines": [{"item_id": q2_item, "qty": 1, "rate_paisa": 200000},
+              {"description": "B20 Cable", "qty": 1, "rate_paisa": 0}]})
+q2_inv = r.get_json().get("invoice", {})
+dash_q2 = client.get("/api/dashboard", headers=HQ2).get_json()["dashboard"]
+series_q2 = {p["date"]: p["amountPaisa"] for p in dash_q2["salesSeries"]}
+today_q2 = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+book_q2 = sum(i["totalPaisa"] for i in
+              client.get("/api/invoices", headers=HQ2)
+              .get_json()["invoices"] if i["type"] == "sale")
+pnl_q2 = client.get("/api/pnl", headers=HQ2).get_json()["pnl"]
+check(
+    "build20 D1/D2: today's sale is one consistent figure (today = "
+    "month = graph point = Sale book = 200000) and Home profit = P&L "
+    "profit = 80000 (COGS-based)",
+    dash_q2["todaySalesPaisa"] == 200000
+    and dash_q2["monthSalesPaisa"] == 200000
+    and series_q2.get(today_q2) == 200000 and book_q2 == 200000
+    and dash_q2["monthProfitPaisa"] == 80000
+    and pnl_q2["profitPaisa"] == 80000 and pnl_q2["cogsPaisa"] == 120000,
+    json.dumps({"dash": dash_q2, "pnl": pnl_q2})[:300],
+)
+
+# D5: the thermal bill numbers its lines like the A4 bill does.
+th_q2 = client.get("/api/invoices/{}/pdf?format=thermal".format(q2_inv["id"]),
+                   headers=HQ2).get_data().decode("latin-1")
+check(
+    "build20 D5: thermal PDF lines are numbered 1..N",
+    "1. B20 Gadget" in th_q2 and "2. B20 Cable" in th_q2,
+    th_q2[:300],
+)
+
+# D6: two separate popups; the merged Direction form is gone; the
+# payments screen keeps its panel + Add button (settled markup).
+q_html = client.get("/").get_data(as_text=True)
+q_js = client.get("/static/app.js").get_data(as_text=True)
+check(
+    "build20 D6: Payment-In and Payment-Out are separate dialogs "
+    "(own ids/titles, LINK PAYMENT, BAL: line); no shared Direction "
+    "form remains",
+    'id="payInModal"' in q_html and 'id="payOutModal"' in q_html
+    and ">Payment-In</h2>" in q_html and ">Payment-Out</h2>" in q_html
+    and "LINK PAYMENT" in q_html and 'id="paymentPanel"' in q_html
+    and 'id="btnAddPayment"' in q_html
+    and 'id="payDirection"' not in q_html
+    and 'id="paymentForm"' not in q_html
+    and "openPayModal" in q_js and "payModalSettle" in q_js
+    and "BAL: " in q_js,
+)
+
+# Party additional field with Show In Print ON actually prints.
+client.put("/api/settings", headers=HQ, json={"settings": {
+    "party_extra_fields": [
+        {"label": "B20 Field", "enabled": True, "show_in_print": True},
+        {"label": "B20 Hidden", "enabled": True, "show_in_print": False}]}})
+r = client.post("/api/parties", headers=HQ, json={
+    "name": "B20 Print Party",
+    "extras": {"B20 Field": "B20-VALUE", "B20 Hidden": "B20-SECRET"}})
+q_pp = r.get_json()["party"]["id"]
+r = client.post("/api/invoices", headers=HQ, json={
+    "type": "sale", "party_id": q_pp,
+    "lines": [{"item_id": q_item, "qty": 1, "rate_paisa": 10000}]})
+q_pp_inv = r.get_json().get("invoice", {})
+q_pp_txt = client.get("/api/invoices/{}/pdf".format(q_pp_inv["id"]),
+                      headers=HQ).get_data().decode("latin-1")
+check(
+    "build20 parity: a party field with Show In Print ON prints on "
+    "the bill; one with it OFF does not",
+    "B20 Field: B20-VALUE" in q_pp_txt and "B20-SECRET" not in q_pp_txt,
+    q_pp_txt[:300],
+)
+
+# Stock Transfer honours its Transfer Date.
+r = client.post("/api/godowns", headers=HQ2,
+                json={"name": "B20 Store B", "type": "Godown"})
+q2_godown = (r.get_json() or {}).get("godown", {}).get("id")
+main_q2 = [g for g in client.get("/api/godowns", headers=HQ2)
+           .get_json()["godowns"] if g["id"] != q2_godown][0]
+r = client.post("/api/stock-transfers", headers=HQ2, json={
+    "item_id": q2_item, "qty": 1, "from_godown_id": main_q2["id"],
+    "to_godown_id": q2_godown, "date": "2026-11-05"})
+q2_tr = (r.get_json() or {}).get("transfer", {})
+check(
+    "build20 parity: a stock transfer is dated on its Transfer Date",
+    r.status_code == 201
+    and (q2_tr.get("createdAt") or "").startswith("2026-11-05"),
+    json.dumps(q2_tr)[:200],
+)
+
+# ---------------- 12r. build .20 D7: one account per shop --------------
+# The owner's model (2026-11-11 21:00): each SHOP gets its OWN
+# account holding only that shop's complete data; the owner account
+# sits above them all (approval gate). Prove the isolation
+# end-to-end, prove a new account starts pending, and prove the
+# in-app entry point exists.
+tok_a = _signup_from_ip("shopa@example.com", "198.51.100.130", "shopapass")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shopa@example.com"})
+HA = H(tok_a)
+tok_b = _signup_from_ip("shopb@example.com", "198.51.100.131", "shopbpass")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shopb@example.com"})
+HB = H(tok_b)
+r = client.post("/api/items", headers=HA, json={
+    "name": "Iso A Item", "sale_price_paisa": 11000,
+    "purchase_price_paisa": 7000, "stock_qty": 4})
+ia_item = r.get_json()["item"]["id"]
+r = client.post("/api/parties", headers=HA, json={"name": "Iso A Party"})
+ia_party = r.get_json()["party"]["id"]
+client.post("/api/invoices", headers=HA, json={
+    "type": "sale", "party_id": ia_party,
+    "lines": [{"item_id": ia_item, "qty": 1, "rate_paisa": 11000}]})
+r = client.post("/api/items", headers=HB, json={
+    "name": "Iso B Item", "sale_price_paisa": 22000,
+    "purchase_price_paisa": 9000, "stock_qty": 4})
+ib_item = r.get_json()["item"]["id"]
+r = client.post("/api/parties", headers=HB, json={"name": "Iso B Party"})
+ib_party = r.get_json()["party"]["id"]
+client.post("/api/invoices", headers=HB, json={
+    "type": "sale", "party_id": ib_party,
+    "lines": [{"item_id": ib_item, "qty": 1, "rate_paisa": 22000}]})
+a_parties = client.get("/api/parties", headers=HA).get_json()["parties"]
+b_parties = client.get("/api/parties", headers=HB).get_json()["parties"]
+a_items = client.get("/api/items", headers=HA).get_json()["items"]
+b_items = client.get("/api/items", headers=HB).get_json()["items"]
+a_invs = client.get("/api/invoices", headers=HA).get_json()["invoices"]
+b_invs = client.get("/api/invoices", headers=HB).get_json()["invoices"]
+a_dash = client.get("/api/dashboard", headers=HA).get_json()["dashboard"]
+b_dash = client.get("/api/dashboard", headers=HB).get_json()["dashboard"]
+check(
+    "build20 D7: two shop accounts are fully isolated — each sees "
+    "only its own parties, items, invoices and dashboard figures",
+    [p["name"] for p in a_parties] == ["Iso A Party"]
+    and [p["name"] for p in b_parties] == ["Iso B Party"]
+    and [i["name"] for i in a_items] == ["Iso A Item"]
+    and [i["name"] for i in b_items] == ["Iso B Item"]
+    and len(a_invs) == 1 and a_invs[0]["totalPaisa"] == 11000
+    and len(b_invs) == 1 and b_invs[0]["totalPaisa"] == 22000
+    and a_dash["monthSalesPaisa"] == 11000
+    and b_dash["monthSalesPaisa"] == 22000
+    and a_dash["totalReceivablePaisa"] == 11000
+    and b_dash["totalReceivablePaisa"] == 22000,
+    json.dumps({"a": a_dash, "b": b_dash})[:240],
+)
+tok_c = _signup_from_ip("shopc@example.com", "198.51.100.132", "shopcpass")
+HC = H(tok_c)
+r = client.get("/api/dashboard", headers=HC)
+pend_403 = r.status_code == 403
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shopc@example.com"})
+r = client.get("/api/dashboard", headers=HC)
+check(
+    "build20 D7: a newly created shop account starts PENDING (data "
+    "routes refuse 403) until the owner approves it, then it opens",
+    pend_403 and r.status_code == 200,
+    "before={} after={}".format(pend_403, r.status_code),
+)
+d7_html = client.get("/").get_data(as_text=True)
+d7_js = client.get("/static/app.js").get_data(as_text=True)
+check(
+    "build20 D7: the owner's Customer accounts card carries the "
+    "'Add a shop account' entry point + the per-shop explainer; the "
+    "auth Create panel carries the same explainer; the button is "
+    "wired to the existing create flow",
+    'id="btnAddShopAccount"' in d7_html
+    and "Add a shop account" in d7_html
+    and "Each shop gets its own separate account" in d7_html
+    and "One account per shop" in d7_html
+    and "btnAddShopAccount" in d7_js
+    and 'showAuthStep("stepOne")' in d7_js,
 )
 
 # ---------------------------------------------------------- 13. logout --

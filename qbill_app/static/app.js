@@ -339,7 +339,7 @@ function clientTotals() {
     if ((i.createdAt || "").slice(0, 10) === today) t.todaySalesPaisa += i.totalPaisa;
     if ((i.createdAt || "").slice(0, 7) === month) t.monthSalesPaisa += i.totalPaisa;
   });
-  parties.forEach(function (p) { if (p.balancePaisa > 0) t.totalReceivablePaisa += p.balancePaisa; });
+  parties.forEach(function (p) { if (p.balancePaisa < 0) t.totalReceivablePaisa += -p.balancePaisa; });
   payments.forEach(function (p) { t.cashInHandPaisa += p.direction === "in" ? p.amountPaisa : -p.amountPaisa; });
   expenses.forEach(function (e) { t.cashInHandPaisa -= e.amountPaisa; });
   items.forEach(function (i) { t.stockValuePaisa += i.stockQty * i.purchasePricePaisa; });
@@ -781,7 +781,7 @@ var settingsCat = "general";   /* settings pane category */
 var DOC_META = {
   sale:            { title: "Sale Invoice",              bookTitle: "Sale Invoices",      party: "Customer", cashName: "Cash Sale",     add: "＋ Add Sale",     settle: "Receive Payment", noPayment: false, returnsDoc: false },
   purchase:        { title: "Purchase Bill",             bookTitle: "Purchase Bills",     party: "Supplier", cashName: "Cash Purchase", add: "＋ Add Purchase", settle: "Pay Payment",    noPayment: false, returnsDoc: false },
-  estimate:        { title: "Estimate/Quotation",        bookTitle: "Estimate/Quotation", party: "Customer", cashName: "Cash Sale",     add: "＋ Add Estimate",  settle: "", noPayment: true,  returnsDoc: false },
+  estimate:        { title: "Estimate/Quotation",        bookTitle: "Estimate/Quotations", party: "Customer", cashName: "Cash Sale",     add: "＋ Add Estimate",  settle: "", noPayment: true,  returnsDoc: false },
   sale_order:      { title: "Sale Order",                bookTitle: "Sale Orders",        party: "Customer", cashName: "Cash Sale",     add: "＋ Add Sale Order", settle: "", noPayment: true, returnsDoc: false },
   purchase_order:  { title: "Purchase Order",            bookTitle: "Purchase Orders",    party: "Supplier", cashName: "Cash Purchase", add: "＋ Add Order",     settle: "", noPayment: true,  returnsDoc: false },
   challan:         { title: "Delivery Challan",          bookTitle: "Delivery Challans",  party: "Customer", cashName: "Cash Sale",     add: "＋ Add Challan",   settle: "", noPayment: true,  returnsDoc: false },
@@ -846,8 +846,8 @@ function go(nav) {
     case "salereturns": navKey = "salereturns"; docsType = "sale_return"; showScreen("docs"); break;
     case "purchaseorders": navKey = "purchaseorders"; docsType = "purchase_order"; showScreen("docs"); break;
     case "purchasereturns": navKey = "purchasereturns"; docsType = "purchase_return"; showScreen("docs"); break;
-    case "paymentin": navKey = "paymentin"; setPayFilter("in", "in"); showScreen("payments"); showPanel("paymentPanel"); break;
-    case "paymentout": navKey = "paymentout"; setPayFilter("out", "out"); showScreen("payments"); showPanel("paymentPanel"); break;
+    case "paymentin": navKey = "paymentin"; setPayFilter("in"); showScreen("payments"); openPayModal("in"); break;
+    case "paymentout": navKey = "paymentout"; setPayFilter("out"); showScreen("payments"); openPayModal("out"); break;
     case "payments": setPayFilter("all", null); showScreen("payments"); break;
     case "quickbilling": navKey = "quickbilling"; showScreen("quick"); break;
     case "expenses": navKey = "expenses"; showScreen("expenses"); break;
@@ -914,8 +914,15 @@ function loadDashboard() {
     var d = r.body.dashboard;
     dashData = d;
     $("dToday").textContent = fmtRs(d.todaySalesPaisa);
+    /* Build .20 (D1): the Sale hero card shows Today's Sales as its
+       own figure, from this same payload. */
+    if ($("dTodayHero")) $("dTodayHero").textContent = fmtRs(d.todaySalesPaisa);
     $("dMonth").textContent = fmtRs(d.monthSalesPaisa);
     $("dReceivable").textContent = fmtRs(d.totalReceivablePaisa);
+    /* Build .20 (D3): You'll Pay comes from THIS payload too — the
+       old second /api/parties fetch left the card blank on slow
+       connections while the rest of Home updated. */
+    $("dPayable").textContent = fmtRs(d.totalPayablePaisa || 0);
     $("dCash").textContent = fmtRs(d.cashInHandPaisa);
     $("dBank").textContent = fmtRs(d.bankBalancePaisa || 0);
     $("dStock").textContent = fmtRs(d.stockValuePaisa);
@@ -957,11 +964,6 @@ function loadDashboard() {
        all-zero dashboard, so the screen disagreed with itself. */
     $("dProfit").textContent = fmtRs(d.monthProfitPaisa || 0);
     $("dExpenses").textContent = fmtRs(d.monthExpensesPaisa || 0);
-  }).catch(function () {});
-  apiGet("/api/parties", "parties").then(function (r) {
-    var pay = 0;
-    (r.body.parties || []).forEach(function (p) { if (p.balancePaisa < 0) pay += -p.balancePaisa; });
-    $("dPayable").textContent = fmtRs(pay);
   }).catch(function () {});
   apiGet("/api/invoices", "invoices").then(function (r) {
     var open = function (t) {
@@ -1146,11 +1148,11 @@ function loadParties() {
     gs.innerHTML = '<option value="">— No group —</option>' + groups.map(function (g) {
       return '<option>' + esc(g) + "</option>";
     }).join("");
-    var dues = parties.filter(function (p) { return p.balancePaisa > 0 && !partyInactive(p); });
+    var dues = parties.filter(function (p) { return p.balancePaisa < 0 && !partyInactive(p); });
     $("reminderCard").classList.toggle("hidden", !(s.party_reminder_enabled && dues.length));
     $("reminderList").innerHTML = dues.slice(0, 10).map(function (p) {
       return '<div class="row"><div><div class="main">' + esc(p.name) + '</div><div class="sub">Owes ' +
-        fmtRs(p.balancePaisa) + '</div></div><button class="btn btn-mini" data-remind="' + p.id + '">Remind</button></div>';
+        fmtRs(-p.balancePaisa) + '</div></div><button class="btn btn-mini" data-remind="' + p.id + '">Remind</button></div>';
     }).join("");
     $("reminderList").querySelectorAll("[data-remind]").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -1174,7 +1176,7 @@ function loadParties() {
       var sub = [p.phone || "", p.groupName || "", partyInactive(p) ? "Inactive" : "",
         p.creditLimitType === "custom" ? "Limit " + fmtRs(p.creditLimitPaisa || 0) : ""]
         .filter(Boolean).join(" · ");
-      wrap.innerHTML = rowHtml(p.name, sub, fmtRs(p.balancePaisa), p.balancePaisa > 0 ? "neg" : "");
+      wrap.innerHTML = rowHtml(p.name, sub, fmtRs(p.balancePaisa), p.balancePaisa > 0 ? "neg" : (p.balancePaisa < 0 ? "pos" : ""));
       var actions = document.createElement("div");
       actions.className = "row-actions";
       var led = document.createElement("button");
@@ -1237,7 +1239,7 @@ function sendReminder(p) {
   var tmpl = s.party_reminder_message ||
     "Assalam-o-Alaikum [Party Name], a gentle reminder: [Amount] is due at [Business Name]. Please pay at your earliest convenience. Thank you.";
   var msg = tmpl.split("[Party Name]").join(p.name)
-    .split("[Amount]").join(fmtRs(p.balancePaisa))
+    .split("[Amount]").join(fmtRs(-p.balancePaisa))
     .split("[Business Name]").join((me && me.business && me.business.name) || "QBill");
   var phone = (p.phone || "").replace(/\D/g, "");
   if (phone && phone.charAt(0) === "0") phone = "92" + phone.slice(1);
@@ -1245,7 +1247,7 @@ function sendReminder(p) {
 }
 $("btnSendRemindersBulk").addEventListener("click", function () {
   var parties = ((cacheGet("parties") || {}).parties) || [];
-  var dues = parties.filter(function (p) { return p.balancePaisa > 0 && p.phone; });
+  var dues = parties.filter(function (p) { return p.balancePaisa < 0 && p.phone; });
   if (!dues.length) { setMsg("appMsg", "No party with a due balance and a phone number.", true); return; }
   if (!confirm("Open WhatsApp for " + dues.length + " parties, one by one?")) return;
   dues.slice(0, 5).forEach(function (p, i) {
@@ -1420,7 +1422,7 @@ function openLedger(party) {
     list.forEach(function (e) {
       var div = document.createElement("div");
       div.className = "row";
-      var movement = e.debitPaisa ? "+" + fmtRs(e.debitPaisa) : "-" + fmtRs(e.creditPaisa);
+      var movement = e.creditPaisa ? "+" + fmtRs(e.creditPaisa) : "-" + fmtRs(e.debitPaisa);
       div.innerHTML = rowHtml(e.description, (e.date || "").slice(0, 10),
         movement + " · Bal " + fmtRs(e.balancePaisa));
       $("ledgerList").appendChild(div);
@@ -1472,7 +1474,63 @@ function refreshItemUnitSelects() {
     sel.innerHTML = units.map(function (u) { return "<option>" + esc(u.name) + "</option>"; }).join("");
     if (keep) sel.value = keep;
   });
+  updateItemUnitConv();
 }
+/* Build .20 parity: the recorded Vyapar item form shows the live
+   conversion text beside an "Edit Unit" link — "1 PAC = 24 PCS". */
+function unitCodeOf(name) {
+  var u = itemUnits().filter(function (x) { return x.name === name; })[0];
+  return u ? (u.code || u.name) : name;
+}
+function updateItemUnitConv() {
+  var el = $("itemUnitConv");
+  if (!el) return;
+  var unit = $("itemUnit").value;
+  var sec = $("itemSecondaryUnit").value;
+  var conv = parseFloat($("itemConversion").value || "0") || 0;
+  if (!sec || !conv) {
+    var def = itemUnits().filter(function (x) { return x.name === unit; })[0];
+    if (def && def.secondary && def.conversion) { sec = def.secondary; conv = def.conversion; }
+  }
+  el.textContent = (unit && sec && conv)
+    ? "1 " + unitCodeOf(unit) + " = " + conv + " " + unitCodeOf(sec) : "";
+}
+["itemUnit", "itemSecondaryUnit", "itemConversion"].forEach(function (id) {
+  $(id).addEventListener("change", updateItemUnitConv);
+  $(id).addEventListener("input", updateItemUnitConv);
+});
+/* Select Unit dialog (build .20 parity): BASE UNIT + SECONDARY UNIT
+   dropdowns and the recording's preset Conversion Rates radios;
+   SAVE writes back into the item form's three unit fields. */
+$("btnEditUnit").addEventListener("click", function () {
+  var opts = itemUnits().map(function (u) { return "<option>" + esc(u.name) + "</option>"; }).join("");
+  var presets = [0, 2, 6, 10, 12, 24, 40, 100];
+  var html = '<label>BASE UNIT <select id="euBase">' + opts + "</select></label>" +
+    '<label>SECONDARY UNIT <select id="euSecondary"><option value="">— None —</option>' + opts + "</select></label>" +
+    '<p class="note" style="margin-bottom:4px">Conversion Rates</p>' +
+    presets.map(function (n) {
+      return '<label class="check-row"><input type="radio" name="euConv" value="' + n + '"> <span>' +
+        (n === 0 ? "No conversion" : "1 base unit = " + n + " secondary units") + "</span></label>";
+    }).join("") +
+    '<label>Or custom rate <input id="euCustom" type="number" step="0.01" min="0"></label>' +
+    '<div style="margin-top:10px"><button class="btn btn-primary" id="euSave" type="button">SAVE</button></div>';
+  openDialog("Select Unit", html);
+  $("euBase").value = $("itemUnit").value;
+  $("euSecondary").value = $("itemSecondaryUnit").value;
+  var cur = parseFloat($("itemConversion").value || "0") || 0;
+  var radio = document.querySelector('input[name="euConv"][value="' + cur + '"]');
+  if (radio) radio.checked = true;
+  else if (cur) $("euCustom").value = cur;
+  $("euSave").addEventListener("click", function () {
+    $("itemUnit").value = $("euBase").value;
+    $("itemSecondaryUnit").value = $("euSecondary").value;
+    var custom = parseFloat($("euCustom").value || "0") || 0;
+    var picked = document.querySelector('input[name="euConv"]:checked');
+    $("itemConversion").value = custom || (picked ? picked.value : 0);
+    closeDialog();
+    updateItemUnitConv();
+  });
+});
 function refreshItemCategorySelect() {
   var items = ((cacheGet("items") || {}).items) || [];
   var cats = itemCategories();
@@ -1647,6 +1705,7 @@ function startEditItem(i) {
   if (i.unit) $("itemUnit").value = i.unit;
   if (i.secondaryUnit) $("itemSecondaryUnit").value = i.secondaryUnit;
   $("itemConversion").value = i.conversion || 0;
+  updateItemUnitConv();
   $("itemName").focus();
 }
 $("itemDeleteBtn").addEventListener("click", function () {
@@ -1755,9 +1814,9 @@ $("btnItemFormBack").addEventListener("click", function () {
 var docCashMode = false;
 
 function fillPartySelects() {
-  apiGet("/api/parties", "parties").then(function (r) {
+  return apiGet("/api/parties", "parties").then(function (r) {
     var parties = r.body.parties || [];
-    [["saleParty", true], ["payParty", false]].forEach(function (pair) {
+    [["saleParty", true], ["piParty", false], ["poParty", false]].forEach(function (pair) {
       var sel = $(pair[0]); if (!sel) return;
       var keep = sel.value;
       var meta = DOC_META[docType];
@@ -1860,8 +1919,8 @@ function updateDocPartyInfo() {
     var bal = parseInt(o.getAttribute("data-balance") || "0", 10);
     var credit = parseInt(o.getAttribute("data-credit") || "0", 10);
     $("docPartyBalance").textContent = (bal === 0 ? "Party balance: nil" :
-      (bal > 0 ? "You'll receive " + fmtRs(bal) + " from this party."
-               : "You'll pay " + fmtRs(-bal) + " to this party.")) +
+      (bal < 0 ? "You'll receive " + fmtRs(-bal) + " from this party."
+               : "You'll pay " + fmtRs(bal) + " to this party.")) +
       (credit ? " Credit limit: " + fmtRs(credit) + "." : "");
   } else {
     $("docPhone").value = "";
@@ -2994,6 +3053,19 @@ function loadDocs() {
     var body = $("docsBody");
     body.innerHTML = "";
     $("docsEmpty").classList.toggle("hidden", list.length > 0);
+    /* Build .20 parity (owner's recording): the Sale/Purchase Orders
+       empty states carry Vyapar's sentence and a "first order" Add
+       button; other books keep the plain empty text. */
+    if (!list.length && docsType === "sale_order") {
+      $("docsEmpty").textContent = "Make & share sale orders & convert them to sale invoice instantly";
+      $("btnDocsAdd").textContent = "Add Your First Sale Order";
+    } else if (!list.length && docsType === "purchase_order") {
+      $("docsEmpty").textContent = "Make & share purchase orders & convert them to purchase bill instantly";
+      $("btnDocsAdd").textContent = "Add Your First Purchase Order";
+    } else {
+      $("docsEmpty").textContent = "Nothing here yet.";
+      $("btnDocsAdd").textContent = meta.add;
+    }
     var convSum = 0, openSum = 0;
     list.forEach(function (i) { if (i.convertedToId) convSum += i.totalPaisa; else openSum += i.totalPaisa; });
     $("docsTotals").classList.toggle("hidden", !CONVERTIBLE[docsType]);
@@ -3001,12 +3073,20 @@ function loadDocs() {
     $("docsOpen").textContent = fmtRs(openSum);
     list.forEach(function (inv) {
       var tr = document.createElement("tr");
+      /* Build .20 parity: estimates read Quotation / Quotation
+         Completed (the recording's words), and every row carries a
+         Balance column — the full amount while open, 0 once
+         converted. */
+      var status = docsType === "estimate"
+        ? (inv.convertedToId ? "Quotation Completed" : "Quotation")
+        : (inv.convertedToId ? "Converted" : "Open");
       tr.innerHTML =
         "<td>" + esc((inv.createdAt || "").slice(0, 10)) + "</td>" +
         "<td>" + esc(inv.invoiceNo) + "</td>" +
         "<td>" + esc(inv.partyId ? (partyNames[inv.partyId] || "Party") : meta.cashName) + "</td>" +
         '<td class="num">' + fmtRs(inv.totalPaisa) + "</td>" +
-        "<td>" + (inv.convertedToId ? "Converted" : "Open") + "</td>";
+        '<td class="num">' + fmtRs(inv.convertedToId ? 0 : inv.totalPaisa) + "</td>" +
+        "<td>" + status + "</td>";
       var td = document.createElement("td");
       td.className = "row-actions";
       var pdf = document.createElement("button");
@@ -3016,7 +3096,7 @@ function loadDocs() {
       if (CONVERTIBLE[docsType] && !inv.convertedToId) {
         var conv = document.createElement("button");
         conv.className = "btn btn-mini btn-primary"; conv.type = "button";
-        conv.textContent = "Convert to Sale";
+        conv.textContent = "Convert";
         conv.addEventListener("click", function () {
           if (!navigator.onLine) { setMsg("appMsg", "Converting needs internet — please try again when you are online.", true); return; }
           conv.disabled = true;
@@ -3301,25 +3381,24 @@ function loadStock() {
 
 /* ----------------------------------------------------------- payments -- */
 var payInvoiceId = null;   /* set when settling a specific invoice */
-function setPayFilter(filter, direction) {
+function setPayFilter(filter) {
   payFilter = filter;
   document.querySelectorAll("[data-payfilter]").forEach(function (c) {
     c.classList.toggle("active", c.getAttribute("data-payfilter") === filter);
   });
-  if (direction) $("payDirection").value = direction;
 }
+/* Settling one bill opens that direction's OWN popup (build .20,
+   defect D6) prefilled with the party and the bill's balance. */
 function startSettle(inv, direction, note) {
   payInvoiceId = inv.id;
-  setPayFilter(direction, direction);
-  if (inv.partyId) $("payParty").value = inv.partyId;
-  $("payAmount").value = (inv.balancePaisa / 100).toFixed(2);
-  $("paySettleText").textContent = note + " Saving this payment will settle that bill.";
-  $("paySettleNote").classList.remove("hidden");
+  setPayFilter(direction);
   navKey = direction === "in" ? "paymentin" : "paymentout";
   showScreen("payments");
-  showPanel("paymentPanel");
-  fillPartySelects();
-  if (inv.partyId) $("payParty").value = inv.partyId;
+  openPayModal(direction, {
+    partyId: inv.partyId, amountPaisa: inv.balancePaisa,
+    settleInvoiceId: inv.id,
+    settleText: note + " Saving this payment will settle that bill."
+  });
 }
 $("btnPaySettleClear").addEventListener("click", function () {
   payInvoiceId = null;
@@ -3364,49 +3443,178 @@ function loadPayments() {
     });
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
   var s = QB.settings || {};
-  $("payDiscountWrap").classList.toggle("hidden", !s.discount_during_payments);
   $("allocateCard").classList.toggle("hidden", !s.link_payments_to_invoices);
   apiGet("/api/bank-accounts", null).then(function (r) {
-    var sel = $("payBank");
-    sel.innerHTML = '<option value="">— None —</option>' + (r.body.bankAccounts || []).map(function (a) {
+    var opts = '<option value="">— None —</option>' + (r.body.bankAccounts || []).map(function (a) {
       return '<option value="' + a.id + '">' + esc(a.displayName) + "</option>";
     }).join("");
+    ["piBank", "poBank"].forEach(function (id) { var b = $(id); if (b) b.innerHTML = opts; });
   }).catch(function () {});
 }
-function syncPayModeFields() {
-  var mode = $("payMode").value;
-  $("payBankWrap").classList.toggle("hidden", !(mode === "bank" || mode === "jazzcash" || mode === "easypaisa"));
-  $("payChequeWrap").classList.toggle("hidden", mode !== "cheque");
+/* Payment-In / Payment-Out popups (build .20, defect D6). The owner
+   recorded BOTH as separate popups in his Vyapar; QBill had merged
+   them into one form with a Direction dropdown. Each direction now
+   has its OWN dialog (own title, own form, Received vs Paid label);
+   the helpers below are shared plumbing, the flows are separate.
+   Structure per the recording: Party picker with Party Balance and a
+   "BAL:" line, Payment Type + "+ Add Payment type" (a second split
+   row, saved as its own payment), ADD DESCRIPTION, Receipt No.
+   (Auto) / Date / Time, amount, Discount, Total, green LINK PAYMENT
+   (spreads the amount over the party's open bills via the existing
+   allocate endpoint), Save. */
+var payModalSettle = { in: null, out: null };
+function payPrefix(direction) { return direction === "in" ? "pi" : "po"; }
+function payModalId(direction) { return direction === "in" ? "payInModal" : "payOutModal"; }
+function syncPayModalFields(direction) {
+  var p = payPrefix(direction);
+  var mode = $(p + "Mode").value;
+  $(p + "BankWrap").classList.toggle("hidden", !(mode === "bank" || mode === "jazzcash" || mode === "easypaisa"));
+  $(p + "ChequeWrap").classList.toggle("hidden", mode !== "cheque");
 }
-$("payMode").addEventListener("change", syncPayModeFields);
-$("paymentForm").addEventListener("submit", function (ev) {
+function payModalBalanceText(direction) {
+  var p = payPrefix(direction);
+  var sel = $(p + "Party");
+  var o = sel.options[sel.selectedIndex];
+  if (!o || !o.value) { $(p + "Bal").textContent = ""; return; }
+  var bal = parseInt(o.getAttribute("data-balance") || "0", 10);
+  $(p + "Bal").textContent = "BAL: " + fmtRs(bal) +
+    (bal < 0 ? " — party owes us (You'll receive)" :
+     bal > 0 ? " — we owe the party (You'll pay)" : " — no balance due");
+}
+function payModalExtraAmount(direction) {
+  var p = payPrefix(direction);
+  var inp = $(p + "Extra").querySelector(".pxAmount");
+  return inp ? rsToPaisa(inp.value) : 0;
+}
+function payModalTotal(direction) {
+  var p = payPrefix(direction);
+  var total = rsToPaisa($(p + "Amount").value) + payModalExtraAmount(direction);
+  $(p + "Total").textContent = fmtRs(total);
+  return total;
+}
+function openPayModal(direction, opts) {
+  opts = opts || {};
+  var p = payPrefix(direction);
+  $(direction === "in" ? "payInForm" : "payOutForm").reset();
+  $(p + "Extra").innerHTML = "";
+  $(p + "NoteWrap").classList.add("hidden");
+  $(p + "Msg").textContent = "";
+  var s = QB.settings || {};
+  $(p + "DiscountWrap").classList.toggle("hidden", !s.discount_during_payments);
+  $(p + "Link").classList.toggle("hidden",
+    !(s.link_payments_to_invoices && !opts.settleInvoiceId));
+  payModalSettle[direction] = opts.settleInvoiceId || null;
+  var sn = $(p + "SettleNote");
+  if (opts.settleText) { sn.textContent = opts.settleText; sn.classList.remove("hidden"); }
+  else sn.classList.add("hidden");
+  var now = new Date();
+  $(p + "Date").value = now.toISOString().slice(0, 10);
+  $(p + "Time").value = now.toTimeString().slice(0, 5);
+  if (opts.partyId) $(p + "Party").value = opts.partyId;
+  if (opts.amountPaisa) $(p + "Amount").value = (opts.amountPaisa / 100).toFixed(2);
+  syncPayModalFields(direction);
+  payModalBalanceText(direction);
+  payModalTotal(direction);
+  fillPartySelects().then(function () {
+    if (opts.partyId) $(p + "Party").value = opts.partyId;
+    payModalBalanceText(direction);
+  });
+  $(payModalId(direction)).classList.remove("hidden");
+  $(p + "Amount").focus();
+}
+function closePayModal(direction) {
+  $(payModalId(direction)).classList.add("hidden");
+}
+function addPayModalExtra(direction) {
+  var p = payPrefix(direction);
+  var box = $(p + "Extra");
+  if (box.children.length) return;
+  var row = document.createElement("div");
+  row.className = "grid2";
+  row.innerHTML = '<label>Payment Type 2 <select class="pxMode">' +
+    $(p + "Mode").innerHTML + '</select></label>' +
+    '<label>Amount 2 (Rs) <input class="pxAmount" type="number" step="0.01" min="0" value="0"></label>';
+  box.appendChild(row);
+  row.querySelector(".pxAmount").addEventListener("input", function () { payModalTotal(direction); });
+}
+function submitPayModal(direction, ev) {
   ev.preventDefault();
+  var p = payPrefix(direction);
+  var partyId = $(p + "Party").value ? parseInt($(p + "Party").value, 10) : null;
+  if (!partyId) { setMsg(p + "Msg", "Choose a party first.", true); return; }
+  var amount = rsToPaisa($(p + "Amount").value);
+  if (amount <= 0) { setMsg(p + "Msg", "Enter an amount.", true); return; }
+  var note = $(p + "Note").value.trim();
   var payload = {
-    party_id: $("payParty").value ? parseInt($("payParty").value, 10) : null,
-    direction: $("payDirection").value,
-    amount_paisa: rsToPaisa($("payAmount").value),
-    mode: $("payMode").value,
-    bank_account_id: $("payBank").value ? parseInt($("payBank").value, 10) : null,
-    cheque_no: $("payCheque").value.trim(),
-    reference_no: $("payReference").value.trim(),
-    discount_paisa: rsToPaisa($("payDiscount").value)
+    party_id: partyId,
+    direction: direction,
+    amount_paisa: amount,
+    mode: $(p + "Mode").value,
+    bank_account_id: $(p + "Bank").value ? parseInt($(p + "Bank").value, 10) : null,
+    cheque_no: $(p + "Cheque").value.trim(),
+    reference_no: "",
+    note: note,
+    discount_paisa: rsToPaisa($(p + "Discount").value)
   };
-  if (payInvoiceId) payload.invoice_id = payInvoiceId;
+  if (payModalSettle[direction]) payload.invoice_id = payModalSettle[direction];
   apiCreate("payment", payload).then(function (r) {
-    $("paymentForm").reset();
-    $("payDiscount").value = 0;
-    syncPayModeFields();
-    payInvoiceId = null;
-    $("paySettleNote").classList.add("hidden");
-    hidePanel("paymentPanel");
-    setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Payment saved.");
+    var finish = function () {
+      payModalSettle[direction] = null;
+      payInvoiceId = null;
+      $("paySettleNote").classList.add("hidden");
+      closePayModal(direction);
+      setMsg("appMsg", r.queued ? "Saved on this device — will sync when online." : "Payment saved.");
+      loadPayments();
+      loadDashboard();
+    };
+    var extraAmt = payModalExtraAmount(direction);
+    if (extraAmt > 0) {
+      apiCreate("payment", {
+        party_id: partyId, direction: direction, amount_paisa: extraAmt,
+        mode: $(p + "Extra").querySelector(".pxMode").value, note: note
+      }).then(finish).catch(function (e) { setMsg(p + "Msg", e.message, true); });
+    } else finish();
+  }).catch(function (e) { setMsg(p + "Msg", e.message, true); });
+}
+function linkPayModal(direction) {
+  var p = payPrefix(direction);
+  var partyId = $(p + "Party").value ? parseInt($(p + "Party").value, 10) : null;
+  var total = payModalTotal(direction);
+  if (!partyId || total <= 0) {
+    setMsg(p + "Msg", "Choose a party and enter the amount to link.", true);
+    return;
+  }
+  apiPost("/api/payments/allocate", {
+    party_id: partyId, amount_paisa: total, direction: direction
+  }).then(function (body) {
+    var parts = (body.allocations || []).map(function (a) {
+      return a.invoiceNo + ": " + fmtRs(a.amountPaisa);
+    }).join(" · ");
+    closePayModal(direction);
+    setMsg("appMsg", "Linked — " + parts +
+      (body.unallocatedPaisa > 0 ? " · Leftover unallocated: " + fmtRs(body.unallocatedPaisa) : ""));
     loadPayments();
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+    loadDashboard();
+  }).catch(function (e) { setMsg(p + "Msg", e.message, true); });
+}
+["in", "out"].forEach(function (direction) {
+  var p = payPrefix(direction);
+  $(direction === "in" ? "payInForm" : "payOutForm").addEventListener("submit", function (ev) {
+    submitPayModal(direction, ev);
+  });
+  $(p + "Mode").addEventListener("change", function () { syncPayModalFields(direction); });
+  $(p + "Party").addEventListener("change", function () { payModalBalanceText(direction); });
+  $(p + "Amount").addEventListener("input", function () { payModalTotal(direction); });
+  $(p + "AddType").addEventListener("click", function () { addPayModalExtra(direction); });
+  $(p + "DescBtn").addEventListener("click", function () {
+    $(p + "NoteWrap").classList.toggle("hidden");
+  });
+  $(p + "Link").addEventListener("click", function () { linkPayModal(direction); });
+  $(p + "Close").addEventListener("click", function () { closePayModal(direction); });
 });
-$("btnAddPayment").addEventListener("click", function () {
-  showPanel("paymentPanel");
-  $("payAmount").focus();
-});
+$("btnAddPayment").addEventListener("click", function () { showPanel("paymentPanel"); });
+$("btnOpenPayIn").addEventListener("click", function () { hidePanel("paymentPanel"); openPayModal("in"); });
+$("btnOpenPayOut").addEventListener("click", function () { hidePanel("paymentPanel"); openPayModal("out"); });
 $("btnPaymentBack").addEventListener("click", function () { hidePanel("paymentPanel"); });
 $("btnAllocate").addEventListener("click", function () {
   var pid = $("allocParty").value;
@@ -4152,6 +4360,22 @@ function loadAccounts() {
     });
   }).catch(function () {});
 }
+/* Build .20 (D7): "Add a shop account" starts the EXISTING
+   create-account flow — there is deliberately no second signup
+   implementation. Creating an account needs the logged-out auth
+   popup, so this logs the owner out and lands directly on the
+   popup's Create an account form (stepOne). The new account is
+   pending until the owner approves it in this same list. */
+$("btnAddShopAccount").addEventListener("click", function () {
+  if (!confirm("You will be logged out to create the new shop account. " +
+      "It stays pending until you approve it here. Continue?")) return;
+  apiPost("/api/auth/logout", {}).catch(function () {}).then(function () {
+    setToken(null);
+    forgotIntent = false;
+    showAuth();
+    showAuthStep("stepOne");
+  });
+});
 
 /* ------------------------------------------- header / Add More / keys -- */
 function toggleMega(force) {
@@ -4466,8 +4690,14 @@ function loadReport() {
     });
     var cols = def.cols;
     if (def.key === "all-transactions") {
-      var kindFilter = $("repTypeFilter").value;
-      if (kindFilter) rows = rows.filter(function (row) { return row.kind === kindFilter; });
+      /* Build .20 parity: type filtering is by CHECKBOXES (the
+         recording's screen), all ticked by default. Footer totals
+         below already recompute over the filtered rows. */
+      var kinds = {};
+      document.querySelectorAll("[data-reptype]").forEach(function (cb) {
+        if (cb.checked) kinds[cb.getAttribute("data-reptype")] = 1;
+      });
+      rows = rows.filter(function (row) { return kinds[row.kind]; });
     }
     if (def.key === "trial-balance") {
       if ($("tbWorking").checked) {
@@ -4520,7 +4750,17 @@ function loadReport() {
     }
   }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
-$("repTypeFilter").addEventListener("change", function () {
+document.querySelectorAll("[data-reptype]").forEach(function (cb) {
+  cb.addEventListener("change", function () {
+    if (currentReport === "all-transactions") loadReport();
+  });
+});
+$("btnRepTypesAll").addEventListener("click", function () {
+  document.querySelectorAll("[data-reptype]").forEach(function (cb) { cb.checked = true; });
+  if (currentReport === "all-transactions") loadReport();
+});
+$("btnRepTypesNone").addEventListener("click", function () {
+  document.querySelectorAll("[data-reptype]").forEach(function (cb) { cb.checked = false; });
   if (currentReport === "all-transactions") loadReport();
 });
 [$("tbWorking"), $("tbZero"), $("tbCollapse")].forEach(function (el) {
@@ -4642,6 +4882,8 @@ function loadTransfers() {
       $("trItem").innerHTML = items.map(function (i) {
         return '<option value="' + i.id + '">' + esc(i.name) + "</option>";
       }).join("");
+      if (!$("trDate").value) $("trDate").value = new Date().toISOString().slice(0, 10);
+      updateTrAvail();
       var list = (res[2].body.transfers || []).slice().reverse();
       $("transferList").innerHTML = list.map(function (t) {
         return '<div class="row">' + rowHtml(t.itemName + " × " + t.qty,
@@ -4650,6 +4892,21 @@ function loadTransfers() {
       }).join("") || '<p class="empty">No transfers yet.</p>';
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
 }
+/* Available Qty for the chosen item in the From godown (build .20
+   parity: the recording's transfer table carries an AVAILABLE QTY
+   column). */
+function updateTrAvail() {
+  var gid = $("trFrom").value, iid = $("trItem").value;
+  if (!gid || !iid) { $("trAvail").textContent = ""; return; }
+  apiGet("/api/godowns/" + gid + "/stock", null).then(function (sr) {
+    var row = (sr.body.items || []).filter(function (x) { return String(x.id) === String(iid); })[0];
+    var gname = sr.body.godown ? sr.body.godown.name : "godown";
+    $("trAvail").textContent = "Available Qty in " + gname + ": " + (row ? row.qty : 0);
+  }).catch(function () {});
+}
+$("trItem").addEventListener("change", updateTrAvail);
+$("trFrom").addEventListener("change", updateTrAvail);
+$("btnManageGodowns").addEventListener("click", function () { go("godowns"); });
 $("transferForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
   apiPost("/api/stock-transfers", {
@@ -4657,6 +4914,7 @@ $("transferForm").addEventListener("submit", function (ev) {
     qty: parseInt($("trQty").value || "0", 10),
     from_godown_id: parseInt($("trFrom").value, 10),
     to_godown_id: parseInt($("trTo").value, 10),
+    date: $("trDate").value || "",
     note: $("trNote").value.trim()
   }).then(function () {
     hidePanel("transferPanel");
@@ -6051,6 +6309,39 @@ function openPreview(inv) {
   $("viewTitle").textContent = "Invoice Preview";
   setActiveNav();
 }
+/* Amount in words for the invoice preview (build .20 parity: the
+   recording's preview prints "Invoice Amount In Words"). Mirrors the
+   PDF renderer's wording. */
+function _wordsBelow100Js(n) {
+  var ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+    "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen",
+    "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  var tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty",
+    "Seventy", "Eighty", "Ninety"];
+  if (n < 20) return ones[n];
+  return (tens[Math.floor(n / 10)] + " " + ones[n % 10]).trim();
+}
+function _wordsIndianJs(n) {
+  if (n === 0) return "Zero";
+  var parts = [];
+  var crore = Math.floor(n / 10000000); n %= 10000000;
+  var lakh = Math.floor(n / 100000); n %= 100000;
+  var thousand = Math.floor(n / 1000); n %= 1000;
+  var hundred = Math.floor(n / 100); var rest = n % 100;
+  if (crore) parts.push(_wordsIndianJs(crore) + " Crore");
+  if (lakh) parts.push(_wordsBelow100Js(lakh) + " Lakh");
+  if (thousand) parts.push(_wordsBelow100Js(thousand) + " Thousand");
+  if (hundred) parts.push(_wordsBelow100Js(hundred) + " Hundred");
+  if (rest) parts.push(_wordsBelow100Js(rest));
+  return parts.join(" ");
+}
+function paisaToWords(paisa) {
+  var rupees = Math.floor(paisa / 100), paise = paisa % 100;
+  if (rupees && paise) return _wordsIndianJs(rupees) + " Rupees and Paise " + _wordsIndianJs(paise) + " only";
+  if (rupees) return _wordsIndianJs(rupees) + " Rupees only";
+  if (paise) return "Paise " + _wordsIndianJs(paise) + " only";
+  return "Zero Rupees only";
+}
 function renderPreviewBody() {
   var inv = lastSavedInvoice;
   if (!inv) return;
@@ -6058,14 +6349,28 @@ function renderPreviewBody() {
   var color = $("previewColor").value || s.print_color || "#f26522";
   var parties = ((cacheGet("parties") || {}).parties) || [];
   var party = parties.filter(function (p) { return p.id === inv.partyId; })[0];
-  var rows = (inv.lines || []).map(function (l) {
+  var rows = (inv.lines || []).map(function (l, idx) {
     var free = l.freeQty ? " + " + l.freeQty + " free" : "";
     var item = l.itemId ? itemById(l.itemId) : null;
     var lname = (item && item.name) || l.description || "Item";
-    return "<tr><td>" + esc(lname) + free + "</td><td>" + l.qty +
+    /* Build .20 parity: the recording's preview numbers every line
+       (#) and shows the Unit column. */
+    return "<tr><td>" + (idx + 1) + "</td><td>" + esc(lname) + free + "</td><td>" + l.qty +
+      "</td><td>" + esc(l.unit || (item && item.unit) || "") +
       "</td><td>" + fmtRs(l.ratePaisa) + "</td><td>" + fmtRs((l.amountPaisa != null ? l.amountPaisa : l.qty * l.ratePaisa)) + "</td></tr>";
   }).join("");
   var saved = (inv.discountPaisa || 0) + (inv.loyaltyRedeemedPaisa || 0);
+  /* Previous / Current party balance (build .20 parity): Current is
+     the party's live balance (this bill included); Previous undoes
+     this bill's unpaid part — sale/purchase_return raise what the
+     party owes us, purchase/sale_return lower it. */
+  var balHtml = "";
+  var balSign = { sale: 1, purchase: -1, sale_return: -1, purchase_return: 1 }[inv.type];
+  if (party && balSign) {
+    var current = party.balancePaisa || 0;
+    var previous = current + balSign * (inv.balancePaisa || 0);
+    balHtml = "<br>Previous Balance: " + fmtRs(previous) + " · Current Balance: " + fmtRs(current);
+  }
   $("previewBody").innerHTML =
     '<div style="border-top:8px solid ' + color + '; padding-top:10px">' +
     "<strong>" + esc((me && me.business && me.business.name) || "Your Business") + "</strong>" +
@@ -6073,10 +6378,12 @@ function renderPreviewBody() {
     esc(((s.print_names || {})[inv.type]) || DOC_META[inv.type].title.toUpperCase()) + "</div>" +
     "<p>" + esc(inv.invoiceNo) + " · " + esc((inv.createdAt || "").slice(0, 10)) +
     (party ? " · " + esc(party.name) : " · Cash") + "</p>" +
-    "<table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>" +
+    "<table><thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Amount</th></tr></thead><tbody>" +
     rows + "</tbody></table>" +
+    '<p style="margin-top:8px">Invoice Amount In Words: <strong>' + esc(paisaToWords(inv.totalPaisa || 0)) + "</strong></p>" +
     '<div style="text-align:right; margin-top:8px">Total: <strong>' + fmtRs(inv.totalPaisa) + "</strong><br>" +
     "Paid: " + fmtRs(inv.paidPaisa || 0) + " · Balance: " + fmtRs(inv.balancePaisa || 0) +
+    balHtml +
     (saved > 0 ? "<br>You Saved: " + fmtRs(saved) : "") +
     (inv.loyaltyPointsEarned ? "<br>Loyalty points earned: " + inv.loyaltyPointsEarned : "") +
     "</div></div>";

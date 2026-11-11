@@ -18,6 +18,8 @@ from .crud import (
 )
 from .security import ApiError, now_iso
 
+import datetime as _dt
+
 bp = Blueprint("stockx", __name__, url_prefix="/api")
 
 GODOWN_TYPES = ("Godown", "Retail Store", "Wholesale Store", "Assembly Plant", "Others")
@@ -232,12 +234,24 @@ def create_transfer():
             "UPDATE godown_stock SET qty = qty + ? WHERE godown_id = ? AND item_id = ?",
             (qty, to_id, item_id),
         )
+        # Transfer Date (build .20 parity with the recorded Vyapar
+        # screen): an optional YYYY-MM-DD the transfer is dated on;
+        # absent = now. Same noon-UTC stamping as Cash Adjustment.
+        created_at = now_iso()
+        raw_date = str(data.get("date") or "").strip()
+        if raw_date:
+            try:
+                _dt.date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    "Transfer date must be a valid date (YYYY-MM-DD).")
+            created_at = raw_date + "T12:00:00+00:00"
         tid = tx.insert(
             "INSERT INTO stock_transfers (business_id, item_id, from_godown_id, "
             "to_godown_id, qty, note, created_at, client_ref) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (biz, item_id, from_id, to_id, qty,
-             str(data.get("note") or "").strip(), now_iso(), client_ref),
+             str(data.get("note") or "").strip(), created_at, client_ref),
         )
         row = tx.query_one("SELECT * FROM stock_transfers WHERE id = ?", (tid,))
         result = _transfer_dict(row, _godown_names(tx, biz), _item_names(tx, biz))
