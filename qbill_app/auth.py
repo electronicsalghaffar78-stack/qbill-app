@@ -68,7 +68,91 @@ log = logging.getLogger("qbill.auth")
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# ------------------------------------------------------- email checks ----
+# Build .21 (owner's check of .20): the old loose regex accepted any
+# typo domain ("gmal.com", "gmail.con") and the sign-in flow simply
+# continued. _clean_email below is the ONE validation point used by
+# request-otp, verify-otp and login, so all three inherit this:
+# strict format + a typo guard for the big providers.
+_LOCAL_PART_RE = re.compile(r"^[A-Za-z0-9._%+\-]+$")
+_DOMAIN_LABEL_RE = re.compile(r"^[A-Za-z0-9-]+$")
+_TLD_RE = re.compile(r"^[A-Za-z]{2,}$")
+_KNOWN_PROVIDERS = (
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+)
+
+
+def _edit_distance(a, b):
+    """Levenshtein distance (the strings compared here are tiny)."""
+    if a == b:
+        return 0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(
+                min(
+                    prev[j] + 1,
+                    cur[j - 1] + 1,
+                    prev[j - 1] + (0 if ca == cb else 1),
+                )
+            )
+        prev = cur
+    return prev[-1]
+
+
+def _validate_email(email):
+    """Return an error message for a bad address, or None when valid.
+
+    Strict format: exactly one @; a local part of allowed characters
+    (never starting/ending with a dot, no doubled dots); a domain of
+    valid labels (no leading/trailing hyphen) ending in a letters-only
+    TLD of at least 2 characters. Then the typo guard: a domain within
+    edit distance 2 of a big provider (gmail / yahoo / hotmail /
+    outlook / icloud) is almost certainly a mistyped address, so it is
+    rejected with the corrected address as a suggestion. Any other
+    well-formed domain — including unusual business domains — passes;
+    there is deliberately no provider whitelist.
+    """
+    invalid = "Please enter a valid email address."
+    if email.count("@") != 1:
+        return invalid
+    local, domain = email.split("@")
+    if (
+        not local
+        or not _LOCAL_PART_RE.match(local)
+        or local.startswith(".")
+        or local.endswith(".")
+        or ".." in local
+    ):
+        return invalid
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return invalid
+    for label in labels:
+        if (
+            not label
+            or not _DOMAIN_LABEL_RE.match(label)
+            or label.startswith("-")
+            or label.endswith("-")
+        ):
+            return invalid
+    if not _TLD_RE.match(labels[-1]):
+        return invalid
+    if domain not in _KNOWN_PROVIDERS:
+        for provider in _KNOWN_PROVIDERS:
+            if _edit_distance(domain, provider) <= 2:
+                return (
+                    "This email address looks incorrect — did you "
+                    "mean {}@{}?".format(local, provider)
+                )
+    return None
+
+
 OTP_EXPIRY_MINUTES = 10
 SESSION_DAYS = 30
 
@@ -83,8 +167,9 @@ def _body():
 
 def _clean_email(raw):
     email = str(raw or "").strip().lower()
-    if not _EMAIL_RE.match(email):
-        raise ApiError("Please enter a valid email address.")
+    error = _validate_email(email)
+    if error:
+        raise ApiError(error)
     return email
 
 
@@ -170,7 +255,7 @@ def require_unlocked(fn):
                 jsonify(
                     ok=False,
                     code="locked",
-                    error="QBill is locked. Enter your QBill password to continue.",
+                    error="QRLedger is locked. Enter your QRLedger password to continue.",
                 ),
                 403,
             )
@@ -250,8 +335,8 @@ def request_otp():
     # is identical whether delivery worked, failed, or no route exists.
     route, _errors = mailer.send_email(
         email,
-        "Your QBill login code",
-        "Your QBill login code is {}.\n\n"
+        "Your QRLedger login code",
+        "Your QRLedger login code is {}.\n\n"
         "It is valid for {} minutes. Do not share it with anyone.\n\n"
         "If you did not request this code, you can ignore this email.".format(
             code, OTP_EXPIRY_MINUTES
@@ -397,7 +482,7 @@ def set_password():
         raise ApiError("Password must be at least 4 characters.")
     if g.session["pw_hash"] is not None:
         raise ApiError(
-            "A QBill password is already set. Use change-password instead."
+            "A QRLedger password is already set. Use change-password instead."
         )
     salt, digest = hash_password(password)
     with db.transaction() as tx:
@@ -416,7 +501,7 @@ def set_password():
 @require_session
 def verify_password():
     if g.session["pw_hash"] is None:
-        raise ApiError("No QBill password is set yet. Set a password first.")
+        raise ApiError("No QRLedger password is set yet. Set a password first.")
     password = str(_body().get("password") or "")
     if not check_password(password, g.session["pw_salt"], g.session["pw_hash"]):
         return jsonify(ok=False, error="Wrong password."), 401

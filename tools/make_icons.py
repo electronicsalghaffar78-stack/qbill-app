@@ -1,10 +1,11 @@
 """Regenerate the brand assets in qbill_app/static/icons/.
 
-The real QBill logo (chosen by the owner on 2026-11-09: the orange
-receipt-Q mark, "QBill — by Abdul Qudoos") is stored as base64 text
-files, because binary files cannot travel through the GitHub snapshot
-pushes:
-  tools/icon-master.b64 -> icon-192.png + icon-512.png (the mark)
+The real QRLedger logo (the product was renamed from QBill to
+QRLedger; final logo chosen by the owner on 2026-11-13: a navy Q +
+emerald R fused monogram followed by the word "Ledger") is stored as
+base64 text files, because binary files cannot travel through the
+GitHub snapshot pushes:
+  tools/icon-master.b64 -> icon-192.png + icon-512.png (the QR monogram)
   tools/logo-full.b64   -> logo-full.png (the full logo lockup)
 
 The Docker build runs this script to recreate the PNGs. If the .b64

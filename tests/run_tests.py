@@ -1,4 +1,4 @@
-"""QBill Web — Phase 1 foundation test suite.
+"""QRLedger Web — Phase 1 foundation test suite.
 
 Plain python, no framework. Boots the app on a throwaway SQLite file with
 the dev mail recorder on (QBILL_DEV_MAIL=1) and checks the whole foundation
@@ -397,7 +397,7 @@ check(
 
 # -------------- S2-5. backup run emails the snapshot; restore is exact --
 backup_emails_before = len(
-    [m for m in mailer.DEV_OUTBOX if m["subject"].startswith("QBill daily backup")]
+    [m for m in mailer.DEV_OUTBOX if m["subject"].startswith("QRLedger daily backup")]
 )
 r = client.post("/api/backups/run", headers=H(user_token))
 bkp = r.get_json().get("backup", {}) if r.status_code == 201 else {}
@@ -410,7 +410,7 @@ check(
     json.dumps(bkp),
 )
 backup_msgs = [m for m in mailer.DEV_OUTBOX
-               if m["subject"].startswith("QBill daily backup")]
+               if m["subject"].startswith("QRLedger daily backup")]
 new_msgs = backup_msgs[backup_emails_before:]
 att_ok = False
 if len(new_msgs) == 1 and new_msgs[0].get("attachments"):
@@ -1117,7 +1117,7 @@ check(
 html = client.get("/").get_data(as_text=True)
 check(
     "frontend: activation screen shows the owner's plans and heading",
-    "Activate your QBill account" in html
+    "Activate your QRLedger account" in html
     and "Rs 30,000" in html and "Rs 60,000" in html and "Rs 70,000" in html
     and "03273799008" in html,
 )
@@ -1846,12 +1846,12 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar9/v18 (build .20)",
+    "version/cache moved to vyapar11/v20 (build .22)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-11.20-vyapar9"
-    and "qbill-shell-v18" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-13.22-vyapar11"
+    and "qbill-shell-v20" in client.get("/sw.js").get_data(as_text=True),
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -2851,6 +2851,396 @@ check(
     and "One account per shop" in d7_html
     and "btnAddShopAccount" in d7_js
     and 'showAuthStep("stepOne")' in d7_js,
+)
+
+# ------------------------------------------- 12s. build .21 fix round --
+# Fix round .21 (owner's laptop check of .20, 2026-11-13):
+# (A) popups sit on a dark DIM (the frosted blur is gone) in a compact
+#     bordered box with a corner X close;
+# (B) strict email validation + provider typo guard on the auth forms;
+# (C) click feedback + a working indicator while requests run.
+b21_css = client.get("/static/styles.css").get_data(as_text=True)
+b21_js = client.get("/static/app.js").get_data(as_text=True)
+b21_html = client.get("/").get_data(as_text=True)
+check(
+    "build21 A: modal overlay is a dark dim with NO backdrop blur; the "
+    "dialog box is compact with the light-blue border; corner X "
+    "buttons exist on the Payment-In / Payment-Out / search popups",
+    "backdrop-filter" not in b21_css
+    and "rgba(0, 0, 0, .5)" in b21_css
+    and "border: 2px solid #7fb3d5" in b21_css
+    and "max-width: 520px" in b21_css
+    and 'id="piCloseX"' in b21_html and 'id="poCloseX"' in b21_html
+    and 'id="searchCloseX"' in b21_html
+    and "CloseX" in b21_js,
+)
+check(
+    "build21 C: click feedback (:active + .click-flash) and the "
+    "working indicator (#netBar + body.net-busy fetch wrapper) ship "
+    "in the shell; the strict auth email check is mirrored in app.js",
+    ".click-flash" in b21_css and "#netBar" in b21_css
+    and "click-flash" in b21_js and "net-busy" in b21_js
+    and "authEmailError" in b21_js and "did you mean" in b21_js,
+)
+B21_BAD = [
+    "shop21@gmal.com", "shop21@gmial.com", "shop21@gmail.con",
+    "shop21@gmail.cm", "shop21@hotmai.com", "shop21@yahooo.com",
+    "shop21gmail.com", "shop21@@gmail.com", "shop21 @gmail.com",
+    "shop21@gmail", "shop21@gmail.c",
+]
+for bad in B21_BAD:
+    r = client.post("/api/auth/request-otp", json={"email": bad})
+    check(
+        "build21 B: request-otp rejects {!r}".format(bad),
+        r.status_code == 400,
+        r.get_data(as_text=True)[:120],
+    )
+r = client.post("/api/auth/request-otp", json={"email": "typo21@gmal.com"})
+check(
+    "build21 B: a gmail typo is rejected with the corrected suggestion",
+    r.status_code == 400
+    and "did you mean typo21@gmail.com?" in (r.get_json() or {}).get("error", ""),
+    r.get_data(as_text=True)[:160],
+)
+r = client.post(
+    "/api/auth/login", json={"email": "typo21@gmial.com", "password": "x123"}
+)
+check(
+    "build21 B: login stops a typo email before any password check",
+    r.status_code == 400
+    and "did you mean typo21@gmail.com?" in (r.get_json() or {}).get("error", ""),
+    r.get_data(as_text=True)[:160],
+)
+for good in ["valid21@gmail.com", "valid21@yahoo.com", "info@alghaffar.pk"]:
+    r = client.post("/api/auth/request-otp", json={"email": good})
+    check(
+        "build21 B: request-otp accepts " + good,
+        r.status_code == 200 and (r.get_json() or {}).get("ok") is True,
+        r.get_data(as_text=True)[:120],
+    )
+
+# ---------------- 12t. build .22: QRLedger rebrand + research P0 ------
+# (A) The product is QRLedger now: shell, manifest and the OTP email
+#     carry the new name; the version/cache moved to vyapar11/v20.
+# (B1) Every SALE bill prints the khata balance block:
+#     Previous Balance + This Bill - Paid = Total Payable (paisa-exact,
+#     in "party owes us" space — the negation of party_balance_map).
+# (B2) Business Profile payment rails (Raast / JazzCash / Easypaisa +
+#     free-text) print as a "Pay To:" block on PDF + thermal bills.
+# (B3) A thermal print can name its roll width (58mm / 80mm).
+# (B4) Backup status endpoint: last backup time + emailed flag.
+# (B5) NTN / STRN print on bills when filled; the tax-inclusive
+#     toggle keeps invoice math paisa-exact in BOTH modes.
+tok_22 = _signup_from_ip("shop22@example.com", "198.51.100.222", "shop-22")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shop22@example.com"})
+H22 = H(tok_22)
+
+shell22 = client.get("/").get_data(as_text=True)
+mani22 = client.get("/manifest.webmanifest").get_json()
+check(
+    "build22 A: the shell is QRLedger (title, log-in, activation) and "
+    "the PWA manifest carries the new name",
+    "<title>QRLedger — Billing for Shopkeepers</title>" in shell22
+    and "Log in to QRLedger" in shell22
+    and "Activate your QRLedger account" in shell22
+    and "QBill" not in shell22
+    and mani22.get("name") == "QRLedger — Billing for Shopkeepers"
+    and mani22.get("short_name") == "QRLedger",
+)
+r = client.post("/api/auth/request-otp", json={"email": "otp22@example.com"})
+subj22 = [m["subject"] for m in mailer.DEV_OUTBOX
+          if m["to"] == "otp22@example.com"]
+check(
+    "build22 A: the login-code email is branded QRLedger",
+    subj22 and subj22[-1] == "Your QRLedger login code",
+    json.dumps(subj22),
+)
+r = client.get("/static/icons/icon-512.png")
+r2 = client.get("/static/icons/logo-full.png")
+check(
+    "build22 A: the new brand assets serve (icon + full logo)",
+    r.status_code == 200 and r.get_data()[:8] == b"\x89PNG\r\n\x1a\n"
+    and r2.status_code == 200 and r2.get_data()[:8] == b"\x89PNG\r\n\x1a\n",
+)
+
+# Profile: a fresh account's new fields are EMPTY (per-account
+# isolation — never seeded with anyone's real details).
+prof22 = client.get("/api/business", headers=H22).get_json()["business"]
+check(
+    "build22 B2/B5: a new account's NTN/STRN and payment fields start empty",
+    prof22.get("ntn") == "" and prof22.get("strn") == ""
+    and prof22.get("raastIban") == "" and prof22.get("jazzcashNumber") == ""
+    and prof22.get("easypaisaNumber") == ""
+    and prof22.get("paymentDetails") == "",
+    json.dumps(prof22),
+)
+r = client.get("/api/settings", headers=H22)
+check(
+    "build22 B5: tax_inclusive defaults OFF on a new account",
+    (r.get_json().get("settings") or {}).get("tax_inclusive") is False,
+)
+r = client.put("/api/business", headers=H22, json={
+    "name": "B22 Test Shop",
+    "ntn": "1234567-8", "strn": "01-2345678-001-90",
+    "raast_iban": "PK36TEST0000000000000001",
+    "jazzcash_number": "03001234567", "easypaisa_number": "03451234567",
+    "payment_details": "Account Title: B22 Test\nBranch: Main Bazaar",
+})
+prof22 = (r.get_json() or {}).get("business", {})
+check(
+    "build22 B2/B5: profile saves NTN/STRN + payment rails (round-trip)",
+    r.status_code == 200 and prof22.get("ntn") == "1234567-8"
+    and prof22.get("strn") == "01-2345678-001-90"
+    and prof22.get("raastIban") == "PK36TEST0000000000000001"
+    and prof22.get("jazzcashNumber") == "03001234567"
+    and prof22.get("easypaisaNumber") == "03451234567"
+    and prof22.get("paymentDetails", "").startswith("Account Title: B22 Test"),
+    json.dumps(prof22),
+)
+
+
+def _b22_sale(party_id, lines, **kw):
+    payload = {"type": "sale", "lines": lines}
+    if party_id is not None:
+        payload["party_id"] = party_id
+    payload.update(kw)
+    rr = client.post("/api/invoices", headers=H22, json=payload)
+    assert rr.status_code == 201, rr.get_data(as_text=True)
+    return rr.get_json()["invoice"]
+
+
+def _b22_pdf(inv_id, query=""):
+    return client.get(
+        "/api/invoices/{}/pdf{}".format(inv_id, query), headers=H22
+    ).get_data().decode("latin-1")
+
+
+r = client.post("/api/parties", headers=H22, json={"name": "B22 Customer"})
+p22a = r.get_json()["party"]["id"]
+inv22a = _b22_sale(p22a, [{"description": "B22 Widget", "qty": 2,
+                           "rate_paisa": 50000}], paid_paisa=40000)
+txt22a = _b22_pdf(inv22a["id"])
+check(
+    "build22 B1: first bill's block — Previous Rs 0.00 + This Bill "
+    "Rs 1,000.00 - Paid Rs 400.00 = Total Payable Rs 600.00",
+    "Balance Summary" in txt22a and "Previous Balance" in txt22a
+    and "This Bill" in txt22a and "Total Payable" in txt22a
+    and "Rs 1,000.00" in txt22a and "Rs 600.00" in txt22a,
+    txt22a[:300],
+)
+inv22b = _b22_sale(p22a, [{"description": "B22 Cable", "qty": 1,
+                           "rate_paisa": 30000}])
+txt22b = _b22_pdf(inv22b["id"])
+check(
+    "build22 B1: second bill carries the first bill's due forward "
+    "(Total Payable Rs 900.00)",
+    "Total Payable" in txt22b and "Rs 900.00" in txt22b
+    and "Rs 300.00" in txt22b,
+    txt22b[:300],
+)
+# Advance case: money OUT to the party first (they owe us for it),
+# then a fully-paid bill — the block still balances to the paisa.
+r = client.post("/api/parties", headers=H22, json={"name": "B22 Advance"})
+p22b = r.get_json()["party"]["id"]
+client.post("/api/payments", headers=H22, json={
+    "party_id": p22b, "direction": "out", "amount_paisa": 20000})
+inv22c = _b22_sale(p22b, [{"description": "B22 Lamp", "qty": 1,
+                           "rate_paisa": 15000}], paid_paisa=15000)
+txt22c = _b22_pdf(inv22c["id"])
+party22b = [p for p in client.get("/api/parties", headers=H22)
+            .get_json()["parties"] if p["id"] == p22b][0]
+check(
+    "build22 B1: advance-out case — block total = the advance still "
+    "owed (Rs 200.00) and the party balance stays MINUS 20000",
+    "Total Payable" in txt22c and "Rs 200.00" in txt22c
+    and party22b["balancePaisa"] == -20000,
+    txt22c[:300],
+)
+# Customer-advance case: a big Payment-In first — the total payable
+# goes NEGATIVE (we hold their money) and prints signed.
+r = client.post("/api/parties", headers=H22, json={"name": "B22 Prepaid"})
+p22c = r.get_json()["party"]["id"]
+client.post("/api/payments", headers=H22, json={
+    "party_id": p22c, "direction": "in", "amount_paisa": 50000})
+inv22d = _b22_sale(p22c, [{"description": "B22 Fan", "qty": 1,
+                           "rate_paisa": 10000}])
+txt22d = _b22_pdf(inv22d["id"])
+check(
+    "build22 B1: prepaid case — Total Payable prints signed "
+    "(Rs -400.00: we hold the party's advance)",
+    "Total Payable" in txt22d and "Rs -400.00" in txt22d,
+    txt22d[:300],
+)
+inv22e = _b22_sale(None, [{"description": "B22 Cash", "qty": 1,
+                           "rate_paisa": 5000}])
+check(
+    "build22 B1: a cash sale (no party) prints NO balance block",
+    "Balance Summary" not in _b22_pdf(inv22e["id"]),
+)
+r = client.post("/api/invoices", headers=H22, json={
+    "type": "purchase", "party_id": p22a,
+    "lines": [{"description": "B22 Stock", "qty": 1, "rate_paisa": 7000}]})
+inv22f = (r.get_json() or {}).get("invoice", {})
+check(
+    "build22 B1: a purchase bill prints NO sale balance block",
+    r.status_code == 201 and "Balance Summary" not in _b22_pdf(inv22f["id"]),
+    r.get_data(as_text=True)[:200],
+)
+check(
+    "build22 B2/B5: Pay To block + NTN/STRN print on the A4 bill",
+    "Pay To:" in txt22a and "Raast IBAN: PK36TEST0000000000000001" in txt22a
+    and "JazzCash: 03001234567" in txt22a
+    and "Easypaisa: 03451234567" in txt22a
+    and "Account Title: B22 Test" in txt22a
+    and "NTN: 1234567-8" in txt22a
+    and "STRN: 01-2345678-001-90" in txt22a,
+    txt22a[:300],
+)
+th22 = _b22_pdf(inv22a["id"], "?format=thermal")
+check(
+    "build22 B1/B2/B5: the thermal bill carries the block, Pay To "
+    "and NTN too",
+    "Balance Summary" in th22 and "Total Payable" in th22
+    and "Pay To:" in th22 and "JazzCash: 03001234567" in th22
+    and "NTN: 1234567-8" in th22,
+    th22[:300],
+)
+
+
+def _b22_mediabox(query):
+    raw = client.get("/api/invoices/{}/pdf{}".format(inv22a["id"], query),
+                     headers=H22).get_data()
+    m = re.search(rb"/MediaBox \[ 0 0 (\d+)", raw)
+    return int(m.group(1)) if m else None
+
+
+check(
+    "build22 B3: thermal width choice — 58mm renders a 164pt roll, "
+    "80mm a 226pt roll, a bogus size falls back to the setting",
+    _b22_mediabox("?format=thermal&size=58mm") == 164
+    and _b22_mediabox("?format=thermal&size=80mm") == 226
+    and _b22_mediabox("?format=thermal") == 226
+    and _b22_mediabox("?format=thermal&size=42mm") == 226,
+)
+client.put("/api/settings", headers=H22,
+           json={"settings": {"thermal_size": "58mm"}})
+check(
+    "build22 B3: the saved PRINT thermal_size rules when no size "
+    "is chosen at print time",
+    _b22_mediabox("?format=thermal") == 164,
+)
+client.put("/api/settings", headers=H22,
+           json={"settings": {"thermal_size": "80mm"}})
+
+# Backup status: nothing yet, then a manual run flips it.
+tok_22b = _signup_from_ip("shop22b@example.com", "198.51.100.223", "shop-22b")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shop22b@example.com"})
+H22B = H(tok_22b)
+st22 = client.get("/api/backups/status", headers=H22B).get_json()
+r = client.post("/api/backups/run", headers=H22B)
+st22b = client.get("/api/backups/status", headers=H22B).get_json()
+check(
+    "build22 B4: backup status starts empty, then reports the run "
+    "(time + emailed + count)",
+    st22.get("lastBackupAt") is None and st22.get("backupCount") == 0
+    and r.status_code == 201
+    and st22b.get("backupCount") == 1
+    and bool(st22b.get("lastBackupAt"))
+    and st22b.get("lastEmailed") is True,
+    json.dumps({"before": st22, "after": st22b}),
+)
+r = client.post("/api/invoices", headers=H22B, json={
+    "type": "sale",
+    "lines": [{"description": "B22 Plain", "qty": 1, "rate_paisa": 5000}]})
+# (party-less on the empty-profile account keeps the PDF clean either way)
+inv22h = (r.get_json() or {}).get("invoice", {})
+txt22h = client.get("/api/invoices/{}/pdf".format(inv22h["id"]),
+                    headers=H22B).get_data().decode("latin-1")
+check(
+    "build22 B2/B5: an empty profile prints NO Pay To block and "
+    "NO NTN/STRN on the bill",
+    r.status_code == 201 and "Pay To:" not in txt22h
+    and "NTN:" not in txt22h and "STRN:" not in txt22h,
+    txt22h[:300],
+)
+
+# Tax math — exclusive baseline first (the default mode).
+inv22x = _b22_sale(p22a, [{"description": "B22 Taxed", "qty": 1,
+                           "rate_paisa": 10000, "tax_bp": 1800}])
+check(
+    "build22 B5: EXCLUSIVE 18% — Rs 100.00 line carries Rs 18.00 tax "
+    "added on top (total Rs 118.00)",
+    inv22x["taxPaisa"] == 1800 and inv22x["totalPaisa"] == 11800,
+    json.dumps(inv22x)[:200],
+)
+client.put("/api/settings", headers=H22,
+           json={"settings": {"tax_inclusive": True}})
+inv22i = _b22_sale(p22a, [{"description": "B22 Taxed", "qty": 1,
+                           "rate_paisa": 11800, "tax_bp": 1800}])
+check(
+    "build22 B5: INCLUSIVE 18% — a Rs 118.00 rate CONTAINS Rs 18.00 "
+    "tax; the total stays Rs 118.00 (never added twice)",
+    inv22i["taxPaisa"] == 1800 and inv22i["totalPaisa"] == 11800
+    and inv22i["lines"][0]["taxPaisa"] == 1800,
+    json.dumps(inv22i)[:240],
+)
+inv22j = _b22_sale(p22a, [{"description": "B22 Taxed", "qty": 2,
+                           "rate_paisa": 11800, "discount_bp": 1000,
+                           "tax_bp": 1800}])
+check(
+    "build22 B5: INCLUSIVE with 10% discount — net Rs 212.40 "
+    "contains exactly Rs 32.40 tax; total = the net itself",
+    inv22j["discountPaisa"] == 2360 and inv22j["taxPaisa"] == 3240
+    and inv22j["totalPaisa"] == 21240,
+    json.dumps(inv22j)[:240],
+)
+inv22k = _b22_sale(p22a, [{"description": "B22 Taxed", "qty": 1,
+                           "rate_paisa": 11800, "tax_paisa": 1800}])
+r = client.post("/api/invoices", headers=H22, json={
+    "type": "sale", "party_id": p22a,
+    "lines": [{"description": "B22 Taxed", "qty": 1, "rate_paisa": 11800,
+               "tax_bp": 1800}],
+    "paid_paisa": 11801})
+check(
+    "build22 B5: INCLUSIVE — a directly-given tax amount is a "
+    "portion, not an addition (total Rs 118.00); paying MORE than "
+    "the inclusive total is refused",
+    inv22k["taxPaisa"] == 1800 and inv22k["totalPaisa"] == 11800
+    and r.status_code == 400,
+    r.get_data(as_text=True)[:160],
+)
+txt22i = _b22_pdf(inv22i["id"])
+check(
+    "build22 B5: the inclusive bill labels its tax 'Tax (included)' "
+    "and the line amount is the rate itself",
+    # PDF literal strings escape parentheses: the bytes carry
+    # "Tax \(included\)" for the printed text Tax (included).
+    "Tax \\(included\\)" in txt22i and "Rs 118.00" in txt22i,
+    txt22i[:300],
+)
+r = client.put("/api/invoices/{}".format(inv22i["id"]), headers=H22, json={
+    "party_id": p22a,
+    "lines": [{"description": "B22 Taxed", "qty": 1, "rate_paisa": 23600,
+               "tax_bp": 1800}]})
+inv22i2 = (r.get_json() or {}).get("invoice", {})
+check(
+    "build22 B5: INCLUSIVE edit path — Rs 236.00 at 18% contains "
+    "Rs 36.00 tax, total stays Rs 236.00",
+    r.status_code == 200 and inv22i2.get("taxPaisa") == 3600
+    and inv22i2.get("totalPaisa") == 23600,
+    r.get_data(as_text=True)[:200],
+)
+client.put("/api/settings", headers=H22,
+           json={"settings": {"tax_inclusive": False}})
+inv22y = _b22_sale(p22a, [{"description": "B22 Taxed", "qty": 1,
+                           "rate_paisa": 10000, "tax_bp": 1800}])
+check(
+    "build22 B5: toggling back to EXCLUSIVE restores add-on-top "
+    "math exactly",
+    inv22y["taxPaisa"] == 1800 and inv22y["totalPaisa"] == 11800,
+    json.dumps(inv22y)[:200],
 )
 
 # ---------------------------------------------------------- 13. logout --

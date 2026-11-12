@@ -91,8 +91,8 @@ def mail_test():
         raise ApiError("Please enter the email address to send the test to.")
     route, errors = mailer.send_email(
         to,
-        "QBill — test email",
-        "This is a test email from QBill. Email delivery is working.",
+        "QRLedger — test email",
+        "This is a test email from QRLedger. Email delivery is working.",
     )
     if route is None:
         return jsonify(ok=False, error="; ".join(errors))

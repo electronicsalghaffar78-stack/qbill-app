@@ -294,7 +294,8 @@ button.row:hover { border-color: #c3ccd6; background: #fbfcfe; }
 .set-cat.active { background: #fff4ec; color: var(--orange-dark); }
 
 /* ------------------------------------------- auth popup & plans screen */
-/* These two surfaces intentionally keep their original look. */
+/* The plans screen keeps its original look; the auth popup follows
+   the shared build .21 dialog style (dim overlay, bordered box). */
 .auth-logo { display: block; width: 120px; max-width: 60%; margin: 2px auto 10px; }
 .auth-sub { font-size: 14px; color: #5f7186; margin: 0 0 14px; }
 .auth-box .msg {
@@ -310,14 +311,65 @@ button.row:hover { border-color: #c3ccd6; background: #fbfcfe; }
   border: none; background: none; color: #0a66c2;
   font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px;
 }
+/* Build .21 (Fix A, owner's reference photo): every popup sits on a
+   DARK DIMMED page — the page shows through, darkened; the old white
+   frosted blur is gone entirely. The dialog itself is a compact white
+   box with a thin light-blue border, a corner X close, and a centered
+   heading with a thin rule. */
 .modal {
-  position: fixed; inset: 0; z-index: 100; background: rgba(10, 37, 64, .55);
+  position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, .5);
   display: flex; align-items: center; justify-content: center; padding: 16px;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
-.modal-box { width: 100%; max-width: 400px; margin: 0; max-height: calc(100vh - 32px); overflow-y: auto; }
-/* Build .20 (D6): the Payment-In / Payment-Out popups are wider. */
-.modal-box.modal-wide { max-width: 560px; }
+.modal-box {
+  position: relative; width: 100%; max-width: 520px; margin: 0;
+  max-height: calc(100vh - 32px); overflow-y: auto;
+  background: #fff; border: 2px solid #7fb3d5; border-radius: 6px;
+  padding: 16px; box-shadow: 0 14px 44px rgba(0, 0, 0, .4);
+}
+/* Build .20 (D6) gave the Payment popups a wider box; build .21 keeps
+   every dialog at the same compact width as the reference. */
+.modal-box.modal-wide { max-width: 520px; }
+.modal-x {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  width: 30px; height: 30px; padding: 0; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; color: var(--navy-dark);
+  border: 2px solid #7fb3d5; border-radius: 50%;
+  font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.modal-x:hover { background: #eef5fb; }
+/* Dialog headings: centered with a thin bottom rule, like the
+   reference (form layouts themselves are untouched). */
+.modal-box h1,
+.modal-box > h2,
+.modal-box > form > h2 {
+  text-align: center; border-bottom: 1px solid #d9e6f0; padding-bottom: 8px;
+}
+
+/* ------------------------------------------ build .21: click feedback */
+/* Fix C (owner's check of .20): a click must VISIBLY register. Every
+   clickable element gets a brief whiteness + slight press on :active;
+   app.js adds .click-flash for ~300 ms on every click; while any
+   request is in flight the slim top bar runs and the cursor shows
+   progress (app.js toggles body.net-busy via its fetch wrapper). */
+.btn:active, .navbtn:active, .nav-group-head:active, .mega-item:active,
+.set-cat:active, .stat:active, button:active, a:active {
+  filter: brightness(1.18);
+}
+.btn:active, .navbtn:active, .mega-item:active { transform: scale(.98); }
+.click-flash {
+  filter: brightness(1.35) !important;
+  box-shadow: inset 0 0 0 999px rgba(255, 255, 255, .25);
+}
+#netBar {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0; z-index: 300;
+  background: var(--orange); opacity: 0; pointer-events: none;
+  transition: width .25s ease, opacity .25s ease;
+}
+#netBar.on { opacity: 1; width: 75%; animation: netpulse 1s ease-in-out infinite alternate; }
+@keyframes netpulse { from { width: 55%; } to { width: 88%; } }
+body.net-busy, body.net-busy button, body.net-busy a,
+body.net-busy input, body.net-busy select { cursor: progress; }
 #pendingView { max-width: 760px; margin: 0 auto; padding: 28px 12px; }
 .pending-card { max-width: 440px; margin: 24px auto; text-align: center; }
 .pending-card p { font-size: 14.5px; color: #33475b; line-height: 1.55; }

@@ -12,7 +12,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DEFAULT_OWNER_EMAIL = "electronicsalghaffar78@gmail.com"
 DEFAULT_FROM_EMAIL = "onboarding@resend.dev"
-DEFAULT_FROM_NAME = "QBill"
+DEFAULT_FROM_NAME = "QRLedger"
 
 
 class Config:

@@ -339,6 +339,15 @@ def _profile_dict(row):
         "pincode": row.get("pincode") or "",
         "state": row.get("state") or "",
         "signatureText": row.get("signature_text") or "",
+        # Build .22: Pakistan tax identifiers + the shop's own payment
+        # rails for the bills' "Pay To:" block. Always this account's
+        # own values; a new account starts with all of them empty.
+        "ntn": row.get("ntn") or "",
+        "strn": row.get("strn") or "",
+        "raastIban": row.get("raast_iban") or "",
+        "jazzcashNumber": row.get("jazzcash_number") or "",
+        "easypaisaNumber": row.get("easypaisa_number") or "",
+        "paymentDetails": row.get("payment_details") or "",
         # The logo image itself is served from /api/business/logo; the
         # profile only carries the flag + URL so the (possibly large)
         # base64 never rides along with every profile fetch.
@@ -373,7 +382,9 @@ def update_business():
             "UPDATE businesses SET name = ?, owner_name = ?, address = ?, "
             "city = ?, phone = ?, email = ?, "
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
-            "pincode = ?, state = ?, signature_text = ? WHERE id = ?",
+            "pincode = ?, state = ?, signature_text = ?, "
+            "ntn = ?, strn = ?, raast_iban = ?, jazzcash_number = ?, "
+            "easypaisa_number = ?, payment_details = ? WHERE id = ?",
             (
                 name if "name" in data else row["name"],
                 str(data.get("owner_name", row.get("owner_name") or "") or "").strip(),
@@ -388,6 +399,12 @@ def update_business():
                 str(data.get("pincode", row.get("pincode") or "") or "").strip(),
                 str(data.get("state", row.get("state") or "") or "").strip(),
                 str(data.get("signature_text", row.get("signature_text") or "") or "").strip(),
+                str(data.get("ntn", row.get("ntn") or "") or "").strip(),
+                str(data.get("strn", row.get("strn") or "") or "").strip(),
+                str(data.get("raast_iban", row.get("raast_iban") or "") or "").strip(),
+                str(data.get("jazzcash_number", row.get("jazzcash_number") or "") or "").strip(),
+                str(data.get("easypaisa_number", row.get("easypaisa_number") or "") or "").strip(),
+                str(data.get("payment_details", row.get("payment_details") or "") or "").strip(),
                 biz,
             ),
         )

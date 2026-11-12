@@ -92,6 +92,10 @@ DEFAULT_SETTINGS = {
     # ---- Settings > TAXES ----
     "tax_enabled": True,
     "default_tax_bp": 0,
+    # Build .22: tax-inclusive pricing — the bill lines' rates already
+    # contain the sales tax, so the tax is the portion inside the
+    # total (reported on the bill), never added on top of it.
+    "tax_inclusive": False,
     # ---- Settings > TRANSACTION MESSAGE ----
     "msg_whatsapp_personal": True,
     "msg_include_balance": True,

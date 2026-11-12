@@ -564,6 +564,18 @@ _ADDED_COLUMNS = [
     ("items", "deleted_at", "TEXT"),
     ("expenses", "deleted_at", "TEXT"),
     ("other_incomes", "deleted_at", "TEXT"),
+    # ---- Build .22 (2026-11-13) columns ----
+    # Business Profile: Pakistan tax identifiers (NTN / STRN, printed
+    # on bills when filled) and the shop's own payment rails for the
+    # bills' "Pay To:" block (Raast IBAN, JazzCash, Easypaisa, plus a
+    # free-text payment-details area). All optional and per-account;
+    # defaults are empty — never seeded with anyone's real numbers.
+    ("businesses", "ntn", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "strn", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "raast_iban", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "jazzcash_number", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "easypaisa_number", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "payment_details", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

@@ -178,6 +178,9 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
     terms = opts.get("terms") or []
     item_map = opts.get("item_map") or {}
 
+    # Build .22: with tax-inclusive pricing the line rates already
+    # contain the tax, so a printed line amount never adds it again.
+    inclusive = bool(settings.get("tax_inclusive"))
     buf = io.BytesIO()
     landscape = (settings.get("print_orientation") == "Landscape"
                  and settings.get("print_paper_size") == "A4")
@@ -241,6 +244,18 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
             y -= 24
     else:
         y -= 10
+
+    # Build .22: the shop's NTN / STRN from Business Profile print
+    # under the header when filled; empty prints nothing.
+    tax_ids = []
+    if business.get("ntn"):
+        tax_ids.append("NTN: " + str(business["ntn"]))
+    if business.get("strn"):
+        tax_ids.append("STRN: " + str(business["strn"]))
+    if tax_ids and show_company:
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(left, y + 10, " · ".join(tax_ids)[:110])
+        y -= 4
 
     names = settings.get("print_names") or {}
     inv_type = invoice.get("type") or "sale"
@@ -395,7 +410,7 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
             "discount": fmt(line.get("discountPaisa") or 0) if line.get("discountPaisa") else "",
             "tax": fmt(line.get("taxPaisa") or 0) if line.get("taxPaisa") else "",
             "amount": fmt(line["amountPaisa"] - (line.get("discountPaisa") or 0)
-                          + (line.get("taxPaisa") or 0)),
+                          + (0 if inclusive else (line.get("taxPaisa") or 0))),
         }
         for col, val in values.items():
             draw_cell(col, val)
@@ -411,7 +426,8 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
     if invoice["discountPaisa"]:
         totals.append(("Discount", invoice["discountPaisa"]))
     if invoice.get("taxPaisa") and settings.get("print_tax_details", True):
-        totals.append(("Tax", invoice["taxPaisa"]))
+        totals.append(("Tax (included)" if inclusive else "Tax",
+                       invoice["taxPaisa"]))
     if invoice.get("loyaltyRedeemedPaisa"):
         totals.append(("Loyalty Redeemed", invoice["loyaltyRedeemedPaisa"]))
     totals.append(("Total", invoice["totalPaisa"]))
@@ -435,7 +451,34 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
         pdf.drawRightString(totals_x + 90, y, label + ":")
         pdf.drawRightString(right, y, fmt(value))
         y -= 15
-    if settings.get("print_party_balance") and opts.get("party_balance") is not None:
+    balance_block = opts.get("balance_block")
+    if balance_block:
+        # Build .22 (research P0-1): the shaded khata trust block —
+        # Previous Balance + This Bill − Paid = Total Payable. When
+        # the block prints it replaces the single current-balance
+        # line below (its Total Payable is that same balance, in
+        # "party owes us" space).
+        y -= 2
+        pdf.setFillColorRGB(0.93, 0.95, 0.98)
+        pdf.rect(left, y - 62, right - left, 70, stroke=0, fill=1)
+        pdf.setFillColorRGB(0, 0, 0)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left + 8, y, "Balance Summary")
+        y -= 14
+        for block_label, block_value in (
+            ("Previous Balance", balance_block["previous"]),
+            ("This Bill", balance_block["this_bill"]),
+            ("Paid", balance_block["paid"]),
+        ):
+            pdf.setFont("Helvetica", 10)
+            pdf.drawString(left + 8, y, block_label + ":")
+            pdf.drawRightString(right - 8, y, fmt(block_value))
+            y -= 13
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left + 8, y, "Total Payable:")
+        pdf.drawRightString(right - 8, y, fmt(balance_block["total"]))
+        y -= 14
+    elif settings.get("print_party_balance") and opts.get("party_balance") is not None:
         pdf.setFont("Helvetica", 10)
         pdf.drawRightString(totals_x + 90, y, "Current Balance of Party:")
         pdf.drawRightString(right, y, fmt(opts["party_balance"]))
@@ -506,6 +549,42 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
                     )
                 except Exception:
                     pass
+    # Build .22 (research P0-3): the Business Profile payment rails
+    # as a "Pay To:" block — Raast IBAN (with a scannable QR of the
+    # IBAN), JazzCash / Easypaisa numbers and the free-text payment
+    # details. Prints only when the profile carries payment info,
+    # and not alongside the bank-account block above (one Pay To
+    # block per bill; the bank block is the older structured route).
+    profile_pay_lines = []
+    if business.get("raast_iban"):
+        profile_pay_lines.append("Raast IBAN: " + str(business["raast_iban"]))
+    if business.get("jazzcash_number"):
+        profile_pay_lines.append(
+            "JazzCash: " + str(business["jazzcash_number"]))
+    if business.get("easypaisa_number"):
+        profile_pay_lines.append(
+            "Easypaisa: " + str(business["easypaisa_number"]))
+    for detail_line in str(business.get("payment_details") or "").splitlines():
+        detail_line = detail_line.strip()
+        if detail_line:
+            profile_pay_lines.append(detail_line)
+    if profile_pay_lines and not (bank and bank.get("print_details")):
+        y -= 6
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left, y, "Pay To:")
+        y -= 14
+        pdf.setFont("Helvetica", 9.5)
+        for pay_line in profile_pay_lines:
+            pdf.drawString(left, y, pay_line[:110])
+            y -= 12
+        if business.get("raast_iban"):
+            try:
+                pdf.drawImage(
+                    _qr_image(str(business["raast_iban"])),
+                    right - 84, y - 62, width=80, height=80, mask="auto",
+                )
+            except Exception:
+                pass
     if business.get("tax_note"):
         y -= 8
         pdf.setFont("Helvetica", 9)
@@ -547,9 +626,11 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
 
 
 def _render_thermal(business, invoice, party_name, settings, opts):
-    """Thermal receipt layout: 58/80/100mm roll widths."""
+    """Thermal receipt layout: 58/80/100mm roll widths (Settings >
+    PRINT, or the per-print size choice — build .22)."""
     size = settings.get("thermal_size") or "80mm"
     width = {"58mm": 164, "80mm": 226, "100mm": 283}.get(size, 226)
+    inclusive = bool(settings.get("tax_inclusive"))
     height = 1200
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=(width, height), pageCompression=0)
@@ -570,6 +651,15 @@ def _render_thermal(business, invoice, party_name, settings, opts):
     )
     if contact:
         pdf.drawCentredString(width / 2, y, contact[:52])
+        y -= 11
+    # Build .22: NTN / STRN from Business Profile, when filled.
+    tax_ids = []
+    if business.get("ntn"):
+        tax_ids.append("NTN: " + str(business["ntn"]))
+    if business.get("strn"):
+        tax_ids.append("STRN: " + str(business["strn"]))
+    if tax_ids:
+        pdf.drawCentredString(width / 2, y, " · ".join(tax_ids)[:52])
         y -= 11
     inv_type = invoice.get("type") or "sale"
     pdf.setFont("Helvetica-Bold", 10)
@@ -599,7 +689,7 @@ def _render_thermal(business, invoice, party_name, settings, opts):
             left + 8, y,
             "{} x {}".format(_qty_text(line), fmt(line["ratePaisa"])))
         amount = line["amountPaisa"] - (line.get("discountPaisa") or 0) \
-            + (line.get("taxPaisa") or 0)
+            + (0 if inclusive else (line.get("taxPaisa") or 0))
         pdf.drawRightString(right, y, fmt(amount))
         y -= 12
     pdf.line(left, y, right, y)
@@ -607,7 +697,7 @@ def _render_thermal(business, invoice, party_name, settings, opts):
     for label, value in (
         ("Subtotal", invoice["subtotalPaisa"]),
         ("Discount", invoice["discountPaisa"]),
-        ("Tax", invoice["taxPaisa"]),
+        ("Tax (incl.)" if inclusive else "Tax", invoice["taxPaisa"]),
         ("Total", invoice["totalPaisa"]),
         ("Paid", invoice["paidPaisa"]),
         ("Balance", invoice["balancePaisa"]),
@@ -618,6 +708,68 @@ def _render_thermal(business, invoice, party_name, settings, opts):
         pdf.drawString(left, y, label)
         pdf.drawRightString(right, y, fmt(value))
         y -= 12
+    # Build .22: the same balance block as the A4 bill (sale + party).
+    balance_block = opts.get("balance_block")
+    if balance_block:
+        y -= 2
+        pdf.line(left, y, right, y)
+        y -= 12
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.drawString(left, y, "Balance Summary")
+        y -= 12
+        for block_label, block_value in (
+            ("Previous Balance", balance_block["previous"]),
+            ("This Bill", balance_block["this_bill"]),
+            ("Paid", balance_block["paid"]),
+            ("Total Payable", balance_block["total"]),
+        ):
+            pdf.setFont(
+                "Helvetica-Bold" if block_label == "Total Payable"
+                else "Helvetica", 9)
+            pdf.drawString(left, y, block_label)
+            pdf.drawRightString(right, y, fmt(block_value))
+            y -= 12
+    # Build .22: Pay To block — the Business Profile payment rails,
+    # falling back to the bank account marked for printing (the A4
+    # bill's older route) so a thermal bill carries one too.
+    pay_lines = []
+    if business.get("raast_iban"):
+        pay_lines.append("Raast IBAN: " + str(business["raast_iban"]))
+    if business.get("jazzcash_number"):
+        pay_lines.append("JazzCash: " + str(business["jazzcash_number"]))
+    if business.get("easypaisa_number"):
+        pay_lines.append("Easypaisa: " + str(business["easypaisa_number"]))
+    for detail_line in str(business.get("payment_details") or "").splitlines():
+        detail_line = detail_line.strip()
+        if detail_line:
+            pay_lines.append(detail_line)
+    if not pay_lines:
+        bank = opts.get("bank")
+        if bank and bank.get("print_details"):
+            if bank.get("holder_name"):
+                pay_lines.append("Account Title: " + bank["holder_name"])
+            if bank.get("account_number"):
+                pay_lines.append("Account Number: " + bank["account_number"])
+            if bank.get("iban"):
+                pay_lines.append("IBAN: " + bank["iban"])
+            if bank.get("qr_handle"):
+                pay_lines.append("JazzCash / EasyPaisa: " + bank["qr_handle"])
+    if pay_lines:
+        y -= 2
+        pdf.line(left, y, right, y)
+        y -= 12
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.drawString(left, y, "Pay To:")
+        y -= 12
+        pdf.setFont("Helvetica", 8.5)
+        max_chars = 30 if width < 200 else 46
+        for pay_line in pay_lines:
+            # Wrap, never truncate: a cut-off IBAN or account number
+            # is useless for paying.
+            for chunk_start in range(0, len(pay_line), max_chars):
+                pdf.drawString(
+                    left, y, pay_line[chunk_start:chunk_start + max_chars])
+                y -= 11
     y -= 4
     pdf.setFont("Helvetica-Oblique", 8)
     pdf.drawCentredString(width / 2, y, "Thank you for your business.")
@@ -639,6 +791,9 @@ def invoice_pdf(invoice_id):
     from .settings_api import get_settings, seed_terms
 
     thermal = request.args.get("format") == "thermal"
+    # Build .22: a thermal print can name its roll width for this one
+    # print (58mm / 80mm / 100mm); without it the PRINT setting rules.
+    thermal_size = request.args.get("size") or ""
     with db.transaction() as tx:
         biz = _business_id(tx)
         row = tx.query_one(
@@ -651,6 +806,9 @@ def invoice_pdf(invoice_id):
         invoice = _invoice_dict(tx, row)
         business = tx.query_one("SELECT * FROM businesses WHERE id = ?", (biz,))
         settings = get_settings(tx, biz)
+        if thermal and thermal_size in ("58mm", "80mm", "100mm"):
+            settings = dict(settings)
+            settings["thermal_size"] = thermal_size
         if business.get("signature_text"):
             # Business Profile > Signature Text wins over the PRINT
             # setting when the owner has filled it in.
@@ -668,8 +826,27 @@ def invoice_pdf(invoice_id):
                 party_name = raw_party["name"]
                 party_row = _party_dict(raw_party)
         party_balance = None
-        if settings.get("print_party_balance") and row["party_id"] is not None:
-            party_balance = party_balance_map(tx, biz).get(row["party_id"])
+        balance_block = None
+        if row["party_id"] is not None:
+            balances = party_balance_map(tx, biz)
+            if settings.get("print_party_balance"):
+                party_balance = balances.get(row["party_id"])
+            # Build .22 (research P0-1): the khata trust block on every
+            # SALE bill — Previous Balance + This Bill − Paid = Total
+            # Payable, paisa-exact. Amounts here are in "the party owes
+            # us" space (the negation of the party_balance_map sign):
+            # the current balance already contains this bill and its
+            # payments, so the previous balance is derived from it.
+            if (row.get("type") or "sale") == "sale" \
+                    and balances.get(row["party_id"]) is not None:
+                owed_now = -balances[row["party_id"]]
+                balance_block = {
+                    "previous": owed_now - invoice["totalPaisa"]
+                                + invoice["paidPaisa"],
+                    "this_bill": invoice["totalPaisa"],
+                    "paid": invoice["paidPaisa"],
+                    "total": owed_now,
+                }
         item_map = {}
         for line in invoice["lines"]:
             if line.get("itemId") is not None and line["itemId"] not in item_map:
@@ -738,6 +915,12 @@ def invoice_pdf(invoice_id):
             "terms": business.get("terms"),
             "logo_data": business.get("logo_data"),
             "logo_mime": business.get("logo_mime"),
+            "ntn": business.get("ntn"),
+            "strn": business.get("strn"),
+            "raast_iban": business.get("raast_iban"),
+            "jazzcash_number": business.get("jazzcash_number"),
+            "easypaisa_number": business.get("easypaisa_number"),
+            "payment_details": business.get("payment_details"),
         },
         invoice,
         party_name,
@@ -748,6 +931,7 @@ def invoice_pdf(invoice_id):
             "terms": terms,
             "item_map": item_map,
             "party_balance": party_balance,
+            "balance_block": balance_block,
             "payment_modes": [m["mode"] for m in modes if m.get("mode")],
             "thermal": thermal,
         },

@@ -790,6 +790,27 @@ def _pct_of(amount, bp):
     return int(round(amount * bp / 10000.0))
 
 
+def _tax_contained(net_paisa, bp):
+    """Build .22 (tax-inclusive pricing): the tax portion INSIDE an
+    amount whose rate already contains the tax — at bp basis points
+    the contained tax is net * bp / (10000 + bp). Paisa-exact for the
+    standard rates (Rs 118.00 at 18% contains exactly Rs 18.00)."""
+    if not bp:
+        return 0
+    return int(round(net_paisa * bp / (10000.0 + bp)))
+
+
+def _grand_total(subtotal, discount, tax, settings, loyalty_redeemed=0):
+    """The one invoice-total formula. Exclusive tax (the default):
+    tax is added on top of the discounted subtotal. Inclusive tax
+    (Settings > TAXES, build .22): the rates already contain the tax,
+    so the stored tax is only the portion inside the total and is NOT
+    added again — the total is the discounted subtotal itself."""
+    if settings and settings.get("tax_inclusive"):
+        return subtotal - discount - loyalty_redeemed
+    return subtotal - discount + tax - loyalty_redeemed
+
+
 def _item_default_discount(item, qty, gross):
     """An item's own 'Disc. On Sale Price' as a paisa amount for a line:
     the flat amount per unit, or the percentage of the line gross."""
@@ -824,8 +845,13 @@ def _line_money(raw, qty, rate, settings, item=None):
     if settings.get("txn_wise_tax", True):
         tax = _int_field(raw, "tax_paisa", default=0, min_value=0)
         if tax_bp is not None and settings.get("item_wise_tax", True):
-            tax = _pct_of(
-                gross - discount, _int_field(raw, "tax_bp", default=0, min_value=0))
+            bp_value = _int_field(raw, "tax_bp", default=0, min_value=0)
+            if settings.get("tax_inclusive"):
+                # The rate already contains the tax: store only the
+                # contained portion (see _grand_total).
+                tax = _tax_contained(gross - discount, bp_value)
+            else:
+                tax = _pct_of(gross - discount, bp_value)
     else:
         tax = 0
     if not settings.get("tax_enabled", True):
@@ -1049,7 +1075,7 @@ def _insert_document(tx, biz, inv_type, party_id, lines, subtotal,
     settings = settings or {}
     extra = extra or {}
     meta = DOC_TYPES[inv_type]
-    total = subtotal - discount + tax - loyalty_redeemed
+    total = _grand_total(subtotal, discount, tax, settings, loyalty_redeemed)
     balance = total - paid
     count = tx.query_one(
         "SELECT COUNT(*) AS c FROM invoices WHERE business_id = ? AND type = ?",
@@ -1127,10 +1153,10 @@ def _insert_document(tx, biz, inv_type, party_id, lines, subtotal,
     return inv_id
 
 
-def _totals_check(subtotal, discount, tax, paid):
+def _totals_check(subtotal, discount, tax, paid, settings=None):
     if discount > subtotal:
         raise ApiError("Discount cannot be more than the subtotal.")
-    total = subtotal - discount + tax
+    total = _grand_total(subtotal, discount, tax, settings)
     if paid > total:
         raise ApiError("Paid amount cannot be more than the invoice total.")
     return total
@@ -1233,7 +1259,7 @@ def create_invoice():
         tax = tax_in + line_tax
         if not settings.get("tax_enabled", True):
             tax = 0
-        _totals_check(subtotal, discount, tax, paid)
+        _totals_check(subtotal, discount, tax, paid, settings)
         if settings.get("stop_sale_negative_stock") and DOC_TYPES[inv_type]["stock"] < 0:
             for line in lines:
                 if line["item_id"] is not None:
@@ -1247,7 +1273,7 @@ def create_invoice():
                             "stopped on negative stock in Settings.".format(
                                 item["name"], item["stock_qty"])
                         )
-        total_after = subtotal - discount + tax
+        total_after = _grand_total(subtotal, discount, tax, settings)
         redeemed, points_used, points_earned = _loyalty_for(
             tx, biz, settings, inv_type, party_id, total_after, paid,
             data.get("loyalty_points_used"),
@@ -1334,7 +1360,7 @@ def update_invoice(invoice_id):
         else:
             at_doc_paid = max(old_at_doc_paid, 0)
         redeemed = row.get("loyalty_redeemed_paisa") or 0
-        total = subtotal - discount + tax - redeemed
+        total = _grand_total(subtotal, discount, tax, settings, redeemed)
         paid_total = standalone_paid + at_doc_paid
         if discount > subtotal:
             raise ApiError("Discount cannot be more than the subtotal.")

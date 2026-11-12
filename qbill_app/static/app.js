@@ -121,6 +121,51 @@ function handleAuthFailure(status, body) {
   return false;
 }
 
+/* Build .21 (Fix C): click feedback + a working indication. EVERY
+   fetch in the app passes through this wrapper, so while any request
+   is in flight the slim top loading bar runs and the cursor shows
+   progress; both clear when the last request finishes. The wrapped
+   calls behave exactly as before. Separately, a delegated click
+   handler flashes every clicked button / link / nav element for
+   ~300 ms (on top of the :active styles in styles.css), so a click
+   always visibly registers — including plain navigation clicks. */
+var netInFlight = 0;
+var rawFetch = window.fetch.bind(window);
+function netBarEl() {
+  var b = document.getElementById("netBar");
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "netBar";
+    document.body.appendChild(b);
+  }
+  return b;
+}
+function netBusy(delta) {
+  netInFlight = Math.max(0, netInFlight + delta);
+  var on = netInFlight > 0;
+  document.body.classList.toggle("net-busy", on);
+  netBarEl().classList.toggle("on", on);
+}
+window.fetch = function () {
+  netBusy(1);
+  return rawFetch.apply(null, arguments).then(function (resp) {
+    netBusy(-1);
+    return resp;
+  }, function (err) {
+    netBusy(-1);
+    throw err;
+  });
+};
+document.addEventListener("click", function (ev) {
+  var t = ev.target;
+  var el = (t && t.closest)
+    ? t.closest("button, a, .navbtn, .nav-group-head, .mega-item, .set-cat, .stat")
+    : null;
+  if (!el) return;
+  el.classList.add("click-flash");
+  setTimeout(function () { el.classList.remove("click-flash"); }, 300);
+});
+
 /* GET with offline fallback to the last successful response. */
 function apiGet(path, cacheKey) {
   return fetch(path, { headers: authHeaders() }).then(function (resp) {
@@ -347,7 +392,7 @@ function clientTotals() {
 }
 
 /* --------------------------------------------------------------- auth -- */
-/* All sign-in happens in ONE popup (authModal) over a blurred backdrop.
+/* All sign-in happens in ONE popup (authModal) over a dimmed backdrop.
    The front door is the CLASSIC login (stepLogin): email + password +
    "Remember me", no email code needed day to day. Around it:
    - "Create an account" (stepOne): ONE single form stacked top to
@@ -486,10 +531,61 @@ document.querySelectorAll(".pw-toggle").forEach(function (btn) {
   });
 });
 
+/* Build .21 (Fix B): the same strict email check the server runs
+   (auth.py _validate_email), applied on this device BEFORE any login /
+   create-account / forgot request is sent. A mistyped provider domain
+   ("gmal.com", "gmail.con") stops here with a "did you mean …?"
+   message and NEVER triggers a code send or advances a step. Returns
+   an error string, or null when the address is acceptable. */
+var AUTH_PROVIDERS = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"];
+function _editDistance(a, b) {
+  if (a === b) return 0;
+  var prev = [], cur = [], i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+        prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function authEmailError(raw) {
+  var invalid = "Please enter a valid email address.";
+  var email = String(raw || "").trim().toLowerCase();
+  var parts = email.split("@");
+  if (parts.length !== 2) return invalid;
+  var local = parts[0], domain = parts[1], i, lab;
+  if (!local || !/^[A-Za-z0-9._%+\-]+$/.test(local)
+      || local.charAt(0) === "." || local.charAt(local.length - 1) === "."
+      || local.indexOf("..") !== -1) return invalid;
+  var labels = domain.split(".");
+  if (labels.length < 2) return invalid;
+  for (i = 0; i < labels.length; i++) {
+    lab = labels[i];
+    if (!lab || !/^[A-Za-z0-9-]+$/.test(lab)
+        || lab.charAt(0) === "-" || lab.charAt(lab.length - 1) === "-") return invalid;
+  }
+  if (!/^[A-Za-z]{2,}$/.test(labels[labels.length - 1])) return invalid;
+  if (AUTH_PROVIDERS.indexOf(domain) === -1) {
+    for (i = 0; i < AUTH_PROVIDERS.length; i++) {
+      if (_editDistance(domain, AUTH_PROVIDERS[i]) <= 2) {
+        return "This email address looks incorrect — did you mean "
+          + local + "@" + AUTH_PROVIDERS[i] + "?";
+      }
+    }
+  }
+  return null;
+}
+
 /* Ask the server for an email code and move to the code step, keeping
    track of which flow asked (signup / forgot / codesignin) so the code
    step's wording and the routing after the code fit the flow. */
 function requestCode(email, context, fromStep) {
+  var emailErr = authEmailError(email);
+  if (emailErr) { setMsg("authMsg", emailErr, true); return; }
   codeContext = context;
   otpEmail = email;
   codeFromStep = fromStep;
@@ -523,6 +619,8 @@ function sendCode() {
 $("btnSendCode").addEventListener("click", sendCode);
 $("btnResendCode").addEventListener("click", function () {
   var email = otpEmail || $("loginEmail").value.trim();
+  var resendErr = authEmailError(email);
+  if (resendErr) { setMsg("authMsg", resendErr, true); return; }
   setMsg("authMsg", "Sending a new code…");
   apiPost("/api/auth/request-otp", { email: email }).then(function () {
     setMsg("authMsg", "A new code was sent. Check your email inbox.");
@@ -573,6 +671,8 @@ $("btnVerifyCode").addEventListener("click", function () {
 $("btnOneSend").addEventListener("click", function () {
   var email = $("oneEmail").value.trim();
   if (!email) { setMsg("authMsg", "Please enter your email first.", true); return; }
+  var oneErr = authEmailError(email);
+  if (oneErr) { setMsg("authMsg", oneErr, true); return; }
   setMsg("authMsg", "Sending code…");
   apiPost("/api/auth/request-otp", { email: email }).then(function () {
     $("btnOneSend").textContent = "Resend code";
@@ -583,11 +683,11 @@ $("btnOneLogin").addEventListener("click", function () {
   var email = $("oneEmail").value.trim();
   var code = $("oneCode").value.trim();
   var pw = $("onePassword").value;
-  var at = email.indexOf("@");
   // Check on this device FIRST, with clear messages — a bad entry
   // must never silently fail against the server.
-  if (!email || at < 1 || email.lastIndexOf(".") < at + 2) {
-    setMsg("authMsg", "Please enter a valid email address.", true); return;
+  var oneLoginErr = authEmailError(email);
+  if (oneLoginErr) {
+    setMsg("authMsg", oneLoginErr, true); return;
   }
   if (!/^\d{6}$/.test(code)) {
     setMsg("authMsg", "Please enter the 6-digit code sent to your email.", true); return;
@@ -595,7 +695,7 @@ $("btnOneLogin").addEventListener("click", function () {
   if (pw.length < 4) {
     setMsg("authMsg", "Password must be at least 4 characters.", true); return;
   }
-  setMsg("authMsg", "Opening QBill…");
+  setMsg("authMsg", "Opening QRLedger…");
   // A dedicated fetch (not apiPost): a failed verify must show its
   // message here, and its (non-)token must never be stored or treated
   // as a dead session by handleAuthFailure.
@@ -640,6 +740,8 @@ $("btnOneForgot").addEventListener("click", function () { showAuthStep("stepForg
 /* ------------------------------------------------ classic login form -- */
 $("loginForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
+  var loginErr = authEmailError($("liEmail").value);
+  if (loginErr) { setMsg("authMsg", loginErr, true); return; }
   var remember = $("liRemember").checked;
   setMsg("authMsg", "Logging in…");
   // A dedicated fetch (not apiPost): a 401 here is the normal "wrong
@@ -674,6 +776,8 @@ $("btnSignupContinue").addEventListener("click", function () {
 });
 $("btnForgotContinue").addEventListener("click", function () {
   var email = $("fgEmail").value.trim();
+  var forgotErr = authEmailError(email);
+  if (forgotErr) { setMsg("authMsg", forgotErr, true); return; }
   forgotIntent = true;
   if (token()) {
     // A locked session may still be signed in on this device: end it
@@ -709,7 +813,7 @@ $("btnSetPassword").addEventListener("click", function () {
   }).catch(function (e) { setMsg("authMsg", e.message, true); });
 });
 $("btnUnlock").addEventListener("click", function () {
-  setMsg("authMsg", "Opening QBill…");
+  setMsg("authMsg", "Opening QRLedger…");
   apiPost("/api/auth/verify-password", { password: $("lockPassword").value }).then(function () {
     $("lockPassword").value = "";
     forgotIntent = false; // a normal login finished: intent is spent
@@ -1240,7 +1344,7 @@ function sendReminder(p) {
     "Assalam-o-Alaikum [Party Name], a gentle reminder: [Amount] is due at [Business Name]. Please pay at your earliest convenience. Thank you.";
   var msg = tmpl.split("[Party Name]").join(p.name)
     .split("[Amount]").join(fmtRs(-p.balancePaisa))
-    .split("[Business Name]").join((me && me.business && me.business.name) || "QBill");
+    .split("[Business Name]").join((me && me.business && me.business.name) || "QRLedger");
   var phone = (p.phone || "").replace(/\D/g, "");
   if (phone && phone.charAt(0) === "0") phone = "92" + phone.slice(1);
   window.open("https://wa.me/" + phone + "?text=" + encodeURIComponent(msg), "_blank");
@@ -2325,6 +2429,13 @@ function lineAmounts(w) {
     disc = Math.round(gross * (parseFloat(w.querySelector(".sl-disc").value || "0") || 0) / 100);
   }
   if (s.txn_wise_tax === false) tax = 0;
+  else if (s.tax_inclusive) {
+    /* Build .22: the rate already contains the tax — the line's tax
+       is the portion inside the net amount (server computes the
+       same figure; see _tax_contained). */
+    var pctIncl = parseFloat(w.querySelector(".sl-tax").value || "0") || 0;
+    tax = Math.round((gross - disc) * pctIncl / (100 + pctIncl));
+  }
   else tax = Math.round((gross - disc) * (parseFloat(w.querySelector(".sl-tax").value || "0") || 0) / 100);
   return { qty: qty, rate: rate, gross: gross, disc: disc, tax: tax };
 }
@@ -2360,7 +2471,8 @@ function docTotals() {
     disc += l.discount_paisa || 0;
     tax += l.tax_paisa || 0;
   });
-  var total = Math.max(sub - disc + tax, 0);
+  var inclTax = !!((QB.settings || {}).tax_inclusive);
+  var total = Math.max(inclTax ? sub - disc : sub - disc + tax, 0);
   var mode = (QB.settings || {}).round_off_mode;
   var rounded = mode === "one" ? Math.ceil(total / 100) * 100 : Math.round(total / 100) * 100;
   return { sub: sub, disc: disc, tax: tax, total: total, rounded: rounded };
@@ -2371,7 +2483,9 @@ function calcSaleTotal() {
     var a = lineAmounts(w);
     var num = w.querySelector(".sl-num");
     if (num) num.textContent = idx + 1;
-    w.querySelector(".sl-amt").textContent = fmtRs(a.gross - a.disc + a.tax);
+    w.querySelector(".sl-amt").textContent = fmtRs(
+      (QB.settings && QB.settings.tax_inclusive)
+        ? a.gross - a.disc : a.gross - a.disc + a.tax);
     var da = w.querySelector(".sl-disc-amt");
     if (da) da.textContent = fmtRs(a.disc);
     var ta = w.querySelector(".sl-tax-amt");
@@ -2922,14 +3036,17 @@ $("btnSaleBook").addEventListener("click", function () {
             challan: "challans", sale_return: "salereturns", purchase_return: "purchasereturns",
             proforma: "proforma" }[docType] || "dashboard");
 });
-function downloadInvoicePdf(id, thermal) {
+function downloadInvoicePdf(id, thermal, size) {
   var path = "/api/invoices/" + id + "/pdf" + (thermal ? "?format=thermal" : "");
+  /* Build .22: a thermal print can carry its roll width for this one
+     print; the server validates it against 58mm / 80mm / 100mm. */
+  if (thermal && size) path += "&size=" + encodeURIComponent(size);
   fetch(path, { headers: authHeaders() })
     .then(function (resp) { if (!resp.ok) throw new Error("PDF failed (" + resp.status + ")"); return resp.blob(); })
     .then(function (blob) {
       var a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = thermal ? "qbill-bill-thermal.pdf" : "qbill-invoice.pdf";
+      a.download = thermal ? "qrledger-bill-thermal.pdf" : "qrledger-invoice.pdf";
       a.click();
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
     }).catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -3120,7 +3237,7 @@ function appendDocRowActions(td, inv, meta, where) {
   var passcodeGate = QB.settings && QB.settings.txn_passcode_edit_delete;
   function passcodeCheck(next) {
     if (!passcodeGate) { next(); return; }
-    var pw = prompt("Enter your QBill password to edit or delete this transaction:");
+    var pw = prompt("Enter your QRLedger password to edit or delete this transaction:");
     if (pw == null) return;
     apiPost("/api/auth/verify-password", { password: pw }).then(next)
       .catch(function (e) { setMsg("appMsg", e.message, true); });
@@ -3226,7 +3343,7 @@ function shareInvoiceWhatsApp(inv) {
     .split("[Transaction Type]").join(DOC_META[inv.type].title)
     .split("[Transaction Number]").join(inv.invoiceNo)
     .split("[Amount]").join(fmtRs(inv.totalPaisa))
-    .split("[Business Name]").join((me && me.business && me.business.name) || "QBill");
+    .split("[Business Name]").join((me && me.business && me.business.name) || "QRLedger");
   if (s.msg_include_balance && party) msg += "\nCurrent balance: " + fmtRs(party.balancePaisa || 0);
   if (s.msg_include_link) msg += "\n" + location.origin + "/api/invoices/" + inv.id + "/pdf";
   if (s.msg_footer) msg += "\n" + s.msg_footer;
@@ -3611,6 +3728,8 @@ function linkPayModal(direction) {
   });
   $(p + "Link").addEventListener("click", function () { linkPayModal(direction); });
   $(p + "Close").addEventListener("click", function () { closePayModal(direction); });
+  /* Build .21 (Fix A): the corner X does exactly what Close does. */
+  $(p + "CloseX").addEventListener("click", function () { closePayModal(direction); });
 });
 $("btnAddPayment").addEventListener("click", function () { showPanel("paymentPanel"); });
 $("btnOpenPayIn").addEventListener("click", function () { hidePanel("paymentPanel"); openPayModal("in"); });
@@ -3825,6 +3944,12 @@ function loadProfile() {
     $("profState").value = b.state || "";
     $("profSignature").value = b.signatureText || "";
     $("profTaxNote").value = b.taxNote || "";
+    $("profNtn").value = b.ntn || "";
+    $("profStrn").value = b.strn || "";
+    $("profRaastIban").value = b.raastIban || "";
+    $("profJazzcash").value = b.jazzcashNumber || "";
+    $("profEasypaisa").value = b.easypaisaNumber || "";
+    $("profPaymentDetails").value = b.paymentDetails || "";
     $("profTerms").value = b.terms || "";
     $("profLogoPreview").classList.toggle("hidden", !b.hasLogo);
     $("profLogoEmpty").classList.toggle("hidden", !!b.hasLogo);
@@ -3844,6 +3969,12 @@ $("profileForm").addEventListener("submit", function (ev) {
     state: $("profState").value.trim(),
     signature_text: $("profSignature").value.trim(),
     tax_note: $("profTaxNote").value.trim(),
+    ntn: $("profNtn").value.trim(),
+    strn: $("profStrn").value.trim(),
+    raast_iban: $("profRaastIban").value.trim(),
+    jazzcash_number: $("profJazzcash").value.trim(),
+    easypaisa_number: $("profEasypaisa").value.trim(),
+    payment_details: $("profPaymentDetails").value.trim(),
     terms: $("profTerms").value.trim()
   }).then(function (r) {
     cacheSet("business", { business: r.business });
@@ -4239,6 +4370,19 @@ function loadBackups() {
   apiGet("/api/backups", "backups").then(function (r) {
     renderBackups(r.body.backups || [], locals);
   }).catch(function () { renderBackups([], locals); });
+  /* Build .22: the visible backup status line (last backup time +
+     whether it reached the login email). */
+  apiGet("/api/backups/status", null).then(function (r) {
+    var el = $("backupStatus");
+    if (!el) return;
+    if (!r.body.lastBackupAt) {
+      el.textContent = "Last backup: none yet — use Back up now to make the first one.";
+      return;
+    }
+    el.textContent = "Last backup: " + String(r.body.lastBackupAt).replace("T", " ").slice(0, 16) +
+      (r.body.lastEmailed ? " · Emailed to your login email ✓" : " · Saved on the server (email not sent)") +
+      " · " + (r.body.backupCount || 0) + " backup(s) kept";
+  }).catch(function () {});
 }
 function renderBackups(serverList, locals) {
   var box = $("backupList");
@@ -4269,7 +4413,7 @@ function renderBackups(serverList, locals) {
     var dl = document.createElement("button");
     dl.className = "btn"; dl.type = "button"; dl.textContent = "Backup To Computer";
     dl.addEventListener("click", function () {
-      downloadAuthed("/api/backups/" + b.id + "/download", "qbill-backup.json")
+      downloadAuthed("/api/backups/" + b.id + "/download", "qrledger-backup.json")
         .catch(function (e) { setMsg("appMsg", e.message, true); });
     });
     div.appendChild(dl);
@@ -5804,7 +5948,7 @@ $("btnBackupComputer").addEventListener("click", function () {
   apiGet("/api/backups", "backups").then(function (r) {
     var list = r.body.backups || [];
     if (!list.length) { setMsg("appMsg", "No backup yet — use Backup Now first.", true); return; }
-    downloadAuthed("/api/backups/" + list[list.length - 1].id + "/download", "qbill-backup.json")
+    downloadAuthed("/api/backups/" + list[list.length - 1].id + "/download", "qrledger-backup.json")
       .catch(function (e) { setMsg("appMsg", e.message, true); });
   });
 });
@@ -5912,7 +6056,7 @@ $("btnVerify").addEventListener("click", function () {
 document.querySelectorAll("[data-export]").forEach(function (b) {
   b.addEventListener("click", function () {
     var kind = b.getAttribute("data-export");
-    downloadAuthed("/api/utilities/export/" + kind, "qbill-" + kind + ".csv")
+    downloadAuthed("/api/utilities/export/" + kind, "qrledger-" + kind + ".csv")
       .catch(function (e) { setMsg("appMsg", e.message, true); });
   });
 });
@@ -6109,6 +6253,8 @@ $("globalSearch").addEventListener("input", function () {
   runSearchInto($("globalSearch"), $("globalSearchResults"));
 });
 $("searchClose").addEventListener("click", function () { $("searchModal").classList.add("hidden"); });
+/* Build .21 (Fix A): the corner X does exactly what Close does. */
+$("searchCloseX").addEventListener("click", function () { $("searchModal").classList.add("hidden"); });
 document.addEventListener("keydown", function (ev) {
   if ((ev.ctrlKey || ev.metaKey) && (ev.key === "f" || ev.key === "F") && me && currentScreen) {
     var tag = (ev.target && ev.target.tagName) || "";
@@ -6277,7 +6423,7 @@ function openPosterDialog(p) {
   $("btnPosterDownload").addEventListener("click", function () {
     var a = document.createElement("a");
     a.href = posterCanvas(p, $("posterExtra").value).toDataURL("image/png");
-    a.download = "qbill-poster.png";
+    a.download = "qrledger-poster.png";
     a.click();
   });
   $("btnPosterShare").addEventListener("click", function () {
@@ -6301,6 +6447,7 @@ function openPreview(inv) {
   themeSel.innerHTML = PRINT_THEMES.map(function (t) { return "<option>" + esc(t) + "</option>"; }).join("");
   themeSel.value = (QB.settings && QB.settings.print_theme) || "Tally Theme";
   $("previewColor").value = (QB.settings && QB.settings.print_color) || "#f26522";
+  $("previewThermalSize").value = (QB.settings && QB.settings.thermal_size) || "80mm";
   renderPreviewBody();
   document.querySelectorAll(".screen").forEach(function (s) { s.classList.add("hidden"); });
   $("screen-preview").classList.remove("hidden");
@@ -6431,8 +6578,11 @@ function qbLineCalc(bill, entry) {
     : (it.discountType === "amount" ? (it.discountAmountPaisa || 0) * entry.qty
        : Math.round(gross * (it.discountBp || 0) / 10000));
   var taxPct = entry.taxPct != null ? entry.taxPct : ((it.taxBp || 0) / 100);
-  var tax = Math.round((gross - disc) * taxPct / 100);
-  return { rate: rate, gross: gross, disc: disc, tax: tax, total: gross - disc + tax };
+  var inclQb = !!((QB.settings || {}).tax_inclusive);
+  var tax = inclQb ? Math.round((gross - disc) * taxPct / (100 + taxPct))
+                   : Math.round((gross - disc) * taxPct / 100);
+  return { rate: rate, gross: gross, disc: disc, tax: tax,
+           total: inclQb ? gross - disc : gross - disc + tax };
 }
 function qbTotals(bill) {
   var sub = 0, count = 0, qtyTotal = 0;
@@ -6444,8 +6594,12 @@ function qbTotals(bill) {
     qtyTotal += e.qty || 0;
   });
   var afterDisc = Math.max(sub - (bill.billDiscountPaisa || 0), 0);
-  var billTax = Math.round(afterDisc * (bill.billTaxPct || 0) / 100);
-  return { sub: sub, count: count, qty: qtyTotal, total: afterDisc + billTax, billTax: billTax };
+  var inclQbT = !!((QB.settings || {}).tax_inclusive);
+  var billTax = inclQbT
+    ? Math.round(afterDisc * (bill.billTaxPct || 0) / (100 + (bill.billTaxPct || 0)))
+    : Math.round(afterDisc * (bill.billTaxPct || 0) / 100);
+  return { sub: sub, count: count, qty: qtyTotal,
+           total: inclQbT ? afterDisc : afterDisc + billTax, billTax: billTax };
 }
 function qbSyncSide() {
   var bill = qbActive;
@@ -6788,7 +6942,7 @@ $("btnPreviewPdf").addEventListener("click", function () {
   if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, false);
 });
 $("btnPreviewThermal").addEventListener("click", function () {
-  if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, true);
+  if (lastSavedInvoice) downloadInvoicePdf(lastSavedInvoice.id, true, $("previewThermalSize").value);
 });
 $("btnPreviewPrint").addEventListener("click", function () { window.print(); });
 $("btnPreviewWhats").addEventListener("click", function () {

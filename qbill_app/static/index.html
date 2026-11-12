@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0a2540">
-<title>QBill — Billing for Shopkeepers</title>
+<title>QRLedger — Billing for Shopkeepers</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
 <link rel="stylesheet" href="/static/styles.css">
@@ -15,11 +15,11 @@
   <img class="brand-mark top-mark" src="/static/icons/icon-192.png" alt="">
   <div class="head-brand" id="headBrand" title="Business Profile — click to edit your business details">
     <img id="headBizLogo" class="head-biz-logo hidden" alt="">
-    <span id="headBizName">QBill</span>
+    <span id="headBizName">QRLedger</span>
   </div>
   <div class="view-title hidden" id="viewTitle">Home</div>
   <div class="head-search"><input id="searchTx" type="search" placeholder="Search Transactions" aria-label="Search Transactions"></div>
-  <div class="head-contact">Owner: <strong>03273799008</strong> · <strong>abdulqudoos5581@gmail.com</strong></div>
+  <div class="head-contact">(CEO) <strong>abdulqudoos5581@gmail.com</strong></div>
   <div class="top-actions">
     <button id="btnAddSale" class="btn btn-addsale hidden" type="button">＋ Add Sale</button>
     <button id="btnAddPurchase" class="btn btn-addpurchase hidden" type="button">＋ Add Purchase</button>
@@ -59,7 +59,7 @@
 <div class="shell">
   <!-- Sidebar (wide screens): brand, main navigation, sync status. -->
   <aside class="sidebar" id="sidebar">
-    <div class="side-brand" id="sideBrand" title="Business Profile — click to edit your business details"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><img id="sideBizLogo" class="side-biz-logo hidden" alt=""><div class="side-biz"><span id="sideBizName">QBill</span><span class="side-email" id="sideBizEmail"></span></div></div>
+    <div class="side-brand" id="sideBrand" title="Business Profile — click to edit your business details"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><img id="sideBizLogo" class="side-biz-logo hidden" alt=""><div class="side-biz"><span id="sideBizName">QRLedger</span><span class="side-email" id="sideBizEmail"></span></div></div>
     <nav class="sidenav" aria-label="Main">
       <button data-nav="dashboard" class="navbtn active" type="button">Home</button>
       <button data-nav="parties" class="navbtn" type="button">Parties</button>
@@ -635,6 +635,9 @@
           <button id="btnPreviewMsg" class="btn" type="button">Share via Message</button>
           <button id="btnPreviewPdf" class="btn btn-primary" type="button">Download PDF</button>
           <button id="btnPreviewThermal" class="btn" type="button">Print (Thermal)</button>
+          <label>Thermal roll width
+            <select id="previewThermalSize"><option>58mm</option><option>80mm</option><option>100mm</option></select>
+          </label>
           <button id="btnPreviewPrint" class="btn" type="button">Print (Normal)</button>
         </div>
         <label class="check-row" style="margin-top:10px"><input id="previewNoShow" type="checkbox"> <span>Do not show invoice preview again</span></label>
@@ -741,6 +744,7 @@
          following the owner's Vyapar recording) -->
     <div class="modal hidden" id="payInModal">
       <div class="modal-box modal-wide">
+        <button class="modal-x" id="piCloseX" type="button" aria-label="Close">✕</button>
         <form id="payInForm">
           <h2 style="margin-top:0">Payment-In</h2>
           <p class="offline-note hidden" id="piSettleNote"></p>
@@ -786,6 +790,7 @@
     <!-- Payment-Out popup (build .20, defect D6 — separate dialog) -->
     <div class="modal hidden" id="payOutModal">
       <div class="modal-box modal-wide">
+        <button class="modal-x" id="poCloseX" type="button" aria-label="Close">✕</button>
         <form id="payOutForm">
           <h2 style="margin-top:0">Payment-Out</h2>
           <p class="offline-note hidden" id="poSettleNote"></p>
@@ -1435,7 +1440,7 @@
       </div>
       <div class="card">
         <h2>Import from Vyapar / another software</h2>
-        <p class="note">Coming from Vyapar or any other billing software? In that software, export your Parties or Items to Excel/CSV (every billing app has an Export option), then bring the file here. QBill matches the columns, shows you a full preview, and imports — duplicates are skipped unless you choose to update them.</p>
+        <p class="note">Coming from Vyapar or any other billing software? In that software, export your Parties or Items to Excel/CSV (every billing app has an Export option), then bring the file here. QRLedger matches the columns, shows you a full preview, and imports — duplicates are skipped unless you choose to update them.</p>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
           <button id="btnUtilImportItems" class="btn btn-primary" type="button">Import Items</button>
           <button id="btnUtilImportParties" class="btn btn-primary" type="button">Import Parties</button>
@@ -1458,7 +1463,7 @@
           <button id="btnWizParse" class="btn" type="button">1 · Read the file</button>
           <div id="wizMapWrap" class="hidden" style="margin-top:12px">
             <h3>Match the columns</h3>
-            <p class="note">QBill has already matched the columns it recognises (Vyapar exports match automatically). Change any match, or leave a field unimported.</p>
+            <p class="note">QRLedger has already matched the columns it recognises (Vyapar exports match automatically). Change any match, or leave a field unimported.</p>
             <div id="wizMapRows"></div>
             <label id="wizDateWrap" class="hidden">Opening balances are as of this date <input id="wizOpeningDate" type="date"></label>
             <button id="btnWizValidate" class="btn" type="button" style="margin-top:10px">2 · Preview the import</button>
@@ -1572,6 +1577,20 @@
         </div>
         <label>Signature Text <input id="profSignature" type="text" placeholder="Printed above Authorised Signatory on bills"></label>
         <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
+        <div class="grid2">
+          <label>NTN <input id="profNtn" type="text" placeholder="Printed on bills when filled"></label>
+          <label>STRN <input id="profStrn" type="text" placeholder="Printed on bills when filled"></label>
+        </div>
+        <h3>Payment details (printed on bills)</h3>
+        <p class="note">Your own Raast, JazzCash and Easypaisa details print in a "Pay To:" block on bill PDFs and thermal bills, so customers can pay you directly. Leave them empty and nothing prints.</p>
+        <label>Raast IBAN <input id="profRaastIban" type="text" placeholder="Your bank IBAN for Raast payments"></label>
+        <div class="grid2">
+          <label>JazzCash Number <input id="profJazzcash" type="text"></label>
+          <label>Easypaisa Number <input id="profEasypaisa" type="text"></label>
+        </div>
+        <label>Payment Details (anything else, one line per line)
+          <textarea id="profPaymentDetails" rows="3" placeholder="e.g. account title, branch, or payment instructions"></textarea>
+        </label>
         <label>Terms &amp; Conditions (one per line)
           <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
         </label>
@@ -1581,7 +1600,7 @@
 
       <div class="card form-card" data-setcard="general">
         <h2>General settings</h2>
-        <label class="check-row"><input type="checkbox" data-setting="enable_passcode"> <span>Enable Passcode (ask the password every time QBill reopens)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="enable_passcode"> <span>Enable Passcode (ask the password every time QRLedger reopens)</span></label>
         <label>Amount (upto Decimal Places)
           <select data-setting="decimal_places"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select>
         </label>
@@ -1703,8 +1722,9 @@
       <div class="card form-card hidden" data-setcard="taxes">
         <h2>Taxes</h2>
         <label class="check-row"><input type="checkbox" data-setting="tax_enabled"> <span>Enable Tax on transactions (sales tax, Pakistan)</span></label>
+        <label class="check-row"><input type="checkbox" data-setting="tax_inclusive"> <span>Tax-inclusive prices (my rates already include the sales tax — the tax is shown as the portion inside the bill total, never added on top)</span></label>
         <label>Default Tax % on new bill lines <input type="number" step="0.01" min="0" id="defaultTaxPct" value="0"></label>
-        <p class="note">Tax is a single Pakistan sales tax — QBill does not split tax into parts. See Reports &gt; Tax Report and Tax Rate Report for totals.</p>
+        <p class="note">Tax is a single Pakistan sales tax — QRLedger does not split tax into parts. See Reports &gt; Tax Report and Tax Rate Report for totals.</p>
       </div>
 
       <div class="card form-card hidden" data-setcard="message">
@@ -1779,6 +1799,7 @@
       <div class="card form-card hidden" data-setcard="backups">
         <h2>Backups</h2>
         <p class="note">A backup is made automatically every day and emailed to your login email. Backups made offline on this device upload themselves when the internet returns.</p>
+        <p class="note" id="backupStatus">Last backup: —</p>
         <button id="btnBackupNow" class="btn btn-primary" type="button">Back up now</button>
         <div id="backupList" class="list"></div>
       </div>
@@ -1803,7 +1824,7 @@
 
       <div id="ownerAccountsCard" class="card form-card hidden" data-setcard="accounts">
         <h2>Customer accounts — owner</h2>
-        <p class="note">Every QBill account is listed here, with the IP addresses it used. A new account cannot use QBill until you approve it. Blocking an account signs it out everywhere.</p>
+        <p class="note">Every QRLedger account is listed here, with the IP addresses it used. A new account cannot use QRLedger until you approve it. Blocking an account signs it out everywhere.</p>
         <!-- Build .20 (D7): a clear in-app way to add another shop.
              One account per shop is the model — each account holds
              only its own shop's data. -->
@@ -1819,7 +1840,7 @@
 
 <!-- ============ GENERIC DIALOG (Item Table Customization, posters…) ============ -->
 <div id="dlgModal" class="modal hidden" style="z-index:120">
-  <div class="modal-box card" style="max-width:560px">
+  <div class="modal-box card" style="max-width:520px">
     <div class="book-head">
       <h2 id="dlgTitle" style="margin:0">Dialog</h2>
       <button id="dlgClose" class="btn btn-mini" type="button">✕ Close</button>
@@ -1830,7 +1851,8 @@
 
 <!-- ============ OPEN ANYTHING (Ctrl+F) ============ -->
 <div id="searchModal" class="modal hidden" style="z-index:120">
-  <div class="modal-box card" style="max-width:560px">
+  <div class="modal-box card" style="max-width:520px">
+    <button class="modal-x" id="searchCloseX" type="button" aria-label="Close">✕</button>
     <h2 style="margin-top:0">Open Anything</h2>
     <label>Search parties, items and transactions
       <input id="globalSearch" type="search" placeholder="Type to search…">
@@ -1843,10 +1865,10 @@
 <!-- ============ ACTIVATE YOUR ACCOUNT (not approved / not activated yet) ============ -->
 <div id="pendingView" class="hidden">
   <div class="card pending-card">
-    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
-    <h1>Activate your QBill account</h1>
-    <p id="pendingIpNote" class="hidden">This internet connection is already linked to an existing QBill account, so a new account cannot be started from here. QBill accounts are activated by the owner only. Please contact the shop you bought QBill from.</p>
-    <p id="pendingText">Your account is created, but QBill works only after activation by the owner. Choose a plan and contact the owner — your account will be switched on as soon as your plan is confirmed.</p>
+    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QRLedger — by Abdul Qudoos">
+    <h1>Activate your QRLedger account</h1>
+    <p id="pendingIpNote" class="hidden">This internet connection is already linked to an existing QRLedger account, so a new account cannot be started from here. QRLedger accounts are activated by the owner only. Please contact the shop you bought QRLedger from.</p>
+    <p id="pendingText">Your account is created, but QRLedger works only after activation by the owner. Choose a plan and contact the owner — your account will be switched on as soon as your plan is confirmed.</p>
     <div class="plans">
       <div class="plan">
         <div class="plan-name">Monthly</div>
@@ -1876,11 +1898,11 @@
 <!-- ============ AUTH POPUP (sign-in / create password / welcome back) ============ -->
 <div id="authModal" class="modal hidden">
   <div class="modal-box card auth-box">
-    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QBill — by Abdul Qudoos">
+    <img class="auth-logo" src="/static/icons/logo-full.png" alt="QRLedger — by Abdul Qudoos">
 
     <!-- STEP: ONE form — create an account (email -> code -> create password -> Log in) -->
     <div id="stepOne" class="auth-step hidden">
-      <h1>Welcome to QBill</h1>
+      <h1>Welcome to QRLedger</h1>
       <p class="auth-sub">Billing software for your shop.</p>
       <p class="note">One account per shop — each account holds only its own shop's data, and a new account starts working after the owner's approval.</p>
       <label>Your email
@@ -1906,7 +1928,7 @@
 
     <!-- STEP: classic login (the default front door) -->
     <div id="stepLogin" class="auth-step">
-      <h1>Log in to QBill</h1>
+      <h1>Log in to QRLedger</h1>
       <p class="auth-sub">Billing software for your shop.</p>
       <form id="loginForm">
         <label>Your email
@@ -1930,19 +1952,19 @@
 
     <!-- STEP: email (sign in with an emailed code instead of a password) -->
     <div id="stepEmail" class="auth-step hidden">
-      <h1>Welcome to QBill</h1>
+      <h1>Welcome to QRLedger</h1>
       <p class="auth-sub">Billing software for your shop.</p>
       <label>Your email
         <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com">
       </label>
       <button id="btnSendCode" class="btn btn-primary btn-block" type="button">Continue</button>
-      <p class="note">New to QBill? Your account is created automatically with your email. We email you a 6-digit login code (valid 10 minutes).</p>
+      <p class="note">New to QRLedger? Your account is created automatically with your email. We email you a 6-digit login code (valid 10 minutes).</p>
       <button id="btnEmailBack" class="btn btn-link btn-block" type="button">Back to log in</button>
     </div>
 
     <!-- STEP: create an account (email first, then the code) -->
     <div id="stepSignup" class="auth-step hidden">
-      <h1>Create your QBill account</h1>
+      <h1>Create your QRLedger account</h1>
       <p class="auth-sub">Enter your email. We will send a 6-digit code to prove it is yours, then you create your password.</p>
       <label>Your email
         <input id="suEmail" type="email" autocomplete="email" placeholder="you@example.com">
@@ -1977,7 +1999,7 @@
     <!-- STEP: create a password (first time on this account) -->
     <div id="stepCreate" class="auth-step hidden">
       <h1>Create a new password for billing software</h1>
-      <p class="auth-sub">This password opens QBill on this device, so you will not need an email code every day.</p>
+      <p class="auth-sub">This password opens QRLedger on this device, so you will not need an email code every day.</p>
       <label>New password
         <span class="pw-wrap">
           <input id="pwNew" type="password" autocapitalize="none" autocomplete="new-password">
@@ -1997,7 +2019,7 @@
     <!-- STEP: welcome back (this device has a session, password needed) -->
     <div id="stepWelcome" class="auth-step hidden">
       <h1>Welcome back</h1>
-      <p class="auth-sub">Enter your password to open your QBill account.</p>
+      <p class="auth-sub">Enter your password to open your QRLedger account.</p>
       <label>Your password
         <span class="pw-wrap">
           <input id="lockPassword" type="password" autocapitalize="none" autocomplete="current-password" placeholder="Password">

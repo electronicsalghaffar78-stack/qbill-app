@@ -74,6 +74,12 @@ def build_snapshot(tx, business_id, source="server", created_at=None):
             "signature_text": business.get("signature_text"),
             "logo_mime": business.get("logo_mime"),
             "logo_data": business.get("logo_data"),
+            "ntn": business.get("ntn"),
+            "strn": business.get("strn"),
+            "raast_iban": business.get("raast_iban"),
+            "jazzcash_number": business.get("jazzcash_number"),
+            "easypaisa_number": business.get("easypaisa_number"),
+            "payment_details": business.get("payment_details"),
         },
         "parties": parties,
         "items": items,
@@ -124,15 +130,15 @@ def _email_snapshot(business_id, backup_id):
         date = (row["created_at"] or "")[:10]
         route, _errors = mailer.send_email(
             row["login_email"],
-            "QBill daily backup — {}".format(date),
-            "This is your automatic daily backup from QBill, taken on {}.\n\n"
-            "The attached file (qbill-backup-{}.json) contains your complete "
-            "QBill data — bills, parties, items, payments and expenses.\n\n"
+            "QRLedger daily backup — {}".format(date),
+            "This is your automatic daily backup from QRLedger, taken on {}.\n\n"
+            "The attached file (qrledger-backup-{}.json) contains your complete "
+            "QRLedger data — bills, parties, items, payments and expenses.\n\n"
             "Please keep it safe. It can be used to restore your accounts if "
             "anything ever goes wrong.".format(date, date),
             attachments=[
                 {
-                    "filename": "qbill-backup-{}.json".format(date),
+                    "filename": "qrledger-backup-{}.json".format(date),
                     "content": row["payload"].encode("utf-8"),
                     "content_type": "application/json",
                 }
@@ -234,6 +240,33 @@ def upload_backup():
     _email_snapshot(biz, backup_id)
     row = db.query_one("SELECT * FROM auto_backups WHERE id = ?", (backup_id,))
     return jsonify(ok=True, backup=_row_dict(row)), 201
+
+
+@bp.get("/status")
+@require_session
+@require_approved
+@require_unlocked
+def backup_status():
+    """Build .22: the visible backup status for Settings > BACKUPS —
+    when the newest snapshot was taken and whether it reached the
+    login email. The snapshot list itself stays the full history."""
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        row = tx.query_one(
+            "SELECT * FROM auto_backups WHERE business_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (biz,),
+        )
+        count = tx.query_one(
+            "SELECT COUNT(*) AS c FROM auto_backups WHERE business_id = ?",
+            (biz,),
+        )["c"]
+    return jsonify(
+        ok=True,
+        lastBackupAt=row["created_at"] if row else None,
+        lastEmailed=bool(row["emailed"]) if row else False,
+        backupCount=count,
+    )
 
 
 @bp.get("")
@@ -340,7 +373,9 @@ def restore_backup(backup_id):
             "city = ?, phone = ?, email = ?, "
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
             "pincode = ?, state = ?, signature_text = ?, "
-            "logo_mime = ?, logo_data = ? WHERE id = ?",
+            "logo_mime = ?, logo_data = ?, "
+            "ntn = ?, strn = ?, raast_iban = ?, jazzcash_number = ?, "
+            "easypaisa_number = ?, payment_details = ? WHERE id = ?",
             (profile.get("name") or "My Business",
              profile.get("owner_name") or "",
              profile.get("address"),
@@ -352,7 +387,14 @@ def restore_backup(backup_id):
              profile.get("pincode") or "", profile.get("state") or "",
              profile.get("signature_text") or "",
              profile.get("logo_mime") or "",
-             profile.get("logo_data"), biz),
+             profile.get("logo_data"),
+             # Snapshots taken before build .22 restore these as empty.
+             profile.get("ntn") or "",
+             profile.get("strn") or "",
+             profile.get("raast_iban") or "",
+             profile.get("jazzcash_number") or "",
+             profile.get("easypaisa_number") or "",
+             profile.get("payment_details") or "", biz),
         )
         for party in snap.get("parties", []):
             _insert_row(tx, "parties", _PARTY_COLS, party, biz)
