@@ -74,6 +74,9 @@ def build_snapshot(tx, business_id, source="server", created_at=None):
             "signature_text": business.get("signature_text"),
             "logo_mime": business.get("logo_mime"),
             "logo_data": business.get("logo_data"),
+            "business_description": business.get("business_description"),
+            "signature_mime": business.get("signature_mime"),
+            "signature_data": business.get("signature_data"),
             "ntn": business.get("ntn"),
             "strn": business.get("strn"),
             "raast_iban": business.get("raast_iban"),
@@ -374,6 +377,8 @@ def restore_backup(backup_id):
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
             "pincode = ?, state = ?, signature_text = ?, "
             "logo_mime = ?, logo_data = ?, "
+            "business_description = ?, signature_mime = ?, "
+            "signature_data = ?, "
             "ntn = ?, strn = ?, raast_iban = ?, jazzcash_number = ?, "
             "easypaisa_number = ?, payment_details = ? WHERE id = ?",
             (profile.get("name") or "My Business",
@@ -388,6 +393,10 @@ def restore_backup(backup_id):
              profile.get("signature_text") or "",
              profile.get("logo_mime") or "",
              profile.get("logo_data"),
+             # Snapshots taken before build .24 restore these as empty.
+             profile.get("business_description") or "",
+             profile.get("signature_mime") or "",
+             profile.get("signature_data"),
              # Snapshots taken before build .22 restore these as empty.
              profile.get("ntn") or "",
              profile.get("strn") or "",

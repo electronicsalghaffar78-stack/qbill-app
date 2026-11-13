@@ -140,10 +140,10 @@ def _qr_image(payload):
     return ImageReader(buf)
 
 
-def _logo_image(business):
-    """The business's own logo as an ImageReader, or None when the
-    account has not set one (the header then stays text-only)."""
-    data = (business or {}).get("logo_data")
+def _stored_image(business, key):
+    """One of the business's stored images (base64 on the row) as an
+    ImageReader, or None when unset or unreadable."""
+    data = (business or {}).get(key)
     if not data:
         return None
     import base64
@@ -158,6 +158,19 @@ def _logo_image(business):
     from reportlab.lib.utils import ImageReader
 
     return ImageReader(io.BytesIO(raw))
+
+
+def _logo_image(business):
+    """The business's own logo as an ImageReader, or None when the
+    account has not set one (the header then stays text-only)."""
+    return _stored_image(business, "logo_data")
+
+
+def _signature_image(business):
+    """The business's signature image (Edit Firm > More options,
+    build .24) as an ImageReader, or None when the account has not
+    set one — bills then print exactly as they did before."""
+    return _stored_image(business, "signature_data")
 
 
 def _qty_text(line):
@@ -614,7 +627,22 @@ def render_invoice_pdf(business, invoice, party_name, opts=None):
         signature = settings.get("signature_text") or "For {}".format(
             business["name"] or "My Business")
         pdf.drawRightString(right, y, signature)
-        y -= 26
+        sig_img = _signature_image(business)
+        if sig_img is not None:
+            # Build .24: the signature IMAGE (Edit Firm > More
+            # options) prints in the signature area, fitted inside a
+            # 150x42 box, right-aligned above "Authorised Signatory".
+            # Unset, this whole block is skipped and the layout is
+            # exactly what it was before.
+            iw, ih = sig_img.getSize()
+            scale = min(150.0 / iw, 42.0 / ih) if iw and ih else 1.0
+            sig_w, sig_h = iw * scale, ih * scale
+            y -= sig_h + 6
+            pdf.drawImage(sig_img, right - sig_w, y, width=sig_w,
+                          height=sig_h, mask="auto")
+            y -= 20
+        else:
+            y -= 26
         pdf.setFont("Helvetica", 9)
         pdf.drawRightString(right, y, "Authorised Signatory")
     y -= 24
@@ -915,6 +943,7 @@ def invoice_pdf(invoice_id):
             "terms": business.get("terms"),
             "logo_data": business.get("logo_data"),
             "logo_mime": business.get("logo_mime"),
+            "signature_data": business.get("signature_data"),
             "ntn": business.get("ntn"),
             "strn": business.get("strn"),
             "raast_iban": business.get("raast_iban"),

@@ -1846,12 +1846,112 @@ check(
 )
 check(
     "delta3: Business Profile has logo upload + owner/city fields and the "
-    "version/cache moved to vyapar11/v20 (build .22)",
+    "version/cache moved to vyapar17/v26 (build .28)",
     'id="profLogoFile"' in html and 'id="profOwner"' in html
     and 'id="profCity"' in html
     and client.get("/healthz").get_json().get("version")
-    == "2026-11-13.22-vyapar11"
-    and "qbill-shell-v20" in client.get("/sw.js").get_data(as_text=True),
+    == "2026-11-13.28-vyapar17"
+    and "qbill-shell-v26" in client.get("/sw.js").get_data(as_text=True),
+)
+# Build .24 markup: the profile form's new home + what stayed behind.
+_set0 = html.index('id="screen-settings"')
+_settings_html = html[_set0:html.index('</section>', _set0)]
+_firm_html = html[html.index('id="editFirmModal"'):html.index('id="dlgModal"')]
+_paytax_html = html[html.index('id="payTaxForm"'):html.index('id="taxTermsForm"')]
+_t0 = html.index('id="taxTermsForm"')
+_terms_html = html[_t0:html.index('data-setcard="transaction"', _t0)]
+check(
+    "build .24: the Business Profile form left Settings for the Edit "
+    "Firm popup (logo + More options + description + signature image); "
+    "GENERAL keeps General settings + the Coming Soon payment/tax "
+    "card + the Tax Note & Terms card (no banner on the last one)",
+    'class="settings-main"' in _settings_html
+    and 'id="profileForm"' not in _settings_html
+    and 'id="editFirmModal"' in html and 'id="profileForm"' in _firm_html
+    and 'id="btnEfMore"' in _firm_html and 'id="efMoreBody"' in _firm_html
+    and 'id="profDescription"' in _firm_html
+    and 'id="profSigFile"' in _firm_html
+    and all(s not in _firm_html for s in (
+        'id="profNtn"', 'id="profStrn"', 'id="profRaastIban"',
+        'id="profJazzcash"', 'id="profEasypaisa"',
+        'id="profPaymentDetails"', 'id="profTaxNote"', 'id="profTerms"'))
+    and 'class="coming-soon-banner"' in _paytax_html
+    and all(s in _paytax_html for s in (
+        'id="profNtn"', 'id="profStrn"', 'id="profRaastIban"',
+        'id="profJazzcash"', 'id="profEasypaisa"',
+        'id="profPaymentDetails"'))
+    and 'coming-soon-banner' not in _terms_html
+    and 'id="profTaxNote"' in _terms_html and 'id="profTerms"' in _terms_html
+    and '"editFirmModal"' in js,
+)
+# Build .25 markup: ONE logo tile per brand area (owner's "do do logo"
+# report) — the tile shows the business logo when one is set, otherwise
+# the QRLedger monogram; app.js swaps the single tile's src per state.
+_side_seg = html[html.index('id="sideBrand"'):html.index('id="sideBizName"')]
+_head_seg = html[html.index("<header"):html.index('id="headBizName"')]
+check(
+    "build .25: sidebar card + header brand each contain exactly ONE "
+    "logo image (app monogram by default); the duplicate business-logo "
+    "<img> elements are gone in both states (no logo / logo set) and "
+    "refreshLogoImages swaps the single tile's src",
+    _side_seg.count("<img") == 1 and 'id="sideMark"' in _side_seg
+    and "/static/icons/icon-192.png" in _side_seg
+    and _head_seg.count("<img") == 1 and 'id="headMark"' in _head_seg
+    and "/static/icons/icon-192.png" in _head_seg
+    and 'id="sideBizLogo"' not in html and 'id="headBizLogo"' not in html
+    and "sideBizLogo" not in js and "headBizLogo" not in js
+    and "sideMark" in js and "headMark" in js and "APP_MARK_SRC" in js
+    and "refreshLogoImages" in js,
+)
+# Build .28: the main menu is AUTO-CLOSE at every width (owner) —
+# phone: ☰ or a left-edge rightward swipe opens the drawer, a
+# leftward swipe on drawer/dim closes it; desktop: hidden by default,
+# the left-edge hot-zone + hover (fine pointers) opens it as an
+# overlay, pointer-leave closes it after the grace delay. Build .26's
+# localStorage-persisted desktop collapse is REMOVED.
+_css28 = client.get("/static/styles.css").get_data(as_text=True)
+check(
+    "build .28: auto-close menu wiring — ☰ toggle + scrim + no-scroll, "
+    "phone edge swipe (touchstart/touchmove, SWIPE_EDGE_PX/SWIPE_MIN_DX), "
+    "desktop hot-zone + hover open with grace-delay close "
+    "(scheduleNavClose/cancelNavClose, NAV_CLOSE_DELAY_MS, hover/pointer "
+    "media gate), and build .26's persisted collapse fully removed",
+    'id="btnMenu"' in html and 'aria-expanded="false"' in html
+    and 'id="navHotZone"' in html
+    and "openSidebarMobile" in js and "isNarrowShell" in js
+    and "navHoverCapable" in js and "NAV_HOVER_MQ" in js
+    and "(hover: hover) and (pointer: fine)" in js
+    and "scheduleNavClose" in js and "cancelNavClose" in js
+    and "NAV_CLOSE_DELAY_MS = 2500" in js
+    and "navHotZone" in js and "mouseover" in js
+    and 'closest(".modal")' in js
+    and 'addEventListener("touchstart"' in js
+    and 'addEventListener("touchmove"' in js
+    and "SWIPE_EDGE_PX = 24" in js and "SWIPE_MIN_DX = 50" in js
+    and "no-scroll" in js
+    and "setSidebarCollapsed" not in js and "applySidebarPref" not in js
+    and "SIDEBAR_COLLAPSED_KEY" not in js and "nav-collapsed" not in js
+    and 'setItem("qrledger_sidebar_collapsed"' not in js
+    and 'localStorage.removeItem("qrledger_sidebar_collapsed")' in js
+    and "@media (min-width: 901px)" in _css28
+    and "body.no-scroll" in _css28
+    and ".side-scrim { top: 57px; }" in _css28,
+)
+check(
+    "build .28: menu is a hidden-by-default overlay on desktop "
+    "(off-canvas translateX(-105%), .open slides in, pointer-events "
+    "gated), the 16px nav hot-zone is served and phone/touch-hidden, "
+    "and the menu navy is MORE transparent (~0.85 alpha) with the "
+    "frosted blur kept",
+    ".nav-hotzone" in _css28 and "width: 16px" in _css28
+    and "translateX(-105%)" in _css28 and ".sidebar.open" in _css28
+    and "pointer-events: none" in _css28
+    and "@media (hover: none)" in _css28
+    and "body.nav-collapsed .sidebar" not in _css28
+    and "rgba(13, 47, 79, .84)" in _css28
+    and "rgba(10, 37, 64, .86)" in _css28
+    and "rgba(13, 47, 79, .9)" not in _css28
+    and "backdrop-filter: blur(9px)" in _css28,
 )
 _LOGO_A = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf"
            "FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -2862,11 +2962,18 @@ check(
 b21_css = client.get("/static/styles.css").get_data(as_text=True)
 b21_js = client.get("/static/app.js").get_data(as_text=True)
 b21_html = client.get("/").get_data(as_text=True)
+# The no-blur rule guards the MODAL overlay only. Build .26 put a
+# frosted backdrop blur on the SIDEBAR drawer (owner's direct order,
+# a different element) — so this assertion slices the .modal block
+# instead of the whole stylesheet; the popup rule itself is unchanged.
+_b21_modal = b21_css[b21_css.index(".modal {"):
+                     b21_css.index("}", b21_css.index(".modal {"))]
 check(
     "build21 A: modal overlay is a dark dim with NO backdrop blur; the "
     "dialog box is compact with the light-blue border; corner X "
     "buttons exist on the Payment-In / Payment-Out / search popups",
-    "backdrop-filter" not in b21_css
+    "backdrop-filter" not in _b21_modal
+    and "rgba(0, 0, 0, .5)" in _b21_modal
     and "rgba(0, 0, 0, .5)" in b21_css
     and "border: 2px solid #7fb3d5" in b21_css
     and "max-width: 520px" in b21_css
@@ -2921,7 +3028,8 @@ for good in ["valid21@gmail.com", "valid21@yahoo.com", "info@alghaffar.pk"]:
 
 # ---------------- 12t. build .22: QRLedger rebrand + research P0 ------
 # (A) The product is QRLedger now: shell, manifest and the OTP email
-#     carry the new name; the version/cache moved to vyapar11/v20.
+#     carry the new name; the version/cache moved to vyapar11/v20
+#     (and to vyapar12/v21 in build .23).
 # (B1) Every SALE bill prints the khata balance block:
 #     Previous Balance + This Bill - Paid = Total Payable (paisa-exact,
 #     in "party owes us" space — the negation of party_balance_map).
@@ -3241,6 +3349,310 @@ check(
     "math exactly",
     inv22y["taxPaisa"] == 1800 and inv22y["totalPaisa"] == 11800,
     json.dumps(inv22y)[:200],
+)
+
+# ---------------- 12u. build .24: Edit Firm popup ----------------
+# The Business Profile moved out of Settings into the Edit Firm popup
+# (owner's Vyapar reference, 2026-11-13): the popup gained a Business
+# Description and a signature IMAGE; the tax IDs + payment rails
+# (Coming Soon card) and the Tax Note + Terms (own card) stayed in
+# Settings > GENERAL, each with its own save. The profile endpoint's
+# partial-save contract makes the split saves safe: a save changes
+# only the fields it sends.
+tok_24 = _signup_from_ip("shop24@example.com", "198.51.100.224", "shop-24")
+tok_24b = _signup_from_ip("shop24b@example.com", "198.51.100.225", "shop-24b")
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shop24@example.com"})
+client.post("/api/admin/accounts/approve", headers=H(owner_token),
+            json={"email": "shop24b@example.com"})
+H24, H24B = H(tok_24), H(tok_24b)
+
+prof24 = client.get("/api/business", headers=H24).get_json()["business"]
+check(
+    "build24: a new account's Business Description + signature start empty",
+    prof24.get("businessDescription") == ""
+    and prof24.get("hasSignature") is False
+    and prof24.get("signatureUrl") == "",
+    json.dumps(prof24),
+)
+r = client.get("/api/business/signature", headers=H24)
+check("build24: no signature yet -> signature endpoint 404",
+      r.status_code == 404)
+
+# The Edit Firm save: the popup's own fields, incl. the description.
+r = client.put("/api/business", headers=H24, json={
+    "name": "Firm24 Electronics", "owner_name": "Firm Owner",
+    "business_type": "Wholesale",
+    "business_category": "Electrical & Electronics Equipment",
+    "address": "ABC Center, Bunder Road", "city": "Larkana",
+    "pincode": "77150", "state": "Sindh", "phone": "03001112223",
+    "email": "firm24@example.com", "signature_text": "For Firm24",
+    "business_description": "We sell all types of electronics."})
+prof24 = (r.get_json() or {}).get("business", {})
+check(
+    "build24: Edit Firm save round-trips incl. Business Description",
+    r.status_code == 200
+    and prof24.get("businessDescription") == "We sell all types of electronics."
+    and prof24.get("signatureText") == "For Firm24",
+    json.dumps(prof24),
+)
+
+
+def _mk_inv24(tok):
+    p = client.post("/api/parties", headers=H(tok),
+                    json={"name": "Walk-in 24"}).get_json()["party"]["id"]
+    i = client.post("/api/items", headers=H(tok), json={
+        "name": "Thing 24", "sale_price_paisa": 10000,
+        "stock_qty": 5}).get_json()["item"]["id"]
+    v = client.post("/api/invoices", headers=H(tok), json={
+        "type": "sale", "party_id": p,
+        "lines": [{"item_id": i, "qty": 1, "rate_paisa": 10000}]})
+    return v.get_json()["invoice"]["id"]
+
+
+inv24 = _mk_inv24(tok_24)
+pdf24_before = client.get("/api/invoices/{}/pdf".format(inv24),
+                          headers=H24).get_data()
+check(
+    "build24: before any signature, the A4 bill carries NO image "
+    "(layout exactly as before)",
+    b"/Subtype /Image" not in pdf24_before
+    and b"Authorised Signatory" in pdf24_before,
+)
+
+# Signature image: the logo's rules (bad type / oversize refused).
+r = client.put("/api/business/signature", headers=H24, json={
+    "signature_data": "data:text/html;base64,"
+                      "PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="})
+check("build24: a non-image signature upload is refused (400)",
+      r.status_code == 400)
+import base64 as _b64_24
+_BIG24 = "data:image/png;base64," + _b64_24.b64encode(
+    b"\x89PNG" + b"\x00" * (401 * 1024)).decode()
+r = client.put("/api/business/signature", headers=H24,
+               json={"signature_data": _BIG24})
+check("build24: an oversize signature upload is refused (400)",
+      r.status_code == 400)
+r = client.put("/api/business/signature", headers=H24,
+               json={"signature_data": _LOGO_B})
+prof24 = (r.get_json() or {}).get("business", {})
+sig24 = client.get("/api/business/signature", headers=H24)
+check(
+    "build24: signature round-trip (flag set + own bytes back)",
+    r.status_code == 200 and prof24.get("hasSignature") is True
+    and sig24.status_code == 200
+    and sig24.get_data().startswith(b"\x89PNG"),
+)
+pdf24_after = client.get("/api/invoices/{}/pdf".format(inv24),
+                         headers=H24).get_data()
+check(
+    "build24: the signature image prints in the A4 bill's signature area",
+    b"/Subtype /Image" in pdf24_after
+    and b"Authorised Signatory" in pdf24_after
+    and b"Firm24 Electronics" in pdf24_after,
+)
+th24 = client.get("/api/invoices/{}/pdf?format=thermal".format(inv24),
+                  headers=H24).get_data()
+check(
+    "build24: the thermal bill has NO signature image (the thermal "
+    "layout has no signature area)",
+    b"/Subtype /Image" not in th24 and th24.startswith(b"%PDF"),
+)
+prof24b = client.get("/api/business", headers=H24B).get_json()["business"]
+r = client.get("/api/business/signature", headers=H24B)
+check(
+    "build24: account B sees NONE of A's signature or description",
+    prof24b.get("hasSignature") is False
+    and prof24b.get("businessDescription") == ""
+    and r.status_code == 404,
+)
+client.put("/api/business/signature", headers=H24,
+           json={"signature_data": None})
+prof24 = client.get("/api/business", headers=H24).get_json()["business"]
+pdf24_gone = client.get("/api/invoices/{}/pdf".format(inv24),
+                        headers=H24).get_data()
+check(
+    "build24: removing the signature restores the image-free bill",
+    prof24.get("hasSignature") is False
+    and b"/Subtype /Image" not in pdf24_gone,
+)
+
+# The Coming Soon card's save: ONLY the payment/tax fields — the
+# firm's own fields must survive untouched (partial-save contract).
+r = client.put("/api/business", headers=H24, json={
+    "ntn": "7654321-0", "strn": "02-7654321-001-90",
+    "raast_iban": "PK36FIRM0000000000000001",
+    "jazzcash_number": "03001112223", "easypaisa_number": "03451112223",
+    "payment_details": "Account Title: Firm24"})
+prof24 = (r.get_json() or {}).get("business", {})
+check(
+    "build24: payment/tax card save round-trips and leaves the firm's "
+    "own fields untouched",
+    r.status_code == 200 and prof24.get("ntn") == "7654321-0"
+    and prof24.get("raastIban") == "PK36FIRM0000000000000001"
+    and prof24.get("name") == "Firm24 Electronics"
+    and prof24.get("businessDescription") == "We sell all types of electronics.",
+    json.dumps(prof24),
+)
+# The Tax Note & Terms card's save behaves the same way.
+r = client.put("/api/business", headers=H24, json={
+    "tax_note": "Tax is charged as shown on the bill.",
+    "terms": "1. Goods once sold will not be taken back."})
+prof24 = (r.get_json() or {}).get("business", {})
+check(
+    "build24: Tax Note & Terms save round-trips, payment fields untouched",
+    r.status_code == 200
+    and prof24.get("taxNote") == "Tax is charged as shown on the bill."
+    and prof24.get("terms", "").startswith("1. Goods once sold")
+    and prof24.get("ntn") == "7654321-0",
+    json.dumps(prof24),
+)
+
+# ============ 12z. duplicate accounts for one email (build .27) =======
+# Owner's live-site report: in CUSTOMER ACCOUNTS the same Gmail showed
+# THREE times. The stored rows are case variants of one address —
+# lookups used to compare byte-for-byte, so every variant looked like
+# a stranger and collected its own row, its own Approve button and its
+# own login fate. One email must now show + count ONCE; signup must
+# never spawn a twin; OTP verify and classic login must land on the
+# PRIMARY row (the one the owner sees); approve/block act on the
+# email. The variants are seeded directly — today's API normalizes
+# input, so they can only arrive as legacy rows, exactly like the
+# owner's production data.
+from qbill_app.security import (  # noqa: E402
+    after_iso as _after_iso,
+    hash_password as _hash_pw,
+    now_iso as _now_iso,
+    token_hash as _token_hash,
+)
+
+
+def _seed_account(email, approved, password=None, reject=None,
+                  created="2026-11-12T00:00:00+00:00"):
+    salt = digest = None
+    if password:
+        salt, digest = _hash_pw(password)
+    return db.insert(
+        "INSERT INTO site_accounts (email, is_owner, approved, pw_salt, "
+        "pw_hash, signup_ip, last_ip, reject_reason, created_at) "
+        "VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        (email, approved, salt, digest, "198.51.100.99", "198.51.100.99",
+         reject, created),
+    )
+
+
+def _rows_of(email):
+    return db.query_all(
+        "SELECT * FROM site_accounts WHERE lower(trim(email)) = ? "
+        "ORDER BY id", (email,))
+
+
+DUP = "dupshop@example.com"
+dup_a = _seed_account("DupShop@Example.com", 1, password="dup42",
+                      created="2026-11-10T09:00:00+00:00")
+dup_b = _seed_account("dupshop@example.com", 0,
+                      created="2026-11-12T18:30:00+00:00")
+dup_c = _seed_account("dupshop@Example.com", 0, reject="ip_match",
+                      created="2026-11-12T18:31:00+00:00")
+r = client.get("/api/admin/accounts", headers=H(owner_token))
+payload27 = r.get_json() or {}
+accts27 = payload27.get("accounts", [])
+dup_entries = [a for a in accts27
+               if (a["email"] or "").strip().lower() == DUP]
+check(
+    "dup: owner list shows the triple-stored email ONCE, as its "
+    "primary (the approved, password-holding row)",
+    len(dup_entries) == 1
+    and dup_entries[0]["email"] == "DupShop@Example.com"
+    and dup_entries[0]["approved"] is True,
+    json.dumps(dup_entries),
+)
+check(
+    "dup: list totals count DISTINCT emails (total = entries shown; "
+    "pending = unapproved entries shown)",
+    payload27.get("total") == len(accts27)
+    and payload27.get("pending")
+    == sum(1 for a in accts27 if not a["approved"]),
+    json.dumps({k: payload27.get(k) for k in ("total", "pending")}),
+)
+r = client.post("/api/auth/login", json={
+    "email": "DUPSHOP@example.com", "password": "dup42", "remember": True})
+dup_token = (r.get_json() or {}).get("token")
+me_dup = (client.get("/api/auth/me", headers=H(dup_token)).get_json()
+          if dup_token else {})
+check(
+    "dup: email+password login (any case) lands on the PRIMARY row — "
+    "the approved account the owner sees in his list",
+    r.status_code == 200 and bool(dup_token)
+    and me_dup.get("email") == "DupShop@Example.com"
+    and me_dup.get("approved") is True,
+    json.dumps(me_dup),
+)
+before27 = len(_rows_of(DUP))
+r = client.post("/api/auth/request-otp",
+                json={"email": "DupShop@EXAMPLE.com"})
+code_dup = latest_code(DUP)
+check(
+    "dup: 'create account' for an existing email spawns NO new row "
+    "(group still 3) and is not flagged as a new account",
+    r.status_code == 200 and r.get_json().get("isNewAccount") is False
+    and before27 == 3 and len(_rows_of(DUP)) == 3,
+    r.get_data(as_text=True)[:200],
+)
+r = client.post("/api/auth/verify-otp",
+                json={"email": DUP, "code": code_dup})
+dup_otp_token = (r.get_json() or {}).get("token")
+me_dup2 = (client.get("/api/auth/me", headers=H(dup_otp_token)).get_json()
+           if dup_otp_token else {})
+check(
+    "dup: OTP verify attaches the session to the SAME primary row",
+    bool(dup_otp_token)
+    and (r.get_json() or {}).get("hasAppPassword") is True
+    and me_dup2.get("email") == "DupShop@Example.com"
+    and me_dup2.get("approved") is True,
+    json.dumps(me_dup2),
+)
+PEND = "pendshop@example.com"
+pend_a = _seed_account("PendShop@Example.com", 0,
+                       created="2026-11-11T09:00:00+00:00")
+pend_b = _seed_account("pendshop@example.com", 0, password="pend42",
+                       created="2026-11-12T09:00:00+00:00")
+r = client.post("/api/admin/accounts/approve", headers=H(owner_token),
+                json={"email": "PENDSHOP@EXAMPLE.COM"})
+rows_pend = {row["id"]: row for row in _rows_of(PEND)}
+r2 = client.get("/api/admin/accounts", headers=H(owner_token))
+pend_entries = [a for a in (r2.get_json() or {}).get("accounts", [])
+                if (a["email"] or "").strip().lower() == PEND]
+check(
+    "dup: approving an email approves its PRIMARY (password) row; the "
+    "list still shows the email once, now Active — no pending twin",
+    r.status_code == 200
+    and rows_pend[pend_b]["approved"] == 1
+    and len(pend_entries) == 1 and pend_entries[0]["approved"] is True
+    and pend_entries[0]["email"] == "pendshop@example.com",
+    json.dumps(pend_entries),
+)
+db.run(
+    "INSERT INTO sessions (token_hash, account_id, unlocked, otp_fresh, "
+    "expires_at, created_at) VALUES (?, ?, 1, 0, ?, ?)",
+    (_token_hash("dup-stray-session"), dup_b, _after_iso(days=1),
+     _now_iso()),
+)
+r = client.post("/api/admin/accounts/block", headers=H(owner_token),
+                json={"email": "DupShop@Example.com"})
+rows_dup = _rows_of(DUP)
+sess_left = db.query_all(
+    "SELECT id FROM sessions WHERE account_id IN (?, ?, ?)",
+    (dup_a, dup_b, dup_c))
+me_stray = client.get("/api/auth/me", headers=H("dup-stray-session"))
+me_primary = client.get("/api/auth/me", headers=H(dup_otp_token))
+check(
+    "dup: blocking an email un-approves EVERY row of it and kills "
+    "every session (primary + stray variants alike)",
+    r.status_code == 200
+    and all(row["approved"] == 0 for row in rows_dup)
+    and len(sess_left) == 0
+    and me_stray.status_code == 401 and me_primary.status_code == 401,
 )
 
 # ---------------------------------------------------------- 13. logout --

@@ -11,10 +11,9 @@
 </head>
 <body>
 <header class="topbar">
-  <button id="btnMenu" class="btn btn-menu" type="button" aria-label="Open menu">☰</button>
-  <img class="brand-mark top-mark" src="/static/icons/icon-192.png" alt="">
+  <button id="btnMenu" class="btn btn-menu" type="button" aria-label="Toggle menu" aria-expanded="false">☰</button>
+  <img class="brand-mark top-mark" id="headMark" src="/static/icons/icon-192.png" alt="">
   <div class="head-brand" id="headBrand" title="Business Profile — click to edit your business details">
-    <img id="headBizLogo" class="head-biz-logo hidden" alt="">
     <span id="headBizName">QRLedger</span>
   </div>
   <div class="view-title hidden" id="viewTitle">Home</div>
@@ -59,7 +58,7 @@
 <div class="shell">
   <!-- Sidebar (wide screens): brand, main navigation, sync status. -->
   <aside class="sidebar" id="sidebar">
-    <div class="side-brand" id="sideBrand" title="Business Profile — click to edit your business details"><img class="brand-mark" src="/static/icons/icon-192.png" alt=""><img id="sideBizLogo" class="side-biz-logo hidden" alt=""><div class="side-biz"><span id="sideBizName">QRLedger</span><span class="side-email" id="sideBizEmail"></span></div></div>
+    <div class="side-brand" id="sideBrand" title="Business Profile — click to edit your business details"><img class="brand-mark" id="sideMark" src="/static/icons/icon-192.png" alt=""><div class="side-biz"><span id="sideBizName">QRLedger</span><span class="side-email" id="sideBizEmail"></span></div></div>
     <nav class="sidenav" aria-label="Main">
       <button data-nav="dashboard" class="navbtn active" type="button">Home</button>
       <button data-nav="parties" class="navbtn" type="button">Parties</button>
@@ -119,6 +118,8 @@
     <div class="side-foot"><div id="syncPillSide" class="pill pill-on">Online · Auto-sync ON</div></div>
   </aside>
   <div id="sideScrim" class="side-scrim hidden"></div>
+  <!-- Build .28: invisible left-edge hot-zone (desktop hover opens the menu). -->
+  <div id="navHotZone" class="nav-hotzone" aria-hidden="true"></div>
 
 <main>
   <!-- ======================= APP ======================= -->
@@ -1548,55 +1549,13 @@
         <button class="set-cat hidden" data-setcat="email" id="setCatEmail" type="button">EMAIL DELIVERY</button>
         <button class="set-cat hidden" data-setcat="accounts" id="setCatAccounts" type="button">CUSTOMER ACCOUNTS</button>
       </div>
-      <form id="profileForm" class="card form-card" data-setcard="general">
-        <h2>Business Profile</h2>
-        <p class="note">Your own business details. They appear in the sidebar, the header, on your bill PDFs and on your Online Store page — and only on YOUR account.</p>
-        <div class="logo-row">
-          <img id="profLogoPreview" class="prof-logo hidden" alt="Business logo">
-          <div id="profLogoEmpty" class="prof-logo-empty">No logo set</div>
-          <div class="logo-actions">
-            <label class="btn" for="profLogoFile">Upload Logo</label>
-            <input id="profLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
-            <button class="btn btn-link hidden" id="btnLogoRemove" type="button">Remove logo</button>
-            <p class="note" id="logoMsg">PNG, JPG, WebP or GIF, up to 400 KB. Logo upload needs an internet connection.</p>
-          </div>
-        </div>
-        <label>Business Name <input id="profName" type="text" required></label>
-        <label>Owner Name <input id="profOwner" type="text" placeholder="Your full name"></label>
-        <div class="grid2">
-          <label>Business Type <input id="profBizType" type="text" placeholder="e.g. Retail, Wholesale, Services"></label>
-          <label>Business Category <input id="profBizCategory" type="text" placeholder="e.g. Electronics &amp; Solar"></label>
-        </div>
-        <label>Address <textarea id="profAddress" rows="3" placeholder="Shop / office address, one line per line"></textarea></label>
-        <div class="grid2">
-          <label>City / Location <input id="profCity" type="text" placeholder="e.g. Larkana"></label>
-          <label>Pincode <input id="profPincode" type="text"></label>
-          <label>State / Province <input id="profState" type="text" placeholder="e.g. Sindh"></label>
-          <label>Phone / WhatsApp <input id="profPhone" type="text"></label>
-          <label>Email <input id="profEmail" type="email"></label>
-        </div>
-        <label>Signature Text <input id="profSignature" type="text" placeholder="Printed above Authorised Signatory on bills"></label>
-        <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
-        <div class="grid2">
-          <label>NTN <input id="profNtn" type="text" placeholder="Printed on bills when filled"></label>
-          <label>STRN <input id="profStrn" type="text" placeholder="Printed on bills when filled"></label>
-        </div>
-        <h3>Payment details (printed on bills)</h3>
-        <p class="note">Your own Raast, JazzCash and Easypaisa details print in a "Pay To:" block on bill PDFs and thermal bills, so customers can pay you directly. Leave them empty and nothing prints.</p>
-        <label>Raast IBAN <input id="profRaastIban" type="text" placeholder="Your bank IBAN for Raast payments"></label>
-        <div class="grid2">
-          <label>JazzCash Number <input id="profJazzcash" type="text"></label>
-          <label>Easypaisa Number <input id="profEasypaisa" type="text"></label>
-        </div>
-        <label>Payment Details (anything else, one line per line)
-          <textarea id="profPaymentDetails" rows="3" placeholder="e.g. account title, branch, or payment instructions"></textarea>
-        </label>
-        <label>Terms &amp; Conditions (one per line)
-          <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
-        </label>
-        <p class="note">Tax Note and Terms &amp; Conditions print on every bill PDF. Leave empty to use the standard wording.</p>
-        <button class="btn btn-primary" type="submit">Save profile</button>
-      </form>
+      <!-- All tab cards live in ONE column container. They must not be
+           direct grid items of #screen-settings: grid auto-placement
+           dealt them alternately into the rail column, so every tab's
+           second card fell to a new row under the (tall) first card —
+           a long void under the rail with the card hanging at the
+           bottom of the page (owner report, build .23 fix). -->
+      <div class="settings-main">
 
       <div class="card form-card" data-setcard="general">
         <h2>General settings</h2>
@@ -1617,6 +1576,48 @@
         <label class="check-row"><input type="checkbox" data-setting="audit_trail"> <span>Audit Trail (Edit History on transactions)</span></label>
         <p class="note">Auto Backup: <strong id="generalAutoBackup">ON</strong> — change it in BACKUPS.</p>
       </div>
+
+      <!-- Build .24 (owner's placement call, 2026-11-13): the tax IDs
+           and payment rails did NOT move into the Edit Firm popup —
+           they stay here in Settings > GENERAL, in their own card
+           under a Coming Soon banner. The fields are live today:
+           they save to the same business profile and print on bills
+           exactly as they always have. -->
+      <form id="payTaxForm" class="card form-card" data-setcard="general">
+        <div class="coming-soon-banner">Coming Soon</div>
+        <h2>Payment &amp; Tax Details</h2>
+        <div class="grid2">
+          <label>NTN <input id="profNtn" type="text" placeholder="Printed on bills when filled"></label>
+          <label>STRN <input id="profStrn" type="text" placeholder="Printed on bills when filled"></label>
+        </div>
+        <h3>Payment details (printed on bills)</h3>
+        <p class="note">Your own Raast, JazzCash and Easypaisa details print in a "Pay To:" block on bill PDFs and thermal bills, so customers can pay you directly. Leave them empty and nothing prints.</p>
+        <label>Raast IBAN <input id="profRaastIban" type="text" placeholder="Your bank IBAN for Raast payments"></label>
+        <div class="grid2">
+          <label>JazzCash Number <input id="profJazzcash" type="text"></label>
+          <label>Easypaisa Number <input id="profEasypaisa" type="text"></label>
+        </div>
+        <label>Payment Details (anything else, one line per line)
+          <textarea id="profPaymentDetails" rows="3" placeholder="e.g. account title, branch, or payment instructions"></textarea>
+        </label>
+        <p class="msg" id="payTaxMsg"></p>
+        <button class="btn btn-primary" type="submit">Save payment &amp; tax details</button>
+      </form>
+
+      <!-- Build .24 (owner's placement call, 2026-11-13): Tax Note and
+           Terms & Conditions also stay in Settings > GENERAL — in
+           their own card, WITHOUT the Coming Soon banner. Same
+           profile fields, same save endpoint. -->
+      <form id="taxTermsForm" class="card form-card" data-setcard="general">
+        <h2>Tax Note &amp; Terms</h2>
+        <label>Tax Note <input id="profTaxNote" type="text" placeholder="e.g. Tax is charged as shown on the bill."></label>
+        <label>Terms &amp; Conditions (one per line)
+          <textarea id="profTerms" rows="5" placeholder="1. Goods once sold will not be taken back or exchanged."></textarea>
+        </label>
+        <p class="note">Tax Note and Terms &amp; Conditions print on every bill PDF. Leave empty to use the standard wording.</p>
+        <p class="msg" id="taxTermsMsg"></p>
+        <button class="btn btn-primary" type="submit">Save tax note &amp; terms</button>
+      </form>
 
       <div class="card form-card hidden" data-setcard="transaction">
         <h2>Transaction options</h2>
@@ -1833,12 +1834,86 @@
         <p id="accountsMsg" class="msg"></p>
         <div id="accountList" class="list"></div>
       </div>
+      </div>
     </section>
   </div>
 </main>
 </div><!-- /.shell -->
 
 <!-- ============ GENERIC DIALOG (Item Table Customization, posters…) ============ -->
+<!-- ============ EDIT FIRM (Business Profile popup, build .24) ============
+     The Business Profile lives HERE now, not in Settings: clicking the
+     sidebar business card or the header business name opens this popup,
+     laid out like the owner's Vyapar "Edit Firm" dialog — logo on the
+     left (click to change), Business Name / Phone / Email on the right,
+     a "More options" expander with Address / Pincode / Business
+     Description on the left and Business Type / Business Category /
+     signature IMAGE on the right, and the remaining profile fields
+     grouped below. Stayed behind in Settings > GENERAL (owner's
+     call): the tax IDs + payment rails under a Coming Soon banner,
+     and the Tax Note + Terms & Conditions in their own plain card. -->
+<div id="editFirmModal" class="modal hidden">
+  <div class="modal-box edit-firm-box">
+    <button class="modal-x" id="efCloseX" type="button" aria-label="Close">✕</button>
+    <form id="profileForm">
+      <h2 style="margin-top:0">Edit Firm</h2>
+      <p class="note">Your own business details. They appear in the sidebar, the header, on your bill PDFs and on your Online Store page — and only on YOUR account.</p>
+      <div class="ef-top">
+        <div class="ef-logo">
+          <img id="profLogoPreview" class="prof-logo hidden" alt="Business logo">
+          <div id="profLogoEmpty" class="prof-logo-empty">No logo set</div>
+          <div class="logo-actions">
+            <label class="btn" for="profLogoFile">Upload Logo</label>
+            <input id="profLogoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+            <button class="btn btn-link hidden" id="btnLogoRemove" type="button">Remove logo</button>
+            <p class="note" id="logoMsg">PNG, JPG, WebP or GIF, up to 400 KB. Logo upload needs an internet connection.</p>
+          </div>
+        </div>
+        <div class="ef-main-fields">
+          <label>Business Name <input id="profName" type="text" required></label>
+          <label>Phone / WhatsApp <input id="profPhone" type="text"></label>
+          <label>Email <input id="profEmail" type="email"></label>
+        </div>
+      </div>
+      <button id="btnEfMore" class="btn btn-outline doc-collapse-toggle" type="button" aria-expanded="false" aria-controls="efMoreBody"><span>More options</span><span class="dc-caret">▾</span></button>
+      <div id="efMoreBody" class="hidden">
+        <div class="ef-cols">
+          <div class="ef-col">
+            <label>Business Address <textarea id="profAddress" rows="3" placeholder="Shop / office address, one line per line"></textarea></label>
+            <label>Pincode <input id="profPincode" type="text"></label>
+            <label>Business Description <textarea id="profDescription" rows="3" placeholder="e.g. We sell all types of electronics"></textarea></label>
+          </div>
+          <div class="ef-col">
+            <label>Business Type <input id="profBizType" type="text" placeholder="e.g. Retail, Wholesale, Services"></label>
+            <label>Business Category <input id="profBizCategory" type="text" placeholder="e.g. Electronics &amp; Solar"></label>
+            <span class="ef-sig-label">Signature Image</span>
+            <img id="profSigPreview" class="ef-sig-img hidden" alt="Signature">
+            <div id="profSigEmpty" class="ef-sig-empty">No signature image</div>
+            <div class="logo-actions">
+              <label class="btn" for="profSigFile">Upload Signature</label>
+              <input id="profSigFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
+              <button class="btn btn-link hidden" id="btnSigRemove" type="button">Remove signature</button>
+              <p class="note" id="sigMsg">PNG, JPG, WebP or GIF, up to 400 KB. Prints in the signature area of your A4 bill PDFs.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <h3>Business details</h3>
+      <label>Owner Name <input id="profOwner" type="text" placeholder="Your full name"></label>
+      <div class="grid2">
+        <label>City / Location <input id="profCity" type="text" placeholder="e.g. Larkana"></label>
+        <label>State / Province <input id="profState" type="text" placeholder="e.g. Sindh"></label>
+      </div>
+      <label>Signature Text <input id="profSignature" type="text" placeholder="Printed above Authorised Signatory on bills"></label>
+      <p class="msg" id="efMsg"></p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <button class="btn" id="efClose" type="button">Close</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="dlgModal" class="modal hidden" style="z-index:120">
   <div class="modal-box card" style="max-width:520px">
     <div class="book-head">

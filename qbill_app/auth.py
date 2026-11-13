@@ -173,6 +173,53 @@ def _clean_email(raw):
     return email
 
 
+# ------------------------------------------------- duplicate accounts ----
+# Build .27 (owner's check of the live site): in Settings -> CUSTOMER
+# ACCOUNTS the SAME email showed up three times. Root cause: every
+# account lookup compared the email byte-for-byte, so a row stored in
+# a non-normalized form (a case variant, e.g. "RanaShop@gmail.com"
+# sitting next to "ranashop@gmail.com") was invisible to request-otp's
+# existence check, to the duplicate-IP check and to login — a later
+# signup for that email inserted ANOTHER row, and the owner list then
+# rendered every row as its own account. (The DDL's UNIQUE(email)
+# never prevented it: CREATE TABLE IF NOT EXISTS does not retrofit the
+# constraint onto the table the launch build created, and the
+# constraint is case-sensitive on both dialects anyway.)
+# The fix is application-level grouping by the NORMALIZED email: one
+# email = one account everywhere — the creation guard, OTP verify,
+# classic login, the owner list, its counts and approve/block all
+# resolve an email to its rows and act on the primary one. No rows are
+# ever deleted and no business data moves.
+
+def account_rows_for_email(email, tx=None):
+    """Every account row belonging to this (already normalized) email,
+    including stored case/whitespace variants, oldest first."""
+    sql = (
+        "SELECT * FROM site_accounts WHERE lower(trim(email)) = ? "
+        "ORDER BY id"
+    )
+    if tx is not None:
+        return tx.query_all(sql, (email,))
+    return db.query_all(sql, (email,))
+
+
+def primary_account(rows):
+    """The one row that represents an email everywhere: the owner's
+    own row first, then an approved row, then a row that has a
+    password (the usable account), then the earliest created."""
+    if not rows:
+        return None
+    return sorted(
+        rows,
+        key=lambda r: (
+            0 if r["is_owner"] else 1,
+            0 if r["approved"] else 1,
+            0 if r["pw_hash"] else 1,
+            r["id"],
+        ),
+    )[0]
+
+
 def client_ip():
     """The client IP as the owner should see it: behind Render's proxy
     the real address is the FIRST entry of X-Forwarded-For; direct
@@ -282,10 +329,11 @@ def request_otp():
     code = new_otp_code()
     digest = code_hash(cfg.secret_key, email, code)
     with db.transaction() as tx:
-        account = tx.query_one(
-            "SELECT id FROM site_accounts WHERE email = ?", (email,)
-        )
-        is_new = account is None
+        # Build .27: the existence check matches the email as a
+        # normalized GROUP (stored case variants included) — an email
+        # that already has an account reuses it and never spawns a
+        # twin row.
+        is_new = not account_rows_for_email(email, tx)
         if is_new:
             # The account row is born here (request-otp is the signup
             # door). New accounts start UNAPPROVED — they may not use
@@ -306,7 +354,7 @@ def request_otp():
             if not is_owner_email and ip:
                 clash = tx.query_one(
                     "SELECT id FROM site_accounts "
-                    "WHERE signup_ip = ? AND email != ? LIMIT 1",
+                    "WHERE signup_ip = ? AND lower(trim(email)) != ? LIMIT 1",
                     (ip, email),
                 )
                 if clash is not None:
@@ -382,9 +430,9 @@ def verify_otp():
     token = new_session_token()
     with db.transaction() as tx:
         tx.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (active["id"],))
-        account = tx.query_one(
-            "SELECT * FROM site_accounts WHERE email = ?", (email,)
-        )
+        # Build .27: the session attaches to the email's PRIMARY row —
+        # the same account the owner sees (and approves) in his list.
+        account = primary_account(account_rows_for_email(email, tx))
         ip = client_ip()
         tx.execute(
             "UPDATE site_accounts SET last_ip = ? WHERE id = ?",
@@ -429,9 +477,9 @@ def login():
     email = _clean_email(data.get("email"))
     password = str(data.get("password") or "")
     remember = bool(data.get("remember"))
-    account = db.query_one(
-        "SELECT * FROM site_accounts WHERE email = ?", (email,)
-    )
+    # Build .27: login resolves the email's PRIMARY row (the approved,
+    # password-holding account), exactly like the owner's list.
+    account = primary_account(account_rows_for_email(email))
     if account is None:
         return jsonify(ok=False, error="Email or password is wrong."), 401
     if account["pw_hash"] is None:

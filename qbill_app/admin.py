@@ -18,7 +18,12 @@ import logging
 from flask import Blueprint, current_app, jsonify, request
 
 from . import db, mailer
-from .auth import require_owner, require_session
+from .auth import (
+    account_rows_for_email,
+    primary_account,
+    require_owner,
+    require_session,
+)
 from .heavy import heavy_endpoint
 from .security import ApiError, now_iso
 
@@ -100,10 +105,19 @@ def mail_test():
 
 
 # ------------------------------------------------------- customer list ----
-def _find_account(email):
-    return db.query_one(
-        "SELECT id, email FROM site_accounts WHERE email = ?", (email,)
-    )
+# Build .27 (owner's live-site report): the same email could appear
+# several times here — one stored row per case variant (see the
+# duplicate-accounts note in auth.py). The list now groups rows by
+# their normalized email and shows ONE entry per email — the primary
+# row (auth.primary_account) with its real status and IPs. The totals
+# count DISTINCT emails, approve approves the email's primary row, and
+# block un-approves + signs out EVERY row of the email, so no leftover
+# variant can slip back in as a second account.
+
+def _rows_and_primary(email):
+    """(rows, primary) for a normalized email; ([], None) if unknown."""
+    rows = account_rows_for_email(email)
+    return rows, primary_account(rows)
 
 
 def _account_email_from_body():
@@ -116,15 +130,18 @@ def _account_email_from_body():
 @require_owner
 def list_accounts():
     rows = db.query_all(
-        "SELECT a.id, a.email, a.is_owner, a.approved, a.reject_reason, "
-        "a.created_at, a.signup_ip, a.last_ip, "
+        "SELECT a.*, "
         "(SELECT MAX(l.created_at) FROM access_log l "
         " WHERE l.account_id = a.id AND l.event = 'login') AS last_login_at "
         "FROM site_accounts a ORDER BY a.id"
     )
-    return jsonify(
-        ok=True,
-        accounts=[
+    groups = {}
+    for r in rows:
+        groups.setdefault((r["email"] or "").strip().lower(), []).append(r)
+    accounts = []
+    for key in groups:
+        r = primary_account(groups[key])
+        accounts.append(
             {
                 "email": r["email"],
                 "approved": bool(r["approved"]),
@@ -135,8 +152,12 @@ def list_accounts():
                 "lastIp": r["last_ip"],
                 "lastLoginAt": r["last_login_at"],
             }
-            for r in rows
-        ],
+        )
+    return jsonify(
+        ok=True,
+        accounts=accounts,
+        total=len(accounts),
+        pending=sum(1 for a in accounts if not a["approved"]),
     )
 
 
@@ -145,11 +166,13 @@ def list_accounts():
 @require_owner
 def approve_account():
     email = _account_email_from_body()
-    account = _find_account(email)
+    _rows, account = _rows_and_primary(email)
     if account is None:
         return jsonify(ok=False, error="No account with that email."), 404
     # Approving is also the owner's override for an auto-rejected
-    # (duplicate-IP) signup: the reject mark is cleared.
+    # (duplicate-IP) signup: the reject mark is cleared. Only the
+    # primary row needs approving — the list shows the email once, so
+    # no leftover variant can surface as a second pending account.
     db.run(
         "UPDATE site_accounts SET approved = 1, reject_reason = NULL "
         "WHERE id = ?",
@@ -168,18 +191,20 @@ def block_account():
             jsonify(ok=False, error="The owner's account cannot be blocked."),
             400,
         )
-    account = _find_account(email)
+    rows, account = _rows_and_primary(email)
     if account is None:
         return jsonify(ok=False, error="No account with that email."), 404
     with db.transaction() as tx:
-        tx.execute(
-            "UPDATE site_accounts SET approved = 0 WHERE id = ?",
-            (account["id"],),
-        )
-        # Blocking signs the account out everywhere, immediately.
-        tx.execute(
-            "DELETE FROM sessions WHERE account_id = ?", (account["id"],)
-        )
+        # Blocking is email-wide: EVERY stored row of this email is
+        # un-approved and signed out, immediately and everywhere.
+        for row in rows:
+            tx.execute(
+                "UPDATE site_accounts SET approved = 0 WHERE id = ?",
+                (row["id"],),
+            )
+            tx.execute(
+                "DELETE FROM sessions WHERE account_id = ?", (row["id"],)
+            )
     return jsonify(ok=True, message="Account blocked: {}".format(email))
 
 

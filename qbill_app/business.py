@@ -348,6 +348,16 @@ def _profile_dict(row):
         "jazzcashNumber": row.get("jazzcash_number") or "",
         "easypaisaNumber": row.get("easypaisa_number") or "",
         "paymentDetails": row.get("payment_details") or "",
+        # Build .24 (Edit Firm): the Business Description text, and
+        # the signature image flag — the image itself is served from
+        # /api/business/signature, exactly like the logo below, so the
+        # (possibly large) base64 never rides along with every
+        # profile fetch.
+        "businessDescription": row.get("business_description") or "",
+        "hasSignature": bool(row.get("signature_data")),
+        "signatureUrl": (
+            "/api/business/signature" if row.get("signature_data") else ""
+        ),
         # The logo image itself is served from /api/business/logo; the
         # profile only carries the flag + URL so the (possibly large)
         # base64 never rides along with every profile fetch.
@@ -382,6 +392,7 @@ def update_business():
             "UPDATE businesses SET name = ?, owner_name = ?, address = ?, "
             "city = ?, phone = ?, email = ?, "
             "tax_note = ?, terms = ?, business_type = ?, business_category = ?, "
+            "business_description = ?, "
             "pincode = ?, state = ?, signature_text = ?, "
             "ntn = ?, strn = ?, raast_iban = ?, jazzcash_number = ?, "
             "easypaisa_number = ?, payment_details = ? WHERE id = ?",
@@ -396,6 +407,7 @@ def update_business():
                 str(data.get("terms", row.get("terms") or "") or "").strip() or None,
                 str(data.get("business_type", row.get("business_type") or "") or "").strip(),
                 str(data.get("business_category", row.get("business_category") or "") or "").strip(),
+                str(data.get("business_description", row.get("business_description") or "") or "").strip(),
                 str(data.get("pincode", row.get("pincode") or "") or "").strip(),
                 str(data.get("state", row.get("state") or "") or "").strip(),
                 str(data.get("signature_text", row.get("signature_text") or "") or "").strip(),
@@ -412,21 +424,66 @@ def update_business():
     return jsonify(ok=True, business=_profile_dict(row))
 
 
-# ------------------------------------------------------- business logo --
+# --------------------------------------------- business profile images --
+# The logo and (build .24) the signature image share ONE storage and
+# validation path: a data URL in JSON, PNG/JPG/WebP/GIF, up to 400 KB,
+# stored as base64 on the business row itself — per account, never
+# shared. The wording of every error is the logo's original wording
+# with the image's own name in it.
 LOGO_MIMES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 LOGO_MAX_BYTES = 400 * 1024
 
 
-def _logo_response(row):
-    if not row or not row.get("logo_data"):
-        raise ApiError("No logo is set for this business.", status=404)
+def _image_response(row, data_key, mime_key, missing_msg, damaged_msg):
+    if not row or not row.get(data_key):
+        raise ApiError(missing_msg, status=404)
     try:
-        raw = base64.b64decode(row["logo_data"], validate=True)
+        raw = base64.b64decode(row[data_key], validate=True)
     except (binascii.Error, ValueError):
-        raise ApiError("The stored logo is damaged.", status=500)
-    resp = Response(raw, mimetype=row.get("logo_mime") or "image/png")
+        raise ApiError(damaged_msg, status=500)
+    resp = Response(raw, mimetype=row.get(mime_key) or "image/png")
     resp.headers["Cache-Control"] = "private, max-age=300"
     return resp
+
+
+def _store_image(tx, biz, value, data_key, mime_key, label, lower_label):
+    """Store (or, for None/"", remove) one profile image on the
+    business row, validating exactly as the logo always has."""
+    if value is None or value == "":
+        tx.execute(
+            "UPDATE businesses SET {} = '', {} = NULL WHERE id = ?".format(
+                mime_key, data_key),
+            (biz,),
+        )
+        return
+    if not isinstance(value, str) or not value.startswith("data:"):
+        raise ApiError(
+            "{} must be an image file (PNG, JPG, WebP or GIF).".format(label))
+    header, _, payload = value.partition(",")
+    mime = header[5:].split(";")[0].strip().lower()
+    if mime not in LOGO_MIMES or ";base64" not in header:
+        raise ApiError(
+            "{} must be a PNG, JPG, WebP or GIF image.".format(label))
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError("The {} image could not be read.".format(lower_label))
+    if not raw:
+        raise ApiError("The {} image is empty.".format(lower_label))
+    if len(raw) > LOGO_MAX_BYTES:
+        raise ApiError(
+            "{} is too large — please use an image under 400 KB.".format(label))
+    tx.execute(
+        "UPDATE businesses SET {} = ?, {} = ? WHERE id = ?".format(
+            mime_key, data_key),
+        (mime, payload, biz),
+    )
+
+
+def _logo_response(row):
+    return _image_response(
+        row, "logo_data", "logo_mime",
+        "No logo is set for this business.", "The stored logo is damaged.")
 
 
 @bp.get("/business/logo")
@@ -448,33 +505,42 @@ def set_business_logo():
     sent as a data URL in JSON so it rides the normal API; it is
     stored on the business row itself — per account, never shared."""
     data = _body()
-    logo = data.get("logo_data")
     with db.transaction() as tx:
         biz = _business_id(tx)
-        if logo is None or logo == "":
-            tx.execute(
-                "UPDATE businesses SET logo_mime = '', logo_data = NULL WHERE id = ?",
-                (biz,),
-            )
-        else:
-            if not isinstance(logo, str) or not logo.startswith("data:"):
-                raise ApiError("Logo must be an image file (PNG, JPG, WebP or GIF).")
-            header, _, payload = logo.partition(",")
-            mime = header[5:].split(";")[0].strip().lower()
-            if mime not in LOGO_MIMES or ";base64" not in header:
-                raise ApiError("Logo must be a PNG, JPG, WebP or GIF image.")
-            try:
-                raw = base64.b64decode(payload, validate=True)
-            except (binascii.Error, ValueError):
-                raise ApiError("The logo image could not be read.")
-            if not raw:
-                raise ApiError("The logo image is empty.")
-            if len(raw) > LOGO_MAX_BYTES:
-                raise ApiError("Logo is too large — please use an image under 400 KB.")
-            tx.execute(
-                "UPDATE businesses SET logo_mime = ?, logo_data = ? WHERE id = ?",
-                (mime, payload, biz),
-            )
+        _store_image(tx, biz, data.get("logo_data"),
+                     "logo_data", "logo_mime", "Logo", "logo")
+        row = _business_row(tx, biz)
+    return jsonify(ok=True, business=_profile_dict(row))
+
+
+@bp.get("/business/signature")
+@require_session
+@require_approved
+@require_unlocked
+def get_business_signature():
+    with db.transaction() as tx:
+        row = _business_row(tx, _business_id(tx))
+    return _image_response(
+        row, "signature_data", "signature_mime",
+        "No signature image is set for this business.",
+        "The stored signature image is damaged.")
+
+
+@bp.put("/business/signature")
+@require_session
+@require_approved
+@require_unlocked
+def set_business_signature():
+    """Upload (or remove) THIS account's signature image — the same
+    rules and storage as the logo (build .24, Edit Firm > More
+    options). It prints in the signature area of this account's A4
+    bill PDFs; thermal bills have no signature area and never show it."""
+    data = _body()
+    with db.transaction() as tx:
+        biz = _business_id(tx)
+        _store_image(tx, biz, data.get("signature_data"),
+                     "signature_data", "signature_mime",
+                     "Signature", "signature")
         row = _business_row(tx, biz)
     return jsonify(ok=True, business=_profile_dict(row))
 

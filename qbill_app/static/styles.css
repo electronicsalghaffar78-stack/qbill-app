@@ -78,7 +78,7 @@ label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; 
   background: #fff; border-bottom: 1px solid var(--line);
   padding: 8px 16px; min-height: 56px;
 }
-.brand-mark { width: 34px; height: 34px; border-radius: 8px; flex: none; }
+.brand-mark { width: 34px; height: 34px; border-radius: 8px; flex: none; object-fit: cover; }
 .head-brand { font-weight: 700; font-size: 16px; color: var(--navy); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .head-search { flex: 1; max-width: 420px; margin: 0 auto; }
 .head-search input { background: #f2f4f7; border-color: transparent; border-radius: 20px; padding: 8px 16px; margin-top: 0; }
@@ -116,7 +116,14 @@ label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; 
 .shell { display: flex; align-items: stretch; }
 main { flex: 1; min-width: 0; width: 100%; max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; }
 .sidebar {
-  width: 248px; flex: none; background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
+  width: 248px; flex: none;
+  /* Builds .26/.28 (owner): the menu wears a transparent navy — the
+     solid gradient stays as fallback, then the same navy at ~0.85
+     alpha (build .28 made it a bit MORE transparent than .26's ~0.9,
+     on the owner's word) so the page glows through. The menu text
+     and icons are NOT transparent; they stay fully crisp. */
+  background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
+  background: linear-gradient(180deg, rgba(13, 47, 79, .84) 0%, rgba(10, 37, 64, .86) 100%);
   color: #dbe6f2; display: flex; flex-direction: column;
   position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto;
 }
@@ -149,7 +156,40 @@ main { flex: 1; min-width: 0; width: 100%; max-width: 1180px; margin: 0 auto; pa
 .nav-group-head.has-active { color: #fff; box-shadow: inset 4px 0 0 var(--orange); }
 .nav-group-head.has-active .chev { color: var(--orange); }
 .side-foot { padding: 12px 16px 16px; border-top: 1px solid rgba(255,255,255,.12); }
-.side-scrim { position: fixed; inset: 0; background: rgba(10, 25, 47, .45); z-index: 45; }
+.side-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); z-index: 45; }
+/* Build .26: while the mobile drawer is open the page behind it must
+   not scroll. */
+body.no-scroll { overflow: hidden; }
+/* Build .28 (owner): on desktop the main menu is NEVER docked open —
+   it is a hidden-by-default OVERLAY. Sliding the mouse to the left
+   window edge (the invisible hot-zone below) slides it in over the
+   page; sliding away closes it by itself (app.js runs the timers).
+   The ☰ button still toggles it by hand. It takes no layout space:
+   the page always has the full width. (This replaces build .26's
+   localStorage-persisted docked collapse.) */
+@media (min-width: 901px) {
+  .sidebar {
+    position: fixed; left: 0; top: 57px; bottom: 0; height: calc(100vh - 57px);
+    z-index: 50; transform: translateX(-105%); transition: transform .2s ease;
+    pointer-events: none;
+    /* Frosted like the phone drawer: at the more transparent .28
+       alpha the soft blur keeps every label crisp over a busy page. */
+    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+  }
+  .sidebar.open {
+    transform: translateX(0); pointer-events: auto;
+    box-shadow: 0 0 40px rgba(0, 0, 0, .35);
+  }
+}
+/* Build .28: the invisible left-edge hot-zone — a 16px full-height
+   strip whose only job is hover detection, so it sits just above the
+   page (z-index 44) and below the open menu (50). It carries no
+   clicks of its own beyond that strip. Hover-capable desktops only:
+   no strip on phone shells or touch-only pointers (the JS hover
+   wiring is gated the same way). */
+.nav-hotzone { position: fixed; left: 0; top: 0; width: 16px; height: 100%; z-index: 44; }
+@media (max-width: 900px) { .nav-hotzone { display: none; } }
+@media (hover: none) { .nav-hotzone { display: none; } }
 .pill {
   display: inline-block; font-size: 12px; font-weight: 600; padding: 4px 10px;
   border-radius: 999px; background: #e6f4ea; color: #137333; white-space: nowrap;
@@ -286,6 +326,7 @@ button.row:hover { border-color: #c3ccd6; background: #fbfcfe; }
 #screen-settings { display: grid; grid-template-columns: 200px 1fr; gap: 16px; align-items: start; }
 #screen-settings.hidden { display: none; }
 .settings-rail { display: flex; flex-direction: column; gap: 4px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 10px; }
+.settings-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .set-cat {
   text-align: left; background: none; border: none; border-radius: 8px; padding: 9px 12px;
   font-size: 13px; font-weight: 700; letter-spacing: .05em; color: var(--muted);
@@ -425,11 +466,20 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
   .head-contact { display: none; }
 }
 @media (max-width: 900px) {
+  /* Build .26: the drawer + its dim start below the header's first
+     row, so the header (and the ☰ toggle) stays visible and tappable
+     while the drawer is open — ☰ again, a tap on the dim, or picking
+     a menu item all close it. */
   .sidebar {
-    position: fixed; left: 0; top: 0; bottom: 0; height: 100vh; z-index: 50;
+    position: fixed; left: 0; top: 57px; bottom: 0; height: calc(100vh - 57px); z-index: 50;
     transform: translateX(-100%); transition: transform .2s ease; width: 264px;
+    /* Build .26 (owner): frosted glass on the drawer only — the
+       dimmed page blurs softly through the translucent navy. (The
+       build .21 no-blur rule guards the MODAL overlay, not this.) */
+    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
   }
   .sidebar.open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,.35); }
+  .side-scrim { top: 57px; }
   main { padding: 14px 12px 48px; }
   .dash-grid { grid-template-columns: 1fr; }
   .head-search { order: 5; flex-basis: 100%; max-width: none; margin: 2px 0 4px; }
@@ -479,11 +529,10 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
 #docMoreBody { margin-bottom: 4px; }
 #docTermsBody { margin-bottom: 4px; }
 
-/* Business identity: the account's own logo in header + sidebar. */
+/* Business identity: ONE logo tile per brand area (header + sidebar) —
+   the account's own logo when set, else the QRLedger monogram (build .25). */
 .head-brand { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.head-biz-logo { width: 30px; height: 30px; border-radius: 7px; object-fit: cover; flex: none; }
 .side-brand { cursor: pointer; }
-.side-biz-logo { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; flex: none; }
 .logo-row { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
 .prof-logo { width: 76px; height: 76px; border-radius: 12px; object-fit: cover; border: 1px solid var(--line); }
 .prof-logo-empty {
@@ -648,3 +697,37 @@ body.privacy-on .stat::after { content: "Rs •••••"; font-weight: 800; 
   padding: 10px 12px; margin-top: 12px; background: #fbfcfe;
 }
 .wiz-template-box p { margin: 0; font-size: 14px; }
+
+/* -------------------------------------- Edit Firm popup (build .24) -- */
+/* The Business Profile popup, laid out like the owner's Vyapar
+   "Edit Firm" dialog: logo block on the left (click to change it),
+   Business Name / Phone / Email stacked on the right; the "More
+   options" expander opens a second two-column row (Business
+   Address / Pincode / Business Description | Business Type /
+   Business Category / signature IMAGE). The modal box itself
+   scrolls, so Save stays reachable; on a phone the columns stack,
+   logo first, with nothing cut off. */
+.modal-box.edit-firm-box { max-width: 640px; }
+.ef-top { display: grid; grid-template-columns: 180px 1fr; gap: 16px; align-items: start; margin-bottom: 6px; }
+.ef-logo .logo-actions { margin-top: 10px; }
+#efMoreBody { margin-bottom: 4px; }
+.ef-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.ef-sig-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #33475b; }
+.ef-sig-img { max-width: 100%; max-height: 92px; border: 1px solid var(--line); border-radius: 8px; background: #fff; margin-bottom: 8px; }
+.ef-sig-empty {
+  border: 1.5px dashed #c3cedb; border-radius: 8px; padding: 16px 8px;
+  text-align: center; font-size: 12px; color: var(--muted); margin-bottom: 8px;
+}
+/* Settings > GENERAL "Coming Soon" card (build .24): the banner the
+   owner asked for above the tax IDs + payment rails. Those fields
+   stay in Settings, stay fully editable and keep printing on bills. */
+.coming-soon-banner {
+  background: linear-gradient(90deg, var(--orange) 0%, #ff8a50 100%);
+  color: #fff; font-size: 13px; font-weight: 800; letter-spacing: .08em;
+  text-transform: uppercase; text-align: center;
+  padding: 8px 10px; border-radius: 8px; margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .ef-top { grid-template-columns: 1fr; }
+  .ef-cols { grid-template-columns: 1fr; }
+}

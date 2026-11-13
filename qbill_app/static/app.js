@@ -934,8 +934,14 @@ function showScreen(name) {
   closeSidebarMobile();
 }
 function closeSidebarMobile() {
+  /* Build .28: closing the menu (any width) cancels any pending
+     hover auto-close, releases the body scroll lock and settles the
+     ☰ button's state. */
+  cancelNavClose();
   $("sidebar").classList.remove("open");
   $("sideScrim").classList.add("hidden");
+  document.body.classList.remove("no-scroll");
+  $("btnMenu").setAttribute("aria-expanded", "false");
 }
 function go(nav) {
   switch (nav) {
@@ -3896,21 +3902,25 @@ function applyBusinessIdentity(b) {
   if (b.email) $("sideBizEmail").textContent = b.email;
   refreshLogoImages(!!b.hasLogo);
 }
+/* Build .25: exactly ONE logo tile per brand area — the business's own
+   logo when one is set, otherwise the QRLedger app monogram. (Owner:
+   "Left side me do do logo kiye hain, wahan pe just aik logo hona
+   chahiye tha" — the static mark and a separate business-logo <img>
+   used to sit side by side.) The single tile's src is swapped instead. */
+var APP_MARK_SRC = "/static/icons/icon-192.png";
 function refreshLogoImages(hasLogo) {
-  var imgs = [$("sideBizLogo"), $("headBizLogo")];
-  if (!hasLogo) {
-    imgs.forEach(function (im) { if (im) im.classList.add("hidden"); });
-    return;
+  var marks = [$("sideMark"), $("headMark")];
+  function showAppMark() {
+    marks.forEach(function (im) { if (im) im.src = APP_MARK_SRC; });
   }
+  if (!hasLogo) { showAppMark(); return; }
   fetch("/api/business/logo", { headers: authHeaders() }).then(function (resp) {
     if (!resp.ok) throw new Error("logo " + resp.status);
     return resp.blob();
   }).then(function (blob) {
     if (logoObjectUrl) URL.revokeObjectURL(logoObjectUrl);
     logoObjectUrl = URL.createObjectURL(blob);
-    imgs.forEach(function (im) {
-      if (im) { im.src = logoObjectUrl; im.classList.remove("hidden"); }
-    });
+    marks.forEach(function (im) { if (im) im.src = logoObjectUrl; });
     var prev = $("profLogoPreview");
     if (prev) {
       prev.src = logoObjectUrl;
@@ -3918,17 +3928,62 @@ function refreshLogoImages(hasLogo) {
       $("profLogoEmpty").classList.add("hidden");
       $("btnLogoRemove").classList.remove("hidden");
     }
-  }).catch(function () {
-    imgs.forEach(function (im) { if (im) im.classList.add("hidden"); });
-  });
+  }).catch(function () { showAppMark(); });
 }
+/* Build .24: the Business Profile is the Edit Firm POPUP now (the
+   owner's Vyapar reference) — it no longer lives in Settings. Both
+   brand areas (sidebar card + header name) open it in place. */
 function openBusinessProfile() {
-  go("settings");
-  setSettingsCat("general");
   loadProfile();
+  $("efMsg").textContent = "";
+  $("editFirmModal").classList.remove("hidden");
+}
+function closeEditFirm() {
+  $("editFirmModal").classList.add("hidden");
 }
 $("sideBrand").addEventListener("click", openBusinessProfile);
 $("headBrand").addEventListener("click", openBusinessProfile);
+$("efCloseX").addEventListener("click", closeEditFirm);
+$("efClose").addEventListener("click", closeEditFirm);
+/* "More options" expander — the same click-to-open toggle pattern as
+   the doc form's collapsibles; collapsed by default (owner's spec). */
+function efMoreSet(open) {
+  var body = $("efMoreBody"), btn = $("btnEfMore");
+  if (!body || !btn) return;
+  body.classList.toggle("hidden", !open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  var caret = btn.querySelector(".dc-caret");
+  if (caret) caret.textContent = open ? "▴" : "▾";
+}
+$("btnEfMore").addEventListener("click", function () {
+  efMoreSet($("efMoreBody").classList.contains("hidden"));
+});
+/* The signature image preview (Edit Firm > More options), fed from an
+   authed blob fetch exactly like the logo images above. */
+var sigObjectUrl = null;
+function refreshSignatureImage(hasSignature) {
+  var prev = $("profSigPreview");
+  if (!prev) return;
+  if (!hasSignature) {
+    prev.classList.add("hidden");
+    $("profSigEmpty").classList.remove("hidden");
+    $("btnSigRemove").classList.add("hidden");
+    return;
+  }
+  fetch("/api/business/signature", { headers: authHeaders() }).then(function (resp) {
+    if (!resp.ok) throw new Error("signature " + resp.status);
+    return resp.blob();
+  }).then(function (blob) {
+    if (sigObjectUrl) URL.revokeObjectURL(sigObjectUrl);
+    sigObjectUrl = URL.createObjectURL(blob);
+    prev.src = sigObjectUrl;
+    prev.classList.remove("hidden");
+    $("profSigEmpty").classList.add("hidden");
+    $("btnSigRemove").classList.remove("hidden");
+  }).catch(function () {
+    prev.classList.add("hidden");
+  });
+}
 function loadProfile() {
   apiGet("/api/business", "business").then(function (r) {
     var b = r.body.business || {};
@@ -3940,6 +3995,7 @@ function loadProfile() {
     $("profEmail").value = b.email || "";
     $("profBizType").value = b.businessType || "";
     $("profBizCategory").value = b.businessCategory || "";
+    $("profDescription").value = b.businessDescription || "";
     $("profPincode").value = b.pincode || "";
     $("profState").value = b.state || "";
     $("profSignature").value = b.signatureText || "";
@@ -3954,33 +4010,68 @@ function loadProfile() {
     $("profLogoPreview").classList.toggle("hidden", !b.hasLogo);
     $("profLogoEmpty").classList.toggle("hidden", !!b.hasLogo);
     $("btnLogoRemove").classList.toggle("hidden", !b.hasLogo);
+    $("profSigPreview").classList.toggle("hidden", !b.hasSignature);
+    $("profSigEmpty").classList.toggle("hidden", !!b.hasSignature);
+    $("btnSigRemove").classList.toggle("hidden", !b.hasSignature);
+    refreshSignatureImage(!!b.hasSignature);
     applyBusinessIdentity(b);
   }).catch(function () {});
 }
 $("profileForm").addEventListener("submit", function (ev) {
   ev.preventDefault();
+  /* The Edit Firm save carries ONLY the popup's own fields. The tax
+     IDs + payment rails and the Tax Note + Terms are not among them
+     (build .24): they live in Settings > GENERAL and save from
+     there, and the profile endpoint keeps whatever is stored for
+     any field a save does not send. */
   apiPut("/api/business", {
     name: $("profName").value.trim(), owner_name: $("profOwner").value.trim(),
     address: $("profAddress").value.trim(), city: $("profCity").value.trim(),
     phone: $("profPhone").value.trim(), email: $("profEmail").value.trim(),
     business_type: $("profBizType").value.trim(),
     business_category: $("profBizCategory").value.trim(),
+    business_description: $("profDescription").value.trim(),
     pincode: $("profPincode").value.trim(),
     state: $("profState").value.trim(),
-    signature_text: $("profSignature").value.trim(),
-    tax_note: $("profTaxNote").value.trim(),
+    signature_text: $("profSignature").value.trim()
+  }).then(function (r) {
+    cacheSet("business", { business: r.business });
+    applyBusinessIdentity(r.business);
+    closeEditFirm();
+    setMsg("appMsg", "Profile saved. It appears on your invoices and PDFs.");
+  }).catch(function (e) { setMsg("efMsg", e.message, true); });
+});
+/* The tax IDs + payment rails kept their own card in Settings >
+   GENERAL (build .24, under the Coming Soon banner): the same
+   profile endpoint with only their own fields, so this save never
+   touches the firm's details and the Edit Firm save never touches
+   these. */
+$("payTaxForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPut("/api/business", {
     ntn: $("profNtn").value.trim(),
     strn: $("profStrn").value.trim(),
     raast_iban: $("profRaastIban").value.trim(),
     jazzcash_number: $("profJazzcash").value.trim(),
     easypaisa_number: $("profEasypaisa").value.trim(),
-    payment_details: $("profPaymentDetails").value.trim(),
+    payment_details: $("profPaymentDetails").value.trim()
+  }).then(function (r) {
+    cacheSet("business", { business: r.business });
+    setMsg("payTaxMsg", "Saved. These details print on your bills exactly as filled.");
+  }).catch(function (e) { setMsg("payTaxMsg", e.message, true); });
+});
+/* Tax Note + Terms & Conditions: their own Settings > GENERAL card
+   (build .24, no Coming Soon banner) — the same profile endpoint
+   with only their own two fields. */
+$("taxTermsForm").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  apiPut("/api/business", {
+    tax_note: $("profTaxNote").value.trim(),
     terms: $("profTerms").value.trim()
   }).then(function (r) {
     cacheSet("business", { business: r.business });
-    applyBusinessIdentity(r.business);
-    setMsg("appMsg", "Profile saved. It appears on your invoices and PDFs.");
-  }).catch(function (e) { setMsg("appMsg", e.message, true); });
+    setMsg("taxTermsMsg", "Saved. The Tax Note and Terms print on every bill PDF.");
+  }).catch(function (e) { setMsg("taxTermsMsg", e.message, true); });
 });
 /* Logo upload is ONLINE-ONLY: the image goes straight to the server
    (it is not queued in the offline outbox, which carries documents,
@@ -4044,6 +4135,63 @@ $("btnLogoRemove").addEventListener("click", function () {
     $("btnLogoRemove").classList.add("hidden");
     $("logoMsg").textContent = "Logo removed.";
   }).catch(function (e) { $("logoMsg").textContent = e.message; });
+});
+/* Signature image upload is ONLINE-ONLY too, with the logo's exact
+   rules (build .24). The image prints in the signature area of this
+   account's A4 bill PDFs; thermal bills have no signature area. */
+$("profSigFile").addEventListener("change", function () {
+  var f = $("profSigFile").files[0];
+  $("profSigFile").value = "";
+  if (!f) return;
+  if (!navigator.onLine) {
+    $("sigMsg").textContent = "You are offline — signature upload needs an internet connection. Please try again when you are back online.";
+    return;
+  }
+  if (["image/png", "image/jpeg", "image/webp", "image/gif"].indexOf(f.type) < 0) {
+    $("sigMsg").textContent = "Please choose a PNG, JPG, WebP or GIF image.";
+    return;
+  }
+  if (f.size > 400 * 1024) {
+    $("sigMsg").textContent = "That image is too large — please use a signature under 400 KB.";
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function () {
+    fetch("/api/business/signature", {
+      method: "PUT", headers: authHeaders(),
+      body: JSON.stringify({ signature_data: reader.result })
+    }).then(function (resp) {
+      return resp.json().then(function (body) {
+        if (!resp.ok) throw new Error(body.error || "Signature upload failed.");
+        return body;
+      });
+    }).then(function (body) {
+      cacheSet("business", { business: body.business });
+      refreshSignatureImage(true);
+      $("sigMsg").textContent = "Signature saved. It now prints in the signature area of your A4 bill PDFs.";
+      setMsg("appMsg", "Business signature saved.");
+    }).catch(function (e) { $("sigMsg").textContent = e.message; });
+  };
+  reader.readAsDataURL(f);
+});
+$("btnSigRemove").addEventListener("click", function () {
+  if (!navigator.onLine) {
+    $("sigMsg").textContent = "You are offline — removing the signature needs an internet connection.";
+    return;
+  }
+  fetch("/api/business/signature", {
+    method: "PUT", headers: authHeaders(),
+    body: JSON.stringify({ signature_data: null })
+  }).then(function (resp) {
+    return resp.json().then(function (body) {
+      if (!resp.ok) throw new Error(body.error || "Could not remove the signature.");
+      return body;
+    });
+  }).then(function (body) {
+    cacheSet("business", { business: body.business });
+    refreshSignatureImage(false);
+    $("sigMsg").textContent = "Signature removed.";
+  }).catch(function (e) { $("sigMsg").textContent = e.message; });
 });
 
 /* ------------------------------------------- app settings document --- */
@@ -4536,12 +4684,152 @@ document.addEventListener("click", function (ev) {
 });
 $("btnAddSale").addEventListener("click", function () { openDocForm("sale"); });
 $("btnAddPurchase").addEventListener("click", function () { openDocForm("purchase"); });
+/* Build .28 (owner): the main menu is set to AUTO-CLOSE at every
+   width — it is never pinned or docked open. It opens on a trigger
+   and closes by itself:
+   - Narrow shells (<= 900px, the owner's phone): the slide-in drawer
+     opens with ☰ or with a swipe that starts at the LEFT EDGE and
+     moves right; ☰ again, a tap on the dim, picking a menu item
+     (showScreen -> closeSidebarMobile), or a leftward swipe on the
+     drawer/dim closes it. The dim + body scroll lock are phone-only.
+   - Desktop (> 900px, hover-capable pointers): the menu hides by
+     default; sliding the mouse to the LEFT EDGE of the window (the
+     invisible #navHotZone strip) slides it in as an overlay, and
+     sliding the pointer away into the page closes it only after a
+     2.5-second stay (NAV_CLOSE_DELAY_MS — the owner: auto-close must
+     not be quick, "2 ya 3 second staying kare fir band ho jaye"), so
+     diagonal travel towards a menu item never flickers it shut and
+     re-entering the menu or the edge strip cancels the close.
+     ☰ remains a manual toggle
+     (touch laptops), and pointer-leave auto-close still applies.
+   Build .26's localStorage-persisted desktop collapse is REMOVED:
+   hover is the rule now, so no menu state is stored at all. */
+try { localStorage.removeItem("qrledger_sidebar_collapsed"); } catch (e) {}
+var NAV_CLOSE_DELAY_MS = 2500;
+var NAV_HOVER_MQ = window.matchMedia("(hover: hover) and (pointer: fine)");
+var navCloseTimer = null;
+function isNarrowShell() {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+function sidebarIsOpen() {
+  return $("sidebar").classList.contains("open");
+}
+function navHoverCapable() {
+  return !isNarrowShell() && NAV_HOVER_MQ.matches;
+}
+function navModalOpen() {
+  return !!document.querySelector(".modal:not(.hidden)");
+}
+function cancelNavClose() {
+  if (navCloseTimer) { clearTimeout(navCloseTimer); navCloseTimer = null; }
+}
+function scheduleNavClose() {
+  cancelNavClose();
+  navCloseTimer = setTimeout(function () {
+    navCloseTimer = null;
+    closeSidebarMobile();
+  }, NAV_CLOSE_DELAY_MS);
+}
+function openSidebarMobile() {
+  cancelNavClose();
+  $("sidebar").classList.add("open");
+  if (isNarrowShell()) {
+    $("sideScrim").classList.remove("hidden");
+    document.body.classList.add("no-scroll");
+  }
+  $("btnMenu").setAttribute("aria-expanded", "true");
+}
 $("btnMenu").addEventListener("click", function () {
-  var open = !$("sidebar").classList.contains("open");
-  $("sidebar").classList.toggle("open", open);
-  $("sideScrim").classList.toggle("hidden", !open);
+  if (sidebarIsOpen()) closeSidebarMobile();
+  else openSidebarMobile();
 });
 $("sideScrim").addEventListener("click", closeSidebarMobile);
+/* Desktop hover: edge strip opens, leaving the strip or the menu
+   starts the grace-delay close; entering the menu cancels it. */
+$("navHotZone").addEventListener("mouseenter", function () {
+  if (navHoverCapable() && !navModalOpen()) openSidebarMobile();
+});
+$("navHotZone").addEventListener("mouseleave", function () {
+  if (navHoverCapable()) scheduleNavClose();
+});
+$("sidebar").addEventListener("mouseenter", function () {
+  if (navHoverCapable()) cancelNavClose();
+});
+$("sidebar").addEventListener("mouseleave", function () {
+  if (navHoverCapable()) scheduleNavClose();
+});
+/* Pointer anywhere in the page (not the menu, the edge strip or the
+   ☰ button) also starts the grace-delay close — this covers a menu
+   opened by the ☰ button, where the pointer never entered the menu. */
+document.addEventListener("mouseover", function (ev) {
+  if (!navHoverCapable() || !sidebarIsOpen()) return;
+  var t = ev.target;
+  if (t && t.closest && (t.closest("#sidebar") || t.closest("#navHotZone") ||
+      t.closest("#btnMenu"))) {
+    cancelNavClose();
+  } else {
+    scheduleNavClose();
+  }
+});
+/* Wide shells have no dim, so a tap/click anywhere outside the open
+   menu closes it (touch laptops); menu picks close via showScreen.
+   Clicks inside a popup (.modal) do NOT count: a dialog the menu
+   itself opened (e.g. Edit Firm) keeps the menu until it closes. */
+document.addEventListener("click", function (ev) {
+  if (isNarrowShell() || !sidebarIsOpen()) return;
+  var t = ev.target;
+  if (t && t.closest && (t.closest("#sidebar") || t.closest("#btnMenu") ||
+      t.closest("#navHotZone") || t.closest(".modal"))) return;
+  closeSidebarMobile();
+});
+/* Phone edge swipe: a touch that starts within SWIPE_EDGE_PX of the
+   left edge and travels at least SWIPE_MIN_DX rightwards, clearly
+   more horizontal than vertical, opens the drawer; a leftward swipe
+   that starts on the open drawer or its dim closes it. The listeners
+   are passive and never preventDefault, so normal vertical page
+   scrolling and horizontal scrolling inside tables/cards are never
+   hijacked — only an edge-origin, clearly-horizontal swipe acts. */
+var SWIPE_EDGE_PX = 24;
+var SWIPE_MIN_DX = 50;
+var navSwipe = null;
+document.addEventListener("touchstart", function (ev) {
+  if (!isNarrowShell() || navModalOpen() || !ev.touches ||
+      ev.touches.length !== 1) {
+    navSwipe = null;
+    return;
+  }
+  var t = ev.touches[0];
+  var onMenu = !!(ev.target && ev.target.closest &&
+    (ev.target.closest("#sidebar") || ev.target.closest("#sideScrim")));
+  navSwipe = {
+    x: t.clientX, y: t.clientY,
+    edge: t.clientX <= SWIPE_EDGE_PX, onMenu: onMenu
+  };
+}, { passive: true });
+document.addEventListener("touchmove", function (ev) {
+  if (!navSwipe || !isNarrowShell() || !ev.touches || !ev.touches.length) return;
+  var t = ev.touches[0];
+  var dx = t.clientX - navSwipe.x;
+  var dy = t.clientY - navSwipe.y;
+  if (Math.abs(dx) < SWIPE_MIN_DX || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
+  if (dx > 0 && navSwipe.edge && !sidebarIsOpen()) openSidebarMobile();
+  else if (dx < 0 && navSwipe.onMenu && sidebarIsOpen()) closeSidebarMobile();
+  else return;
+  navSwipe = null; /* one gesture, one action */
+}, { passive: true });
+function navSwipeReset() { navSwipe = null; }
+document.addEventListener("touchend", navSwipeReset, { passive: true });
+document.addEventListener("touchcancel", navSwipeReset, { passive: true });
+/* If the shell crosses the drawer breakpoint with the menu open,
+   settle back to the clean hidden-by-default state for the new mode. */
+var navWasNarrow = isNarrowShell();
+window.addEventListener("resize", function () {
+  var narrow = isNarrowShell();
+  if (narrow !== navWasNarrow) {
+    navWasNarrow = narrow;
+    closeSidebarMobile();
+  }
+});
 function megaAction(act) {
   $("addMoreMenu").classList.add("hidden");
   if (!me) return;
@@ -6060,7 +6348,7 @@ document.querySelectorAll("[data-export]").forEach(function (b) {
       .catch(function (e) { setMsg("appMsg", e.message, true); });
   });
 });
-$("btnSetupBusiness").addEventListener("click", function () { go("settings"); });
+$("btnSetupBusiness").addEventListener("click", function () { openBusinessProfile(); });
 
 /* ------------------------------------------- import wizard (Fix 5) -- */
 var WIZ_FIELDS = {

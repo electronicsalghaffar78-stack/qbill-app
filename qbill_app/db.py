@@ -576,6 +576,14 @@ _ADDED_COLUMNS = [
     ("businesses", "jazzcash_number", "TEXT NOT NULL DEFAULT ''"),
     ("businesses", "easypaisa_number", "TEXT NOT NULL DEFAULT ''"),
     ("businesses", "payment_details", "TEXT NOT NULL DEFAULT ''"),
+    # ---- Build .24 (2026-11-13) columns ----
+    # Edit Firm popup: a free-text Business Description, and the
+    # signature IMAGE (base64 payload + mime, stored exactly like the
+    # logo) that prints in the signature area of A4 bills when set.
+    # Per-account, default empty — never seeded with anyone's data.
+    ("businesses", "business_description", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "signature_mime", "TEXT NOT NULL DEFAULT ''"),
+    ("businesses", "signature_data", "TEXT"),
 ]
 
 # One non-null client_ref per business per table: the offline outbox replay

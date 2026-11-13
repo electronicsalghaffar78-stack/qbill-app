@@ -15,7 +15,7 @@ from . import db
 from .config import Config
 from .security import ApiError
 
-APP_VERSION = "2026-11-13.22-vyapar11"
+APP_VERSION = "2026-11-13.28-vyapar17"
 
 
 def create_app():
